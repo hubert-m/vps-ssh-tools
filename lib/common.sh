@@ -201,7 +201,7 @@ Użycie: uninstall-hmtools [--yes]
 
 Usuwa hmtools z serwera:
   - katalog instalacji (domyślnie /hm-tools) — w tym conf i logi
-  - symlink /usr/local/bin/hmtools
+  - symlinki /usr/bin/hmtools oraz /usr/local/bin/hmtools
 
 Nie usuwa rclone ani backupów na Google Drive.
 EOF
@@ -211,13 +211,19 @@ EOF
   done
 
   local dest="${HMTOOLS_ROOT:-/hm-tools}"
-  local link="${HMTOOLS_BIN_LINK:-/usr/local/bin/hmtools}"
+  local links=("/usr/bin/hmtools" "/usr/local/bin/hmtools")
+  if [[ -n "${HMTOOLS_BIN_LINK:-}" ]]; then
+    links+=("${HMTOOLS_BIN_LINK}")
+  fi
 
   echo "Zostanie usunięte:"
   echo "  - ${dest}/"
-  if [[ -L "${link}" ]] || [[ -e "${link}" ]]; then
-    echo "  - ${link}"
-  fi
+  local link
+  for link in "${links[@]}"; do
+    if [[ -L "${link}" ]] || [[ -e "${link}" ]]; then
+      echo "  - ${link}"
+    fi
+  done
   echo
   hm_warn "Konfiguracja, logi i pliki narzędzi zostaną skasowane."
   hm_info "Backupy na Google Drive i konfiguracja rclone pozostaną nietknięte."
@@ -231,19 +237,20 @@ EOF
 
   hm_file_log INFO "uninstall-hmtools start dest=${dest}"
 
-  if [[ -L "${link}" ]]; then
-    rm -f "${link}"
-    hm_ok "Usunięto symlink ${link}"
-  elif [[ -e "${link}" ]]; then
-    # tylko jeśli wskazuje na nasze hmtools
-    if [[ "$(readlink -f "${link}" 2>/dev/null || true)" == "${dest}/bin/hmtools" ]] \
-      || [[ "$(command -v hmtools 2>/dev/null || true)" == "${link}" ]]; then
-      rm -f "${link}"
-      hm_ok "Usunięto ${link}"
-    else
-      hm_warn "Pominięto ${link} (nie wygląda na symlink hmtools)."
+  for link in "${links[@]}"; do
+    if [[ -L "${link}" ]]; then
+      local target
+      target="$(readlink -f "${link}" 2>/dev/null || readlink "${link}" 2>/dev/null || true)"
+      if [[ "${target}" == "${dest}/bin/hmtools" || "${target}" == */hm-tools/bin/hmtools ]]; then
+        rm -f "${link}"
+        hm_ok "Usunięto symlink ${link}"
+      else
+        hm_warn "Pominięto ${link} (cel: ${target:-?})."
+      fi
+    elif [[ -e "${link}" ]]; then
+      hm_warn "Pominięto ${link} (nie jest symlinkiem)."
     fi
-  fi
+  done
 
   if [[ -d "${dest}" ]]; then
     # bezpieczeństwo: nie kasuj / ani /

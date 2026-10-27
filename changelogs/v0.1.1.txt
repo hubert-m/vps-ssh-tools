@@ -1,0 +1,9 @@
+# hmtools v0.1.1
+
+- Stabilniejsza instalacja curl | bash (bez rsync, lokalne cp)
+- Poprawne rozpakowywanie tarballa z GitHuba (bez find|head / pipefail)
+- Obsługa skryptów bez bitu +x (chmod po extract)
+- Fallback do brancha develop, gdy tarball taga się nie uda
+- Symlink w /usr/bin/hmtools (działa gdy /usr/local/bin nie jest w PATH)
+- .gitattributes — LF dla skryptów (Windows → Linux)
+- Logi postępu instalacji na stderr

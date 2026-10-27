@@ -18,87 +18,47 @@ Panel i webserver **nie są hardcodowane** — skrypt wykrywa CyberPanel, OpenLi
 
 ## Instalacja i aktualizacja
 
-Repozytorium: [github.com/hubert-m/vps-ssh-tools](https://github.com/hubert-m/vps-ssh-tools) (branch `develop`).
+Repozytorium: [github.com/hubert-m/vps-ssh-tools](https://github.com/hubert-m/vps-ssh-tools).
 
-Na serwerze jako **root** — **to samo polecenie** instaluje i aktualizuje:
-
-```bash
-# ?$(date +%s) omija cache CDN przy raw.githubusercontent.com
-curl -fsSL "https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh?$(date +%s)" | bash
-```
-
-Na początku powinno pojawić się m.in. `hmtools installer rev=...` — jeśli tego nie ma, leci stara (cache’owana) wersja skryptu.
-
-Wymagane na VPS: `curl`, `tar`, `bash` (oraz typowe `/bin/cp`). **`rsync nie jest potrzebny`** i nie jest używany.
-
-Alternatywa (GitHub przekierowuje na raw):
+Na serwerze jako **root** — **to samo polecenie** instaluje i aktualizuje do **najnowszego git taga**:
 
 ```bash
-curl -fsSL "https://github.com/hubert-m/vps-ssh-tools/raw/develop/install.sh?$(date +%s)" | bash
+curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
 ```
 
-Z poziomu już zainstalowanego hmtools:
+Wymagane: `curl`, `tar`, `bash`. Historia wersji i polecenia instalacji konkretnych tagów: [CHANGELOG.md](CHANGELOG.md).
+
+### Starsza / konkretna wersja
+
+```bash
+HMTOOLS_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
+```
+
+### Z poziomu hmtools
 
 ```text
-hmtools> version
-hmtools> update-hmtools
-hmtools> update-hmtools --force    # reinstalacja tej samej wersji
+hmtools> version              # lokalna vs najnowszy tag + changelog
+hmtools> update-hmtools       # update tylko gdy jest nowszy tag
+hmtools> update-hmtools --force
 ```
 
-### Wersjonowanie (git tags)
+Jeśli lokalna wersja = najnowszy tag, instalator **nic nie nadpisuje** (chyba że `HMTOOLS_FORCE=1` / `--force`).  
+Istniejący `/hm-tools/config/hmtools.conf` jest zawsze zachowywany przy update.
 
-Instalator porównuje:
-
-- **remote:** najnowszy [git tag](https://github.com/hubert-m/vps-ssh-tools/tags) repozytorium (sortowanie semver),
-- **local:** plik `/hm-tools/VERSION`.
-
-Jeśli wersje są równe — **nic nie pobiera i nie nadpisuje**.  
-Gdy nie ma jeszcze żadnego taga, używany jest fallback `develop@<sha>`.
-
-Po wydaniu nowej wersji:
-
-1. Uzupełnij `VERSION` (np. `v0.2.0`)
-2. Dodaj `changelogs/v0.2.0.txt` (proste punkty — to widzi `version` / update)
-3. Dopisz wpis w `CHANGELOG.md`
-4. Utwórz tag:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-Co robi instalator:
-
-1. Sprawdza najnowszy tag na GitHubie vs `/hm-tools/VERSION`
-2. Gdy trzeba — pobiera tarball **tego taga** (nie „ślepo” cały branch)
-3. Wgrywa pliki do `/hm-tools` (nadpisuje bin/lib/commands/scripts)
-4. **Nie nadpisuje** istniejącego `/hm-tools/config/hmtools.conf`
-5. Zapisuje `VERSION` + symlink `/usr/local/bin/hmtools`
-
-Zmienne opcjonalne (przed `| bash`):
-
-```bash
-# konkretny tag / wymuszenie / inny katalog
-HMTOOLS_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
-HMTOOLS_FORCE=1 curl -fsSL ... | bash
-HMTOOLS_DEST=/opt/hm-tools curl -fsSL ... | bash
-```
-
-Uruchomienie:
+### Uruchomienie
 
 ```bash
 hmtools
 ```
 
-Jednorazowa komenda bez REPL:
+Jednorazowo (bez REPL):
 
 ```bash
 hmtools webs --quick
 hmtools health
 hmtools version
 hmtools update-hmtools
-hmtools uninstall-hmtools          # z potwierdzeniem
-hmtools uninstall-hmtools --yes    # bez pytania
+hmtools uninstall-hmtools --yes
 ```
 
 ### Odinstalowanie
@@ -107,8 +67,8 @@ hmtools uninstall-hmtools --yes    # bez pytania
 hmtools> uninstall-hmtools
 ```
 
-Usuwa katalog `/hm-tools` (w tym conf i logi) oraz symlink `/usr/local/bin/hmtools`.  
-**Nie** usuwa rclone ani backupów na Google Drive.
+Usuwa `/hm-tools` oraz symlinki (`/usr/bin/hmtools`, `/usr/local/bin/hmtools`).  
+Nie usuwa rclone ani backupów na Google Drive.
 
 ---
 
@@ -406,8 +366,8 @@ Logi / ścieżki konfiguracji:
 vps-ssh-tools/
 ├── README.md
 ├── CHANGELOG.md
-├── VERSION                 # np. v0.1.0
-├── changelogs/v0.1.0.txt   # punktowy changelog (CLI + instalator)
+├── VERSION                 # np. v0.1.1
+├── changelogs/*.txt        # punktowy changelog (CLI + instalator)
 ├── install.sh
 ├── bin/hmtools
 ├── lib/           # common, logging, detect, sites, db, size, backup, rclone

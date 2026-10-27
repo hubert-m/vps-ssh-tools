@@ -1,28 +1,27 @@
 #!/usr/bin/env bash
 # Instalacja / aktualizacja hmtools → /hm-tools
 #
-# Z GitHuba (zalecane — działa jako instalacja i update):
-#   curl -fsSL "https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh?$(date +%s)" | bash
+# Najnowsza wersja (git tag):
+#   curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
 #
-# Wymuszenie reinstalacji tej samej wersji:
+# Konkretna wersja:
+#   HMTOOLS_VERSION=v0.1.1 curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
+#
+# Wymuszenie reinstalacji:
 #   HMTOOLS_FORCE=1 curl -fsSL ... | bash
-#
-# Z lokalnego klona repo:
-#   bash install.sh
 #
 set -euo pipefail
 
-# Podbijaj przy każdej istotnej zmianie instalatora — widać w logu, czy VPS dostał świeży skrypt
-INSTALLER_REV="20261027-4-cp-only"
-
 DEST="${HMTOOLS_DEST:-/hm-tools}"
-BIN_LINK="${HMTOOLS_BIN_LINK:-/usr/local/bin/hmtools}"
+# /usr/bin jest zawsze w PATH; /usr/local/bin bywa pomijane na niektórych VPS
+BIN_LINK_PRIMARY="${HMTOOLS_BIN_LINK:-/usr/bin/hmtools}"
+BIN_LINK_SECONDARY="/usr/local/bin/hmtools"
 REPO_SLUG="${HMTOOLS_REPO:-hubert-m/vps-ssh-tools}"
 REPO_BRANCH="${HMTOOLS_BRANCH:-develop}"
 FORCE="${HMTOOLS_FORCE:-0}"
 API_BASE="https://api.github.com/repos/${REPO_SLUG}"
 
-# Bezpieczne lokalne kopiowanie (bez aliasów / rsync)
+# Lokalne kopiowanie przez /bin/cp (bez aliasów)
 if [[ -x /bin/cp ]]; then
   HM_CP=(/bin/cp)
 elif [[ -x /usr/bin/cp ]]; then
@@ -34,8 +33,6 @@ unalias cp 2>/dev/null || true
 unalias rsync 2>/dev/null || true
 
 umask 022
-
-echo "hmtools installer rev=${INSTALLER_REV}" >&2
 
 if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
   echo "Uruchom jako root." >&2
@@ -49,8 +46,6 @@ for need in curl tar; do
     exit 1
   fi
 done
-
-# rsync NIE jest wymagany i NIE jest używany (na części VPS psuje lokalne ścieżki)
 
 IS_UPDATE=0
 [[ -x "${DEST}/bin/hmtools" ]] && IS_UPDATE=1
@@ -415,12 +410,9 @@ fi
 mkdir -p "${DEST}"
 
 install_tree() {
-  # Tylko lokalne cp — rsync na części VPS traktuje ścieżki jak remote
-  # ("hostname contains invalid characters") i psuje instalację.
   local from="$1"
   local d
 
-  # obetnij CR/whitespace z ścieżki (curl/tar edge-case)
   from="${from//$'\r'/}"
   from="$(printf '%s' "${from}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 
@@ -430,7 +422,7 @@ install_tree() {
     exit 1
   fi
 
-  echo "Kopiowanie plików (cp, bez rsync) → ${DEST} ..." >&2
+  echo "Kopiowanie plików → ${DEST} ..." >&2
 
   for d in bin lib commands scripts changelogs; do
     if [[ -d "${from}/${d}" ]]; then
@@ -465,7 +457,19 @@ chmod +x "${DEST}/scripts/"*.sh 2>/dev/null || true
 
 mkdir -p "${DEST}/logs"
 
-ln -sfn "${DEST}/bin/hmtools" "${BIN_LINK}"
+install_symlink() {
+  local link="$1"
+  local target="${DEST}/bin/hmtools"
+  mkdir -p "$(dirname "${link}")"
+  ln -sfn "${target}" "${link}"
+  echo "Symlink: ${link} → ${target}"
+}
+
+install_symlink "${BIN_LINK_PRIMARY}"
+# dodatkowy link (gdy ktoś ma /usr/local/bin w PATH)
+if [[ "${BIN_LINK_SECONDARY}" != "${BIN_LINK_PRIMARY}" ]]; then
+  install_symlink "${BIN_LINK_SECONDARY}" || true
+fi
 
 # Zapis wersji
 printf '%s\n' "${INSTALL_VERSION}" > "${DEST}/VERSION"
@@ -476,6 +480,7 @@ branch=${REPO_BRANCH}
 installed_at=$(date -Iseconds 2>/dev/null || date)
 mode=$([ "${IS_UPDATE}" -eq 1 ] && echo update || echo install)
 source=$([ "${USE_LOCAL}" -eq 1 ] && echo local || echo github)
+bin_link=${BIN_LINK_PRIMARY}
 EOF
 
 # Krótki wpis w logu instalacji (niezależny od REPL)
@@ -487,9 +492,16 @@ EOF
 } >> "${DEST}/logs/hmtools-$(date +%Y-%m-%d).log" 2>/dev/null || true
 
 echo
-echo "Symlink: ${BIN_LINK} → ${DEST}/bin/hmtools"
 echo "Wersja  : ${INSTALL_VERSION}"
+echo "Katalog : ${DEST}"
 echo "Logi    : ${DEST}/logs/"
+if command -v hmtools >/dev/null 2>&1; then
+  echo "Komenda : $(command -v hmtools)"
+else
+  echo "UWAGA   : 'hmtools' nadal nie jest w PATH." >&2
+  echo "          Uruchom: ${BIN_LINK_PRIMARY}" >&2
+  echo "          albo:    ${DEST}/bin/hmtools" >&2
+fi
 
 if [[ "${IS_UPDATE}" -eq 0 ]]; then
   print_welcome

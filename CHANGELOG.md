@@ -1,15 +1,58 @@
 # Changelog
 
-Proste, punktowe notatki wersji.  
-Szczegółowe pliki używane przez CLI (`version`, `update-hmtools`, instalator): katalog [`changelogs/`](changelogs/).
+Format: [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/) · [Semantic Versioning](https://semver.org/lang/pl/).
 
-Format: [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/) · [SemVer](https://semver.org/lang/pl/).
+Pliki punktowe dla CLI (`version`, `update-hmtools`): katalog [`changelogs/`](changelogs/).
+
+**Instalator** (`install.sh` z brancha `develop`) domyślnie instaluje **najnowszy git tag**.  
+Konkretną wersję wymuszasz zmienną `HMTOOLS_VERSION`.
+
+```bash
+# zawsze najnowszy tag
+curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
+```
+
+---
 
 ## [Unreleased]
 
 _(brak)_
 
+---
+
+## [v0.1.1] — 2026-10-27
+
+### Instalacja tej wersji
+
+```bash
+# najnowsza (gdy v0.1.1 jest aktualnym tagiem) — bez HMTOOLS_VERSION
+curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
+
+# na sztywno v0.1.1
+HMTOOLS_VERSION=v0.1.1 curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
+```
+
+### Zmiany
+
+- Stabilniejsza instalacja `curl | bash` (kopiowanie przez `/bin/cp`, bez `rsync`)
+- Poprawne rozpakowywanie archiwum z GitHuba (bez `find|head` / `pipefail`)
+- Obsługa skryptów bez bitu `+x` w repozytorium (`chmod` po extract)
+- Fallback do brancha `develop`, gdy tarball taga się nie uda
+- Symlink komendy w `/usr/bin/hmtools` (oraz `/usr/local/bin`) — działa gdy `/usr/local/bin` nie jest w `PATH`
+- [`.gitattributes`](.gitattributes) — LF dla skryptów
+- Czytelniejsze logi postępu instalacji (stderr)
+
+---
+
 ## [v0.1.0] — 2026-10-27
+
+### Instalacja tej wersji
+
+```bash
+HMTOOLS_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
+```
+
+### Zmiany
 
 - Interaktywny shell kontekstowy (`webs` → `use` → `exit`)
 - Auto-detekcja CyberPanel / OpenLiteSpeed / MariaDB–MySQL
@@ -20,8 +63,11 @@ _(brak)_
 - Instalacja/aktualizacja jednym `curl | bash` (porównanie po git tagach)
 - Logi pracy w `/hm-tools/logs` (`applog`)
 - Komendy: `update-hmtools`, `version` (+ wypis changelogu)
-- Powitanie po pierwszej instalacji (curl)
+- Powitanie po pierwszej instalacji
 - Odinstalowanie: `uninstall-hmtools [--yes]`
 
-[Unreleased]: https://github.com/hubert-m/vps-ssh-tools/compare/v0.1.0...HEAD
+---
+
+[Unreleased]: https://github.com/hubert-m/vps-ssh-tools/compare/v0.1.1...HEAD
+[v0.1.1]: https://github.com/hubert-m/vps-ssh-tools/releases/tag/v0.1.1
 [v0.1.0]: https://github.com/hubert-m/vps-ssh-tools/releases/tag/v0.1.0
