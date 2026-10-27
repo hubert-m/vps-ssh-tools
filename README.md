@@ -119,6 +119,7 @@ hmtools> exit
 | `ssl` | Certyfikaty SSL wszystkich stron |
 | `mysql` / `dbs` | Lista baz (lub w kontekście: powiązane) |
 | `mysql dump <db>` | Jedna baza streamem na Drive |
+| `cron` / `crons` | Crony systemowe / users / strony; `cron edit` |
 | `php` | Dostępne LSPHP |
 | `health` | Load, RAM, dysk, OLS/MySQL, certy &lt;14 dni |
 | `detect` | Wypisz wykryty panel / webserver / DB |
@@ -135,6 +136,7 @@ hmtools> exit
 | `ssl` | Certyfikat i data wygaśnięcia |
 | `php` | PHP strony + lista LSPHP |
 | `logs [N]` | Ostatnie N linii logów |
+| `cron` | Crony użytkownika strony (+ heurystyka w `/etc`) |
 | `backup` | Pełna kopia środowiska (pliki + DB) → Drive |
 | `clean` | Bezpieczne czyszczenie cache/tmp (z potwierdzeniem) |
 | `exit` | Wyjście z kontekstu |

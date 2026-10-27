@@ -3,3 +3,4 @@
 - Tab-complete w REPL: use <domena> (oraz komendy / backup / ols)
 - Dopasowanie domen także po zamianie -/_ na kropki
 - help <polecenie> — szczegółowa pomoc do konkretnej komendy
+- cron / crons — lista i edycja CRON (system, users, kontekst strony)

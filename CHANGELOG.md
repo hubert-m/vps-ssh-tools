@@ -37,6 +37,7 @@ HMTOOLS_VERSION=v0.1.2 curl -fsSL https://raw.githubusercontent.com/hubert-m/vps
 - Tab-complete w REPL: `use <domena>` (oraz komendy / `backup` / `ols`)
 - Dopasowanie domen także po zamianie `-`/`_` na kropki
 - `help <polecenie>` — szczegółowa pomoc do konkretnej komendy
+- `cron` / `crons` — lista i edycja CRON (system, users, kontekst strony)
 
 ---
 

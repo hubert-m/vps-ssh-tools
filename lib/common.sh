@@ -175,6 +175,7 @@ Komendy globalne:
   ols [status|reload|restart|log]
   ssl                Certyfikaty SSL stron
   mysql / dbs        Bazy danych (globalnie)
+  cron [list|edit…]  Crony systemowe / użytkowników / strony
   php                Dostępne wersje LSPHP
   health             Szybki przegląd zdrowia serwera
   detect             Pokaż wykryty panel / webserver
@@ -185,7 +186,7 @@ Komendy globalne:
   exit / quit        Wyjście z hmtools
 
 W kontekście strony (po 'use'):
-  info, size, dbs, ssl, php, logs, backup, clean, exit
+  info, size, dbs, ssl, php, logs, cron, backup, clean, exit
 
 Szczegóły: help <polecenie>
 EOF

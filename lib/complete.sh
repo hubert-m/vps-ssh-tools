@@ -80,7 +80,7 @@ hm_complete_commands() {
   local partial="$1"
   local cmds=(
     webs sites list use enter cd
-    backup disk df ols lsws ssl mysql dbs db php
+    backup disk df ols lsws ssl mysql dbs db cron crons php
     health status applog selflog hmlog detect env
     update-hmtools version ver uninstall-hmtools
     help h exit quit q
@@ -161,6 +161,18 @@ hm_tab_complete() {
         for m in list ls dump help; do
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
         done
+        ;;
+      cron|crons)
+        if [[ "${prefix}" =~ cron[[:space:]]+(site|edit)[[:space:]] ]]; then
+          hm_ensure_sites_cached
+          while IFS= read -r m; do
+            [[ -n "${m}" ]] && matches+=("${m}")
+          done < <(hm_complete_filter_sites "${partial}")
+        else
+          for m in list ls all global system users site user edit help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
         ;;
     esac
   fi

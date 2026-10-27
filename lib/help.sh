@@ -24,6 +24,7 @@ hm_help_topic() {
     remove) topic="uninstall-hmtools" ;;
     upgrade) topic="update-hmtools" ;;
     log) topic="logs" ;;
+    crons) topic="cron" ;;
     \?|h) topic="help" ;;
   esac
 
@@ -133,6 +134,24 @@ Użycie: detect
 
 Wypisuje wykryty panel (CyberPanel itd.), webserver (OLS),
 silnik DB oraz ważne ścieżki konfiguracji.
+EOF
+      ;;
+    cron)
+      cat <<'EOF'
+Użycie:
+  cron | cron list     W kontekście: crony strony; globalnie: system + users
+  cron all             Wszystkie crony (system + użytkownicy)
+  cron system          /etc/crontab, /etc/cron.d, katalogi okresowe
+  cron users           Crontaby wszystkich użytkowników ze spoola
+  cron site <domena>   Crony powiązane ze stroną (user + heurystyka w /etc)
+  cron user <name>     Crontab wybranego użytkownika
+  cron edit [user]     Edycja crontab -e (w kontekście: user strony)
+
+Przykłady:
+  hmtools> cron
+  hmtools> use example.com
+  [example.com]> cron
+  [example.com]> cron edit
 EOF
       ;;
     version)

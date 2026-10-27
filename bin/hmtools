@@ -49,6 +49,8 @@ source "${HMTOOLS_ROOT}/commands/ssl.sh"
 source "${HMTOOLS_ROOT}/commands/mysql.sh"
 # shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/commands/health.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/commands/cron.sh"
 
 hm_require_root
 hm_load_config
@@ -81,6 +83,7 @@ hm_dispatch() {
         return
         ;;
       clean)  cmd_site_clean; return ;;
+      cron|crons) cmd_cron "$@"; return ;;
       help|?) hm_cmd_help "$@"; return ;;
       exit|quit|back|.. )
         hm_ok "Wyjście z kontekstu ${HM_SITE_DOMAIN}."
@@ -102,6 +105,7 @@ hm_dispatch() {
     php)             cmd_php "$@" ;;
     health|status)   cmd_health "$@" ;;
     applog|selflog|hmlog) cmd_applog "$@" ;;
+    cron|crons)      cmd_cron "$@" ;;
     detect|env)      hm_detect_print ;;
     help|h|\?)       hm_cmd_help "$@" ;;
     update-hmtools)
