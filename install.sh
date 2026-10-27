@@ -396,29 +396,37 @@ fi
 mkdir -p "${DEST}"
 
 install_tree() {
+  # Tylko lokalne cp — rsync na części VPS traktuje ścieżki jak remote
+  # ("hostname contains invalid characters") i psuje instalację.
   local from="$1"
-  if command -v rsync >/dev/null 2>&1; then
-    rsync -a --delete \
-      --exclude '.git/' \
-      --exclude 'config/hmtools.conf' \
-      --exclude 'VERSION' \
-      --exclude '.installed' \
-      --exclude 'logs/' \
-      --exclude '*.plan.md' \
-      "${from}/" "${DEST}/"
-  else
-    local d
-    for d in bin lib commands scripts changelogs; do
-      [[ -d "${from}/${d}" ]] || continue
+  local d
+
+  # obetnij CR/whitespace z ścieżki (curl/tar edge-case)
+  from="${from//$'\r'/}"
+  from="$(printf '%s' "${from}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+  if [[ ! -d "${from}/bin" || ! -e "${from}/bin/hmtools" ]]; then
+    echo "Brak poprawnego drzewa źródeł: '${from}'" >&2
+    ls -la "${from}" >&2 || true
+    exit 1
+  fi
+
+  echo "Kopiowanie plików → ${DEST} ..." >&2
+
+  for d in bin lib commands scripts changelogs; do
+    if [[ -d "${from}/${d}" ]]; then
       rm -rf "${DEST}/${d}"
       cp -a "${from}/${d}" "${DEST}/"
-    done
-    mkdir -p "${DEST}/config"
-    cp -a "${from}/config/hmtools.conf.example" "${DEST}/config/"
-    [[ -f "${from}/README.md" ]] && cp -a "${from}/README.md" "${DEST}/"
-    [[ -f "${from}/CHANGELOG.md" ]] && cp -a "${from}/CHANGELOG.md" "${DEST}/"
-    [[ -f "${from}/install.sh" ]] && cp -a "${from}/install.sh" "${DEST}/"
-  fi
+    fi
+  done
+
+  mkdir -p "${DEST}/config" "${DEST}/logs"
+  cp -a "${from}/config/hmtools.conf.example" "${DEST}/config/"
+  [[ -f "${from}/README.md" ]] && cp -a "${from}/README.md" "${DEST}/"
+  [[ -f "${from}/CHANGELOG.md" ]] && cp -a "${from}/CHANGELOG.md" "${DEST}/"
+  [[ -f "${from}/install.sh" ]] && cp -a "${from}/install.sh" "${DEST}/"
+  # VERSION / .installed zapisujemy osobno po instalacji
+  # logs/ i config/hmtools.conf — zachowane (nie kasujemy)
 }
 
 install_tree "${SRC}"
