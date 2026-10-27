@@ -1,0 +1,6 @@
+# hmtools v0.1.4
+
+- Fix: prompt `hmtools>` / `[domena]>` nie znika przy pisaniu / Tab
+- Prompt w `read -e -p` (readline); Tab bez zbędnego outputu
+- Wczesny cache domen; lista kandydatów dopiero przy 2. Tab (gdy brak postępu)
+- Ekran powitalny: żółte powiadomienie o nowszej wersji + komenda curl|bash

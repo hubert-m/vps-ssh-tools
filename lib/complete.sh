@@ -8,7 +8,8 @@ HMTOOLS_COMPLETE_LOADED=1
 
 hm_ensure_sites_cached() {
   if [[ "${#HM_SITES_LIST[@]}" -eq 0 ]]; then
-    hm_discover_sites 2>/dev/null || true
+    # całkowicie cicho — jakikolwiek output w bind -x gubi / brudzi prompt
+    hm_discover_sites >/dev/null 2>&1 || true
   fi
 }
 
@@ -94,6 +95,10 @@ hm_complete_commands() {
 }
 
 # Wywoływane przez: bind -x '"\t": hm_tab_complete'
+# WAŻNE: przy 0/1 wyniku NIE wolno nic pisać na stdout/stderr —
+# inaczej bash czyści linię i prompt `hmtools>` / `[domena]>` znika.
+# Prompt jest w `read -e -p` (hm_prompt_for_read), więc po cichym
+# ustawieniu READLINE_* readline sam go przerysuje.
 hm_tab_complete() {
   local line="${READLINE_LINE-}"
   local point="${READLINE_POINT-0}"
@@ -102,25 +107,32 @@ hm_tab_complete() {
   local left="${line:0:point}"
   local right="${line:point}"
 
-  # początek aktualnego słowa
+  # początek aktualnego słowa (bez =~ — bezpieczne dla bind -x)
   local start=${#left}
-  while [[ ${start} -gt 0 && ! "${left:start-1:1}" =~ [[:space:]] ]]; do
+  local ch
+  while [[ ${start} -gt 0 ]]; do
+    ch="${left:start-1:1}"
+    case "${ch}" in
+      [[:space:]]) break ;;
+    esac
     start=$((start - 1))
   done
   local prefix="${left:0:start}"
   local partial="${left:start}"
 
   # pierwsze słowo komendy
-  local cmd=""
-  if [[ "${line}" =~ ^[[:space:]]*([^[:space:]]+) ]]; then
-    cmd="${BASH_REMATCH[1]}"
-  fi
+  local cmd="" rest_line
+  rest_line="${line#"${line%%[![:space:]]*}"}"
+  cmd="${rest_line%%[[:space:]]*}"
 
   local -a matches=()
   local m
+  local re_empty='^[[:space:]]*$'
+  local re_backup_site='backup[[:space:]]+site[[:space:]]'
+  local re_cron_site='cron[[:space:]]+(site|edit)[[:space:]]'
+  local re_pm2_site='(pm2|node|apps)[[:space:]]+site[[:space:]]'
 
-  if [[ "${prefix}" =~ ^[[:space:]]*$ ]]; then
-    # pierwsze słowo → komendy
+  if [[ "${prefix}" =~ $re_empty ]]; then
     while IFS= read -r m; do
       [[ -n "${m}" ]] && matches+=("${m}")
     done < <(hm_complete_commands "${partial}")
@@ -141,7 +153,7 @@ hm_tab_complete() {
         done < <(hm_complete_filter_sites "${partial}")
         ;;
       backup)
-        if [[ "${prefix}" =~ backup[[:space:]]+site[[:space:]] ]]; then
+        if [[ "${prefix}" =~ $re_backup_site ]]; then
           hm_ensure_sites_cached
           while IFS= read -r m; do
             [[ -n "${m}" ]] && matches+=("${m}")
@@ -163,7 +175,7 @@ hm_tab_complete() {
         done
         ;;
       cron|crons)
-        if [[ "${prefix}" =~ cron[[:space:]]+(site|edit)[[:space:]] ]]; then
+        if [[ "${prefix}" =~ $re_cron_site ]]; then
           hm_ensure_sites_cached
           while IFS= read -r m; do
             [[ -n "${m}" ]] && matches+=("${m}")
@@ -175,7 +187,7 @@ hm_tab_complete() {
         fi
         ;;
       pm2|node|apps)
-        if [[ "${prefix}" =~ (pm2|node|apps)[[:space:]]+site[[:space:]] ]]; then
+        if [[ "${prefix}" =~ $re_pm2_site ]]; then
           hm_ensure_sites_cached
           while IFS= read -r m; do
             [[ -n "${m}" ]] && matches+=("${m}")
@@ -189,42 +201,45 @@ hm_tab_complete() {
     esac
   fi
 
-  if [[ "${#matches[@]}" -eq 0 ]]; then
+  local n="${#matches[@]}"
+  if [[ "${n}" -eq 0 ]]; then
     return 0
   fi
 
-  if [[ "${#matches[@]}" -eq 1 ]]; then
+  if [[ "${n}" -eq 1 ]]; then
     READLINE_LINE="${prefix}${matches[0]}${right}"
     READLINE_POINT=$(( ${#prefix} + ${#matches[0]} ))
-    # spacja po komendzie jednoargumentowej? nie — użytkownik sam dopisze
     return 0
   fi
 
-  # wiele trafień — wspólny prefix + lista
+  # wiele trafień: najpierw tylko wspólny prefix (BEZ listy = prompt zostaje)
   local common
   common="$(printf '%s\n' "${matches[@]}" | hm_complete_common_prefix)"
   if [[ -n "${common}" && "${#common}" -gt ${#partial} ]]; then
     READLINE_LINE="${prefix}${common}${right}"
     READLINE_POINT=$(( ${#prefix} + ${#common} ))
+    return 0
   fi
 
-  printf '\n' >&2
+  # drugi Tab przy tym samym partial — pokaż kandydatów; readline (-p) odtworzy prompt
+  printf '\n'
   local col=0
   for m in "${matches[@]}"; do
-    printf '  %-36s' "${m}" >&2
+    printf '  %-36s' "${m}"
     col=$((col + 1))
     if [[ $((col % 2)) -eq 0 ]]; then
-      printf '\n' >&2
+      printf '\n'
     fi
   done
-  [[ $((col % 2)) -ne 0 ]] && printf '\n' >&2
+  [[ $((col % 2)) -ne 0 ]] && printf '\n'
 }
 
 hm_setup_readline_complete() {
-  # tylko sesja interaktywna z TTY
   [[ -t 0 ]] || return 0
   bind -x '"\t": hm_tab_complete' 2>/dev/null || true
   bind 'set completion-ignore-case on' 2>/dev/null || true
   bind 'set show-all-if-ambiguous on' 2>/dev/null || true
   bind 'set skip-completed-text on' 2>/dev/null || true
+  # horizontals scroll czasem zostawia „ucięty” prompt po bind -x
+  bind 'set horizontal-scroll-mode off' 2>/dev/null || true
 }

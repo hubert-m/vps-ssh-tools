@@ -141,22 +141,15 @@ hm_dispatch() {
       cur="$(hm_installed_version)"
       [[ -n "${cur}" ]] || cur="?"
       echo "Zainstalowana: ${cur}"
-      latest="$(curl -fsSL --retry 2 -H 'Accept: application/vnd.github+json' -H 'User-Agent: hmtools' \
-        'https://api.github.com/repos/hubert-m/vps-ssh-tools/tags?per_page=100' 2>/dev/null \
-        | grep -oE '"name"[[:space:]]*:[[:space:]]*"[^"]+"' \
-        | sed -E 's/.*"([^"]+)"$/\1/' \
-        | sort -V | tail -1 || true)"
-      if [[ -z "${latest}" ]]; then
-        latest="$(curl -fsSL --retry 2 \
-          "https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/${HMTOOLS_BRANCH:-develop}/VERSION" 2>/dev/null \
-          | tr -d '[:space:]' || true)"
-      fi
+      latest="$(hm_latest_remote_version)"
       if [[ -n "${latest}" ]]; then
         echo "Najnowsza:     ${latest}"
-        if [[ "${cur}" == "${latest}" ]]; then
-          hm_ok "Jesteś na najnowszej wersji."
+        if hm_version_is_newer "${cur}" "${latest}"; then
+          hm_warn "Dostępna aktualizacja: ${cur} → ${latest}"
+          hm_warn "curl -fsSL https://raw.githubusercontent.com/${HMTOOLS_REPO:-hubert-m/vps-ssh-tools}/${HMTOOLS_BRANCH:-develop}/install.sh | bash"
+          hm_warn "Albo: update-hmtools"
         else
-          hm_warn "Dostępna aktualizacja. Uruchom: update-hmtools"
+          hm_ok "Jesteś na najnowszej wersji."
         fi
       else
         hm_warn "Nie udało się sprawdzić najnowszej wersji na GitHubie."
@@ -203,13 +196,17 @@ fi
 
 hm_log_session_start "interactive"
 hm_setup_readline_complete
+# cache domen na start — Tab nie czeka na discovery (i nie gubi promptu)
+hm_ensure_sites_cached
 hm_ok "hmtools — panel=${PANEL} webserver=${WEBSERVER} db=${DB_ENGINE}"
 hm_info "Wpisz 'help' aby zobaczyć komendy. 'exit' kończy. Tab — uzupełnianie (np. use <domena>)."
 hm_info "Logi: ${LOG_DIR}/hmtools-$(date +%Y-%m-%d).log"
+hm_welcome_update_notice
 
 while true; do
-  hm_prompt_string
-  if ! read -r -e line; then
+  # Prompt MUSI być w read -p (readline), nie osobnym printf —
+  # wtedy Tab/bind -x zawsze przerysowuje hmtools> / [domena]> wraz z linią.
+  if ! read -r -e -p "$(hm_prompt_for_read)" line; then
     echo
     break
   fi

@@ -20,6 +20,25 @@ _(brak)_
 
 ---
 
+## [v0.1.4] — 2026-10-27
+
+### Instalacja tej wersji
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
+
+HMTOOLS_VERSION=v0.1.4 curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
+```
+
+### Zmiany
+
+- Fix: prompt `hmtools>` / `[domena]>` nie znika przy pisaniu / Tab
+- Prompt w `read -e -p` (readline); Tab bez zbędnego outputu
+- Wczesny cache domen; lista kandydatów dopiero przy 2. Tab (gdy brak postępu)
+- Ekran powitalny: żółte powiadomienie o nowszej wersji + komenda curl|bash
+
+---
+
 ## [v0.1.3] — 2026-10-27
 
 ### Instalacja tej wersji

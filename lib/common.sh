@@ -156,10 +156,27 @@ hm_clear_site_context() {
 }
 
 hm_prompt_string() {
+  # zwykły wypis (bez znaczników readline)
   if [[ -n "${HM_SITE_DOMAIN}" ]]; then
     printf '%s[%s]%s> ' "${C_BOLD}${C_BLUE}" "${HM_SITE_DOMAIN}" "${C_RESET}"
   else
     printf '%shmtools%s> ' "${C_BOLD}${C_CYAN}" "${C_RESET}"
+  fi
+}
+
+hm_prompt_for_read() {
+  # Prompt dla `read -e -p` — kolory w \001...\002, żeby readline
+  # poprawnie przerysował linię po Tab (bind -x).
+  local si=$'\001' ei=$'\002'
+  if [[ -n "${HM_SITE_DOMAIN}" ]]; then
+    printf '%s%s%s[%s]%s%s%s> ' \
+      "${si}" "${C_BOLD}${C_BLUE}" "${ei}" \
+      "${HM_SITE_DOMAIN}" \
+      "${si}" "${C_RESET}" "${ei}"
+  else
+    printf '%s%s%shmtools%s%s%s> ' \
+      "${si}" "${C_BOLD}${C_CYAN}" "${ei}" \
+      "${si}" "${C_RESET}" "${ei}"
   fi
 }
 
@@ -300,6 +317,49 @@ hm_installed_version() {
     return 0
   fi
   echo ""
+}
+
+hm_latest_remote_version() {
+  # najnowszy tag (fallback: plik VERSION z brancha); cicho przy braku sieci
+  local repo="${HMTOOLS_REPO:-hubert-m/vps-ssh-tools}"
+  local branch="${HMTOOLS_BRANCH:-develop}"
+  local latest=""
+  latest="$(curl -fsSL --connect-timeout 2 --max-time 5 --retry 0 \
+    -H 'Accept: application/vnd.github+json' -H 'User-Agent: hmtools' \
+    "https://api.github.com/repos/${repo}/tags?per_page=100" 2>/dev/null \
+    | grep -oE '"name"[[:space:]]*:[[:space:]]*"[^"]+"' \
+    | sed -E 's/.*"([^"]+)"$/\1/' \
+    | sort -V | tail -1 || true)"
+  if [[ -z "${latest}" ]]; then
+    latest="$(curl -fsSL --connect-timeout 2 --max-time 5 --retry 0 \
+      "https://raw.githubusercontent.com/${repo}/${branch}/VERSION" 2>/dev/null \
+      | tr -d '[:space:]' || true)"
+  fi
+  printf '%s' "${latest}"
+}
+
+hm_version_is_newer() {
+  # 0 = remote ($2) nowsze niż local ($1)
+  local cur="$1" remote="$2" top
+  [[ -n "${cur}" && -n "${remote}" ]] || return 1
+  [[ "${cur}" == "${remote}" ]] && return 1
+  top="$(printf '%s\n%s\n' "${cur}" "${remote}" | sort -V | tail -1)"
+  [[ "${top}" == "${remote}" ]]
+}
+
+hm_welcome_update_notice() {
+  local cur remote repo branch
+  cur="$(hm_installed_version)"
+  [[ -n "${cur}" ]] || return 0
+  remote="$(hm_latest_remote_version)"
+  [[ -n "${remote}" ]] || return 0
+  hm_version_is_newer "${cur}" "${remote}" || return 0
+
+  repo="${HMTOOLS_REPO:-hubert-m/vps-ssh-tools}"
+  branch="${HMTOOLS_BRANCH:-develop}"
+  hm_warn "Dostępna nowsza wersja: masz ${cur}, najnowsza ${remote}"
+  hm_warn "Aktualizacja: curl -fsSL https://raw.githubusercontent.com/${repo}/${branch}/install.sh | bash"
+  hm_warn "Albo w REPL: update-hmtools"
 }
 
 hm_changelog_path() {
