@@ -107,8 +107,10 @@ hmtools> exit
 | `webs [--quick]` | Lista usług webowych |
 | `use <n\|domena>` | Wejście w kontekst (Tab uzupełnia domenę z listy) |
 | `backup setup` | Instalacja/konfiguracja rclone + Google Drive |
-| `backup full` | Pełna kopia serwera → Drive |
-| `backup site <domena>` | Kopia jednej strony |
+| `backup config` | Ustaw katalog root backupów na Drive (jednorazowo) |
+| `backup show` | Pokaż aktualny root i strukturę |
+| `backup full` | Pełna kopia → `Drive/full/<stamp>/` |
+| `backup site <domena>` | Kopia strony → `Drive/<domena>/<stamp>/` |
 | `backup test` | Test połączenia rclone |
 | `update-hmtools [--force]` | Update z GitHuba + wypis „co nowego” |
 | `version` | Wersja lokalna/remote + changelog tej wersji |
@@ -196,7 +198,7 @@ Wzór: [`config/hmtools.conf.example`](config/hmtools.conf.example)
 Ważne zmienne:
 
 ```bash
-RCLONE_REMOTE="gdrive:vps-backups"
+RCLONE_REMOTE="gdrive:vps-backups"   # root: full/ + <domena>/ + db-dumps/
 MIN_FREE_PERCENT=5
 CHUNK_SIZE_MB=512
 CHUNK_THRESHOLD_MB=2048
@@ -278,19 +280,22 @@ rclone authorize "drive"
 
 Wklej uzyskany token w `rclone config` na serwerze.
 
-### 3. Wpis w hmtools.conf
+### 3. Katalog root na Drive (jednorazowo)
 
-`backup setup` zapisze np.:
+`backup setup` lub później:
+
+```text
+hmtools> backup config
+```
+
+Zapisze np.:
 
 ```bash
 RCLONE_REMOTE="gdrive:vps-backups"
 ```
 
-Ręcznie:
-
-```bash
-nano /hm-tools/config/hmtools.conf
-```
+Ręcznie: `nano /hm-tools/config/hmtools.conf`  
+Podgląd: `backup show`
 
 ### 4. Test
 
@@ -304,26 +309,27 @@ rclone mkdir gdrive:vps-backups
 ### 5. Backup
 
 ```text
-[example.com]> backup          # pliki + DB strony
-hmtools> backup full           # konfigi + wszystkie DB + wszystkie strony
-hmtools> mysql dump nazwa_db   # jedna baza
+[example.com]> backup          # → <root>/example.com/<stamp>/
+hmtools> backup full           # → <root>/full/<stamp>/
+hmtools> mysql dump nazwa_db   # → <root>/db-dumps/
 ```
 
-Struktura na Drive (przykład):
+Struktura na Drive:
 
 ```text
-vps-backups/
-  <hostname>/
-    sites/example.com/20260327-143000/
-      files.tar.gz          # lub files.chunks/ przy dużych tree
-      db/nazwa.sql.gz
-      vhost.conf
-      manifest.json
-    full/20260327-150000/
-      system-configs.tar.gz
-      databases/*.sql.gz
-      sites/<domena>/...
-      manifest.json
+vps-backups/                          ← root (RCLONE_REMOTE)
+  full/20261027-143000/               ← pełna kopia serwera
+    system-configs.tar.gz
+    databases/*.sql.gz
+    sites/<domena>/...
+    manifest.json
+  projects.unideverse.com/20261027-150000/   ← kopia jednej strony
+    files.tar.gz   (lub files.chunks/)
+    db/nazwa.sql.gz
+    vhost.conf
+    manifest.json
+  db-dumps/
+    nazwa-20261027-151000.sql.gz
 ```
 
 ### Jak działają backupi (miejsce na dysku)
@@ -340,10 +346,10 @@ vps-backups/
 
 ```bash
 # Lista
-rclone ls gdrive:vps-backups/<host>/sites/example.com/
+rclone ls gdrive:vps-backups/example.com/
 
 # Pobierz pliki (na maszynę z miejscem — niekoniecznie ten sam pełny VPS)
-rclone copy gdrive:vps-backups/<host>/sites/example.com/<stamp>/ ./restore/
+rclone copy gdrive:vps-backups/example.com/<stamp>/ ./restore/
 
 # Rozpakuj pliki
 mkdir -p /home/example.com

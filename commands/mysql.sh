@@ -23,7 +23,7 @@ cmd_mysql() {
       hm_rclone_check || return 1
       hm_backup_check_space || return 1
       local dest
-      dest="$(hm_rclone_dest "${BACKUP_HOST_LABEL}/db-dumps/${db}-$(hm_backup_stamp).sql.gz")"
+      dest="$(hm_backup_dest_dbdump "${db}" "$(hm_backup_stamp)")"
       hm_stream_mysqldump "${db}" "${dest}"
       ;;
     help|-h|--help)

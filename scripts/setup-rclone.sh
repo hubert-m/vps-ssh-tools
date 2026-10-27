@@ -44,11 +44,19 @@ case "${go}" in
 esac
 
 echo
+echo "Katalog ROOT na Google Drive — jednorazowa konfiguracja."
+echo "Wewnątrz hmtools utworzy:"
+echo "  full/           — pełne kopie serwera"
+echo "  <domena>/       — kopie poszczególnych stron (np. projects.unideverse.com/)"
+echo "  db-dumps/       — jednorazowe zrzuty baz"
+echo
 read -r -p "Nazwa remote rclone [gdrive]: " remote_name
 remote_name="${remote_name:-gdrive}"
 
-read -r -p "Ścieżka katalogu na Drive [vps-backups]: " remote_path
+read -r -p "Ścieżka katalogu root na Drive [vps-backups]: " remote_path
 remote_path="${remote_path:-vps-backups}"
+remote_path="${remote_path#/}"
+remote_path="${remote_path%/}"
 
 RCLONE_REMOTE="${remote_name}:${remote_path}"
 
@@ -70,8 +78,9 @@ fi
 
 echo
 echo "Zapisano RCLONE_REMOTE=\"${RCLONE_REMOTE}\" w ${CONF}"
-echo "Tworzenie katalogu na Drive (jeśli nie istnieje)..."
+echo "Tworzenie katalogów root/ i full/ …"
 rclone mkdir "${RCLONE_REMOTE}" 2>/dev/null || true
+rclone mkdir "${RCLONE_REMOTE}/full" 2>/dev/null || true
 
 echo "Test:"
 if rclone lsd "${remote_name}:" >/dev/null 2>&1; then
@@ -83,5 +92,7 @@ else
 fi
 
 echo
-echo "Gotowe. Backup strony:  hmtools → use <domena> → backup"
-echo "Backup serwera:         hmtools → backup full"
+echo "Gotowe."
+echo "  Zmiana root później:  hmtools → backup config"
+echo "  Backup strony:        hmtools → use <domena> → backup"
+echo "  Backup serwera:       hmtools → backup full"

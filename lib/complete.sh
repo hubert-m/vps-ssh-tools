@@ -163,7 +163,7 @@ hm_tab_complete() {
             [[ -n "${m}" ]] && matches+=("${m}")
           done < <(hm_complete_filter_sites "${partial}")
         else
-          for m in setup full site test help; do
+          for m in setup config path root show status full site test help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi

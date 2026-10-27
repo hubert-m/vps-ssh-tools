@@ -186,7 +186,8 @@ Komendy globalne:
   webs [--quick]     Lista usług webowych
   use <n|domena>     Wejście w kontekst strony (Tab = podpowiedź domen)
   backup setup       Konfiguracja rclone / Google Drive
-  backup full        Pełna kopia serwera → Drive
+  backup config      Ustaw katalog root backupów na Drive
+  backup full        Pełna kopia → Drive/full/  |  site → Drive/<domena>/
   applog [N]         Ostatnie N linii logu hmtools (domyślnie 50)
   disk               Zużycie dysku
   ols [status|reload|restart|log]

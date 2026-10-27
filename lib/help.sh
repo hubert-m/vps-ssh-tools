@@ -62,15 +62,19 @@ EOF
     backup)
       cat <<'EOF'
 Użycie:
-  backup setup          Konfiguracja rclone / Google Drive
-  backup full           Pełna kopia serwera → Drive
-  backup site <domena>  Kopia jednej strony (lub w kontekście: backup)
-  backup test           Test połączenia rclone
+  backup setup              Instalacja/konfiguracja rclone + Google Drive
+  backup config             Ustaw katalog root na Drive (jednorazowo)
+  backup show               Pokaż aktualny root i strukturę
+  backup full               Pełna kopia serwera → Drive/full/<stamp>/
+  backup site <domena>      Kopia strony → Drive/<domena>/<stamp>/
+  backup test               Test połączenia rclone
 
-W kontekście strony samo 'backup' = pełna kopia tego środowiska
-(pliki + bazy) streamem na Google Drive (bez dużego archiwum lokalnego).
+Struktura na Google Drive (root = RCLONE_REMOTE):
+  <root>/full/<stamp>/           — pełne kopie serwera
+  <root>/<domena>/<stamp>/       — kopie poszczególnych stron
+  <root>/db-dumps/               — jednorazowe mysql dump
 
-Zobacz też: help mysql
+W kontekście strony samo 'backup' = kopia tej strony.
 EOF
       ;;
     disk)

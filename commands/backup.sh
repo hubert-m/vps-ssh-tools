@@ -14,8 +14,29 @@ cmd_backup() {
         return 1
       fi
       ;;
+    config|path|root)
+      # jednorazowe wskazanie katalogu root na Google Drive
+      hm_backup_config_root
+      ;;
+    show|status)
+      hm_load_config
+      echo "${C_BOLD}Backup — Google Drive${C_RESET}"
+      echo "  RCLONE_REMOTE : ${RCLONE_REMOTE:-brak}"
+      echo "  Struktura:"
+      echo "    ${RCLONE_REMOTE}/full/<stamp>/     — pełne kopie"
+      echo "    ${RCLONE_REMOTE}/<domena>/<stamp>/ — kopie stron"
+      echo "    ${RCLONE_REMOTE}/db-dumps/         — zrzuty mysql dump"
+      if hm_have_cmd rclone && [[ -n "${RCLONE_REMOTE:-}" ]]; then
+        echo
+        hm_info "Zawartość root:"
+        rclone lsd "${RCLONE_REMOTE}" 2>/dev/null | sed 's/^/  /' || hm_warn "Brak listingu (sprawdź połączenie)."
+      fi
+      ;;
     full|server)
-      if ! hm_confirm "Uruchomić pełny backup serwera na Google Drive?"; then
+      hm_load_config
+      echo "Root Drive: ${RCLONE_REMOTE}"
+      echo "Cel:       ${RCLONE_REMOTE}/full/<stamp>/"
+      if ! hm_confirm "Uruchomić pełny backup serwera na Google Drive"; then
         hm_info "Anulowano."
         return 0
       fi
@@ -30,6 +51,9 @@ cmd_backup() {
       if [[ -z "${HM_SITE_DOMAIN}" || "${HM_SITE_DOMAIN}" != "${domain}" ]]; then
         domain="$(hm_find_site_by_arg "${domain}")" || return 1
       fi
+      hm_load_config
+      echo "Root Drive: ${RCLONE_REMOTE}"
+      echo "Cel:       ${RCLONE_REMOTE}/${domain}/<stamp>/"
       hm_backup_site "${domain}"
       ;;
     test)
@@ -37,16 +61,9 @@ cmd_backup() {
       hm_rclone_test
       ;;
     ""|help|-h|--help)
-      cat <<'EOF'
-Użycie: backup <setup|full|site|test>
-  setup   Konfiguracja rclone + Google Drive
-  full    Pełna kopia serwera (konfigi + DB + wszystkie strony)
-  site    Kopia jednej strony (wymaga domeny lub kontekstu)
-  test    Test połączenia rclone
-EOF
+      hm_help_topic backup
       ;;
     *)
-      # jeśli jesteśmy w kontekście i podano nic sensownego — backup site
       if [[ -n "${HM_SITE_DOMAIN}" && -z "${sub}" ]]; then
         hm_backup_site "${HM_SITE_DOMAIN}"
       else

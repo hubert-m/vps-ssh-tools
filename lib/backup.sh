@@ -156,10 +156,14 @@ hm_backup_site() {
   hm_set_site_context "${domain}"
   local stamp remote_base
   stamp="$(hm_backup_stamp)"
-  remote_base="$(hm_rclone_dest "${BACKUP_HOST_LABEL}/sites/${domain}/${stamp}")"
+  # Drive: <root>/<domena>/<stamp>/
+  remote_base="$(hm_backup_dest_site "${domain}" "${stamp}")"
 
   hm_info "Backup strony ${domain}"
+  hm_info "Root Drive: ${RCLONE_REMOTE}"
   hm_info "Cel: ${remote_base}"
+  hm_rclone_ensure_backup_layout
+  hm_rclone_mkdir "$(hm_rclone_dest "${domain}")"
   hm_rclone_mkdir "${remote_base}"
 
   mkdir -p "${TMP_DIR}"
@@ -176,7 +180,7 @@ hm_backup_site() {
     else
       db_list="${db_list}\"${name}\","
     fi
-  done < <(hm_dbs_for_site "${domain}" "${HM_SITE_DOCROOT}")
+  done < <(hm_dbs_for_site "${domain}" "${HM_SITE_DOCROOT}" "${HM_SITE_ROOT}" "${HM_SITE_USER}")
   db_list="${db_list%,}"
 
   # Pliki
@@ -260,9 +264,13 @@ hm_backup_full() {
 
   local stamp remote_base
   stamp="$(hm_backup_stamp)"
-  remote_base="$(hm_rclone_dest "${BACKUP_HOST_LABEL}/full/${stamp}")"
+  # Drive: <root>/full/<stamp>/
+  remote_base="$(hm_backup_dest_full "${stamp}")"
 
-  hm_info "Pełny backup serwera → ${remote_base}"
+  hm_info "Pełny backup serwera"
+  hm_info "Root Drive: ${RCLONE_REMOTE}"
+  hm_info "Cel: ${remote_base}"
+  hm_rclone_ensure_backup_layout
   hm_rclone_mkdir "${remote_base}"
 
   hm_backup_system_configs "${remote_base}"
