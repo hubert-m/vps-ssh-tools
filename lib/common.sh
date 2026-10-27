@@ -194,7 +194,7 @@ Komendy globalne:
   mysql / dbs        Bazy danych (globalnie)
   cron [list|edit…]  Crony systemowe / użytkowników / strony
   pm2|node|apps      Procesy PM2/Node (porty, status, proxy OLS)
-  php                Dostępne wersje LSPHP
+  php                LSPHP na serwerze + najnowsze z php.net
   health             Szybki przegląd zdrowia serwera
   detect             Pokaż wykryty panel / webserver
   help [polecenie]   Lista komend lub pomoc do konkretnej (np. help use)

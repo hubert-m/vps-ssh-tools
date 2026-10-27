@@ -65,7 +65,8 @@ cmd_php() {
   if [[ -n "${HM_SITE_DOMAIN}" ]]; then
     cmd_site_php
   else
-    echo "Dostępne LSPHP:"
+    echo "${C_BOLD}Dostępne LSPHP${C_RESET} ${C_DIM}(+ porównanie z php.net)${C_RESET}"
+    echo
     hm_list_available_php
   fi
 }

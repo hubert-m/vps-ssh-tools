@@ -109,8 +109,8 @@ EOF
       cat <<'EOF'
 Użycie: php
 
-Globalnie: lista dostępnych LSPHP na serwerze.
-W kontekście: wersja PHP bieżącej strony + dostępne LSPHP.
+Globalnie: lista LSPHP + porównanie z najnowszymi z php.net.
+W kontekście: wersja PHP strony + ta sama lista LSPHP.
 EOF
       ;;
     health)

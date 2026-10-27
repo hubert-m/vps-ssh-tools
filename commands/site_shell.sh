@@ -41,7 +41,8 @@ cmd_site_php() {
   [[ -n "${HM_SITE_DOMAIN}" ]] || { hm_err "Brak kontekstu."; return 1; }
   echo "PHP strony: ${HM_SITE_PHP:--}"
   echo
-  echo "Dostępne LSPHP:"
+  echo "${C_BOLD}Dostępne LSPHP${C_RESET} ${C_DIM}(+ porównanie z php.net)${C_RESET}"
+  echo
   hm_list_available_php
 }
 
