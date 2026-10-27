@@ -14,9 +14,9 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ---
 
-## [Unreleased]
+## [Unreleased] / [v0.1.5]
 
-_(brak)_
+_(w przygotowaniu)_
 
 ---
 
