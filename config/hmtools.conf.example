@@ -21,3 +21,13 @@ BACKUP_EXCLUDES="cache node_modules .git *.log tmp temp wp-content/cache wp-cont
 
 # Hostname używany w ścieżkach backupu (domyślnie: hostname -f)
 # BACKUP_HOST_LABEL=""
+
+# --- Logi pracy hmtools ---
+# 1 = włączone, 0 = wyłączone
+LOG_ENABLED=1
+# Katalog logów (absolutny lub względem /hm-tools)
+LOG_DIR="/hm-tools/logs"
+# Usuwaj pliki starsze niż N dni (0 = nie czyść)
+LOG_RETENTION_DAYS=30
+# Minimalny poziom zapisu: DEBUG | INFO | WARN | ERROR
+LOG_LEVEL="INFO"

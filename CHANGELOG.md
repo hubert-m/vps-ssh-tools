@@ -26,6 +26,14 @@ Pierwsza publiczna wersja **hmtools** — zestaw narzędzi CLI do zarządzania V
 - Symlink `/usr/local/bin/hmtools`
 - Komendy REPL: `update-hmtools`, `version`
 
+#### Logowanie
+- Zapis pracy narzędzi do `/hm-tools/logs/hmtools-YYYY-MM-DD.log`
+- Poziomy: DEBUG / INFO / WARN / ERROR (`LOG_LEVEL`)
+- Logowanie komend (`CMD:`), komunikatów info/ok/warn/error oraz startu/końca sesji
+- Retencja starych plików (`LOG_RETENTION_DAYS`, domyślnie 30)
+- Komenda `applog [N]` — podgląd ostatnich linii logu
+- Katalog `logs/` chroniony przy aktualizacji (nie jest kasowany przez instalator)
+
 #### Shell kontekstowy
 - Interaktywny REPL `hmtools` (komunikaty po polsku)
 - `webs [--quick]` — lista usług webowych (domena, PHP, SSL, rozmiar, status)

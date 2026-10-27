@@ -49,10 +49,15 @@ source "${HMTOOLS_ROOT}/commands/health.sh"
 hm_require_root
 hm_load_config
 hm_detect_all
+hm_log_init
 
 hm_dispatch() {
   local cmd="${1:-}"
   shift || true
+
+  if [[ -n "${cmd}" ]]; then
+    hm_log_cmd "${cmd}${*:+ $*}"
+  fi
 
   # W kontekście strony — lokalne komendy
   if [[ -n "${HM_SITE_DOMAIN}" ]]; then
@@ -92,6 +97,7 @@ hm_dispatch() {
     mysql|dbs|db)    cmd_mysql "$@" ;;
     php)             cmd_php "$@" ;;
     health|status)   cmd_health "$@" ;;
+    applog|selflog|hmlog) cmd_applog "$@" ;;
     detect|env)      hm_detect_print ;;
     update-hmtools)
       local force=0
@@ -150,24 +156,33 @@ hm_dispatch() {
 # Tryb jednorazowy: hmtools webs / hmtools use example.com info ...
 if [[ "${1:-}" == "-c" ]]; then
   shift
+  hm_log_session_start "oneshot"
+  set +e
   # shellcheck disable=SC2068
   hm_dispatch $@
-  exit $?
+  rc=$?
+  set -e
+  hm_log_session_end
+  exit "${rc}"
 fi
 
 if [[ $# -gt 0 ]]; then
+  hm_log_session_start "oneshot"
   set +e
   hm_dispatch "$@"
   rc=$?
   set -e
+  hm_log_session_end
   if [[ "${rc}" -eq 99 ]]; then
     exit 0
   fi
   exit "${rc}"
 fi
 
+hm_log_session_start "interactive"
 hm_ok "hmtools — panel=${PANEL} webserver=${WEBSERVER} db=${DB_ENGINE}"
 hm_info "Wpisz 'help' aby zobaczyć komendy. 'exit' kończy."
+hm_info "Logi: ${LOG_DIR}/hmtools-$(date +%Y-%m-%d).log"
 
 while true; do
   hm_prompt_string
@@ -193,3 +208,4 @@ while true; do
 done
 
 hm_info "Do widzenia."
+hm_log_session_end

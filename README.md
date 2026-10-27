@@ -131,6 +131,7 @@ hmtools> exit
 | `backup test` | Test połączenia rclone |
 | `update-hmtools [--force]` | Update z GitHuba tylko gdy nowszy tag |
 | `version` | Zainstalowana wersja vs najnowszy tag |
+| `applog [N]` | Ostatnie N linii logu hmtools (domyślnie 50) |
 | `disk` | `df`, inody, top `/home` |
 | `ols [status\|reload\|restart\|log]` | OpenLiteSpeed |
 | `ssl` | Certyfikaty SSL wszystkich stron |
@@ -198,7 +199,38 @@ CHUNK_SIZE_MB=512
 CHUNK_THRESHOLD_MB=2048
 TMP_DIR="/tmp/hmtools-backup"
 BACKUP_EXCLUDES="cache node_modules .git *.log tmp temp wp-content/cache"
+
+LOG_ENABLED=1
+LOG_DIR="/hm-tools/logs"
+LOG_RETENTION_DAYS=30
+LOG_LEVEL="INFO"
 ```
+
+---
+
+## Logi pracy hmtools
+
+Każda sesja i komenda trafiają do plików dziennych:
+
+```text
+/hm-tools/logs/hmtools-2026-10-27.log
+```
+
+Przykładowa linia:
+
+```text
+2026-10-27 14:35:01 [INFO] site=example.com CMD: backup
+2026-10-27 14:35:02 [INFO] site=example.com Backup strony example.com
+```
+
+Podgląd z REPL:
+
+```text
+hmtools> applog
+hmtools> applog 200
+```
+
+Wyłączenie / zmiana poziomu — w `hmtools.conf` (`LOG_ENABLED=0`, `LOG_LEVEL=WARN`).
 
 ---
 
@@ -341,6 +373,7 @@ Logi / ścieżki konfiguracji:
 
 - Narzędzia: `/hm-tools`
 - Conf: `/hm-tools/config/hmtools.conf`
+- Logi pracy: `/hm-tools/logs/hmtools-YYYY-MM-DD.log`
 - Tmp chunków: `/tmp/hmtools-backup` (domyślnie)
 
 ---
@@ -353,11 +386,12 @@ vps-ssh-tools/
 ├── CHANGELOG.md
 ├── install.sh
 ├── bin/hmtools
-├── lib/           # common, detect, sites, db, size, backup, rclone
+├── lib/           # common, logging, detect, sites, db, size, backup, rclone
 ├── commands/      # webs, site_shell, backup, disk, ols, ssl, mysql, health
 ├── config/hmtools.conf.example
 └── scripts/setup-rclone.sh
 ```
+
 
 ---
 

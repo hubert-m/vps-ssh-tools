@@ -245,6 +245,7 @@ install_tree() {
       --exclude 'config/hmtools.conf' \
       --exclude 'VERSION' \
       --exclude '.installed' \
+      --exclude 'logs/' \
       --exclude '*.plan.md' \
       "${from}/" "${DEST}/"
   else
@@ -275,6 +276,8 @@ chmod +x "${DEST}/bin/hmtools"
 chmod +x "${DEST}/install.sh" 2>/dev/null || true
 chmod +x "${DEST}/scripts/"*.sh 2>/dev/null || true
 
+mkdir -p "${DEST}/logs"
+
 ln -sfn "${DEST}/bin/hmtools" "${BIN_LINK}"
 
 # Zapis wersji
@@ -288,9 +291,18 @@ mode=$([ "${IS_UPDATE}" -eq 1 ] && echo update || echo install)
 source=$([ "${USE_LOCAL}" -eq 1 ] && echo local || echo github)
 EOF
 
+# Krótki wpis w logu instalacji (niezależny od REPL)
+{
+  printf '%s [INFO] install version=%s mode=%s\n' \
+    "$(date '+%Y-%m-%d %H:%M:%S')" \
+    "${INSTALL_VERSION}" \
+    "$([ "${IS_UPDATE}" -eq 1 ] && echo update || echo install)"
+} >> "${DEST}/logs/hmtools-$(date +%Y-%m-%d).log" 2>/dev/null || true
+
 echo
 echo "Symlink: ${BIN_LINK} → ${DEST}/bin/hmtools"
 echo "Wersja  : ${INSTALL_VERSION}"
+echo "Logi    : ${DEST}/logs/"
 if [[ "${IS_UPDATE}" -eq 1 ]]; then
   echo "Aktualizacja zakończona."
 else
