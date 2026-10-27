@@ -94,7 +94,8 @@ Komendy w kontekście strony:
   info      Pełne informacje o środowisku
   size      Rozmiary katalogów
   dbs       Bazy danych przypisane / wykryte
-  ssl       Certyfikat SSL
+  ssl       Certyfikat SSL (wygasły → czerwony alert)
+  renew-ssl Odnów Let's Encrypt (z potwierdzeniem)
   php       Wersja PHP + dostępne LSPHP
   logs [N]  Ostatnie N linii logów (domyślnie 40)
   cron      Crony użytkownika strony (+ heurystyka w /etc)

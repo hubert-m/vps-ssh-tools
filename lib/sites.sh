@@ -151,6 +151,45 @@ hm_ssl_expiry() {
   openssl x509 -enddate -noout -in "${cert}" 2>/dev/null | sed 's/notAfter=//' || echo "-"
 }
 
+hm_ssl_expiry_epoch() {
+  local cert="$1" end
+  [[ -f "${cert}" ]] || return 1
+  end="$(openssl x509 -enddate -noout -in "${cert}" 2>/dev/null | sed 's/notAfter=//')"
+  [[ -n "${end}" ]] || return 1
+  date -d "${end}" +%s 2>/dev/null || return 1
+}
+
+hm_ssl_days_left() {
+  # dni do wygaśnięcia (ujemne = wygasł)
+  local cert="$1" exp now
+  exp="$(hm_ssl_expiry_epoch "${cert}" 2>/dev/null || true)"
+  [[ -n "${exp}" ]] || { echo ""; return 1; }
+  now="$(date +%s)"
+  echo $(( (exp - now) / 86400 ))
+}
+
+hm_ssl_status() {
+  # stdout: ok | soon | expired | missing | unknown
+  local cert="${1:-}"
+  local days warn_days="${2:-14}"
+  if [[ -z "${cert}" || ! -f "${cert}" ]]; then
+    echo "missing"
+    return 0
+  fi
+  days="$(hm_ssl_days_left "${cert}" 2>/dev/null || true)"
+  if [[ -z "${days}" ]]; then
+    echo "unknown"
+    return 0
+  fi
+  if [[ "${days}" -lt 0 ]]; then
+    echo "expired"
+  elif [[ "${days}" -le "${warn_days}" ]]; then
+    echo "soon"
+  else
+    echo "ok"
+  fi
+}
+
 hm_ssl_has() {
   local domain="$1"
   if hm_ssl_paths_for_domain "${domain}" >/dev/null 2>&1; then
@@ -482,14 +521,40 @@ EOF
 hm_print_site_ssl() {
   local domain="${1:-${HM_SITE_DOMAIN}}"
   [[ -n "${domain}" ]] || { hm_err "Brak domeny."; return 1; }
-  local cert
+  local cert days status
   cert="$(hm_ssl_paths_for_domain "${domain}" 2>/dev/null || true)"
   if [[ -z "${cert}" ]]; then
-    hm_warn "Brak certyfikatu dla ${domain}."
+    hm_err "BRAK CERTYFIKATU SSL dla ${domain}."
+    hm_info "Wystaw / odnów: renew-ssl ${domain}"
     return 0
   fi
-  echo "Cert: ${cert}"
-  echo "Expiry: $(hm_ssl_expiry "${cert}")"
+  status="$(hm_ssl_status "${cert}")"
+  days="$(hm_ssl_days_left "${cert}" 2>/dev/null || echo "?")"
+
+  echo "Cert   : ${cert}"
+  echo "Expiry : $(hm_ssl_expiry "${cert}")"
+  case "${status}" in
+    expired)
+      echo
+      hm_err "════════════════════════════════════════════"
+      hm_err "  CERTYFIKAT WYGASŁ (${days} dni temu)"
+      hm_err "  Domena: ${domain}"
+      hm_err "  Odnów:  renew-ssl   lub   ssl renew"
+      hm_err "════════════════════════════════════════════"
+      echo
+      ;;
+    soon)
+      echo
+      hm_warn "Certyfikat wygasa za ${days} dni — rozważ: renew-ssl"
+      echo
+      ;;
+    ok)
+      hm_ok "Certyfikat ważny (jeszcze ${days} dni)."
+      ;;
+    *)
+      hm_warn "Nie udało się ocenić ważności certyfikatu."
+      ;;
+  esac
   openssl x509 -in "${cert}" -noout -subject -issuer -dates 2>/dev/null || true
 }
 

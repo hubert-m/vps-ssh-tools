@@ -27,6 +27,8 @@ hm_help_topic() {
     crons) topic="cron" ;;
     node|apps) topic="pm2" ;;
     php-update) topic="update-php" ;;
+    ssl-renew) topic="renew-ssl" ;;
+    renew-ssl) topic="ssl" ;;
     \?|h) topic="help" ;;
   esac
 
@@ -89,12 +91,17 @@ Zarządzanie OpenLiteSpeed:
   log [N]   Ostatnie N linii error.log (domyślnie 50)
 EOF
       ;;
-    ssl)
+    ssl|renew-ssl|ssl-renew)
       cat <<'EOF'
-Użycie: ssl
+Użycie:
+  ssl                 Lista certyfikatów (status / dni do wygaśnięcia)
+  ssl renew [domena]  Alias: renew-ssl
+  renew-ssl [domena]  Odnów Let's Encrypt (potwierdzenie [t/N])
 
-Globalnie: lista certyfikatów SSL wszystkich wykrytych stron + daty wygaśnięcia.
-W kontekście strony: szczegóły certyfikatu bieżącej domeny.
+W kontekście strony: ssl = szczegóły certu; renew-ssl = odnowienie.
+Wygasły cert → wyraźny komunikat na czerwono + podpowiedź renew-ssl.
+
+Kolejność odnawiania: cyberpanel issueSSL → acme.sh → certbot.
 EOF
       ;;
     mysql)

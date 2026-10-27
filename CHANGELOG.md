@@ -20,6 +20,8 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: Tab przy wielu dopasowaniach nie wywala hmtools (`set -e` + `bind -x`)
 - `php`: porównanie zainstalowanych LSPHP z najnowszymi wersjami z php.net
 - `update-php` / `php update <ver>` — aktualizacja `lsphp*` z potwierdzeniem + reload OLS
+- `ssl`: wyraźny czerwony alert przy wygasłym certyfikacie
+- `renew-ssl` / `ssl renew` — odnowienie Let's Encrypt (cyberpanel / acme / certbot)
 
 ---
 

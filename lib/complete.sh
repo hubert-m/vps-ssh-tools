@@ -81,7 +81,7 @@ hm_complete_commands() {
   local partial="$1"
   local cmds=(
     webs sites list use enter cd
-    backup disk df ols lsws ssl mysql dbs db cron crons pm2 node apps php
+    backup disk df ols lsws ssl renew-ssl ssl-renew mysql dbs db cron crons pm2 node apps php
     update-php php-update
     health status applog selflog hmlog detect env
     update-hmtools version ver uninstall-hmtools
@@ -172,6 +172,25 @@ hm_tab_complete() {
         for m in status reload restart log logs error help; do
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
         done
+        ;;
+      ssl)
+        local re_ssl_renew='ssl[[:space:]]+(renew|renewal|issue)[[:space:]]'
+        if [[ "${prefix}" =~ $re_ssl_renew ]]; then
+          hm_ensure_sites_cached
+          while IFS= read -r m; do
+            [[ -n "${m}" ]] && matches+=("${m}")
+          done < <(hm_complete_filter_sites "${partial}")
+        else
+          for m in renew renewal issue help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
+      renew-ssl|ssl-renew)
+        hm_ensure_sites_cached
+        while IFS= read -r m; do
+          [[ -n "${m}" ]] && matches+=("${m}")
+        done < <(hm_complete_filter_sites "${partial}")
         ;;
       mysql|dbs|db)
         for m in list ls dump help; do

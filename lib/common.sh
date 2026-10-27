@@ -190,7 +190,8 @@ Komendy globalne:
   applog [N]         Ostatnie N linii logu hmtools (domyślnie 50)
   disk               Zużycie dysku
   ols [status|reload|restart|log]
-  ssl                Certyfikaty SSL stron
+  ssl                Certyfikaty SSL stron (status / dni)
+  renew-ssl [domena] Odnów Let's Encrypt (z potwierdzeniem)
   mysql / dbs        Bazy danych (globalnie)
   cron [list|edit…]  Crony systemowe / użytkowników / strony
   pm2|node|apps      Procesy PM2/Node (porty, status, proxy OLS)
@@ -205,7 +206,7 @@ Komendy globalne:
   exit / quit        Wyjście z hmtools
 
 W kontekście strony (po 'use'):
-  info, size, dbs, ssl, php, logs, cron, pm2, backup, clean, exit
+  info, size, dbs, ssl, renew-ssl, php, logs, cron, pm2, backup, clean, exit
 
 Szczegóły: help <polecenie>
 EOF

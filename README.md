@@ -116,7 +116,8 @@ hmtools> exit
 | `applog [N]` | Ostatnie N linii logu hmtools (domyślnie 50) |
 | `disk` | `df`, inody, top `/home` |
 | `ols [status\|reload\|restart\|log]` | OpenLiteSpeed |
-| `ssl` | Certyfikaty SSL wszystkich stron |
+| `ssl` | Certyfikaty SSL (status / dni; wygasły na czerwono) |
+| `renew-ssl [domena]` | Odnów Let's Encrypt (z potwierdzeniem) |
 | `mysql` / `dbs` | Lista baz (lub w kontekście: powiązane) |
 | `mysql dump <db>` | Jedna baza streamem na Drive |
 | `cron` / `crons` | Crony systemowe / users / strony; `cron edit` |
@@ -135,7 +136,8 @@ hmtools> exit
 | `info` | Pełne info: ścieżki, rozmiar, DB, SSL, PHP |
 | `size` | Rozmiary katalogów + top `du` |
 | `dbs` | Bazy (CyberPanel confirmed + heurystyka) |
-| `ssl` | Certyfikat i data wygaśnięcia |
+| `ssl` | Certyfikat; wygasły → czerwony alert |
+| `renew-ssl` | Odnów Let's Encrypt dla strony |
 | `php` | PHP strony + lista LSPHP |
 | `logs [N]` | Ostatnie N linii logów |
 | `cron` | Crony użytkownika strony (+ heurystyka w `/etc`) |
