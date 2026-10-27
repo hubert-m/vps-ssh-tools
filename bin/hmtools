@@ -125,24 +125,30 @@ hm_dispatch() {
       ;;
     version|ver)
       local cur latest
-      cur="?"
-      [[ -f "${HMTOOLS_ROOT}/VERSION" ]] && cur="$(tr -d '[:space:]' < "${HMTOOLS_ROOT}/VERSION")"
+      cur="$(hm_installed_version)"
+      [[ -n "${cur}" ]] || cur="?"
       echo "Zainstalowana: ${cur}"
       latest="$(curl -fsSL --retry 2 -H 'Accept: application/vnd.github+json' -H 'User-Agent: hmtools' \
         'https://api.github.com/repos/hubert-m/vps-ssh-tools/tags?per_page=100' 2>/dev/null \
         | grep -oE '"name"[[:space:]]*:[[:space:]]*"[^"]+"' \
         | sed -E 's/.*"([^"]+)"$/\1/' \
         | sort -V | tail -1 || true)"
+      if [[ -z "${latest}" ]]; then
+        latest="$(curl -fsSL --retry 2 \
+          "https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/${HMTOOLS_BRANCH:-develop}/VERSION" 2>/dev/null \
+          | tr -d '[:space:]' || true)"
+      fi
       if [[ -n "${latest}" ]]; then
-        echo "Najnowszy tag: ${latest}"
+        echo "Najnowsza:     ${latest}"
         if [[ "${cur}" == "${latest}" ]]; then
           hm_ok "Jesteś na najnowszej wersji."
         else
           hm_warn "Dostępna aktualizacja. Uruchom: update-hmtools"
         fi
       else
-        hm_warn "Nie udało się pobrać listy tagów z GitHuba."
+        hm_warn "Nie udało się sprawdzić najnowszej wersji na GitHubie."
       fi
+      hm_print_changelog "${cur}" "Co zawiera zainstalowana wersja (${cur})"
       ;;
     help|h|\?)       hm_help_global ;;
     exit|quit|q)     return 99 ;;

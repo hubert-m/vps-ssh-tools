@@ -1,0 +1,12 @@
+# hmtools v0.1.0
+
+- Interaktywny shell kontekstowy (webs → use → exit)
+- Auto-detekcja CyberPanel / OpenLiteSpeed / MariaDB-MySQL
+- Lista i szczegóły stron (info, size, dbs, ssl, php, logs)
+- Backupy streamingowe na Google Drive (rclone) — strona i cały serwer
+- Oszczędność dysku: stream + chunki, próg wolnego miejsca
+- Narzędzia: disk, ols, ssl, mysql, health, clean, detect
+- Instalacja/aktualizacja jednym curl | bash (porównanie po git tagach)
+- Logi pracy w /hm-tools/logs (applog)
+- Komendy: update-hmtools, version (z wypisem changelogu)
+- Powitanie po pierwszej instalacji z instrukcją startu

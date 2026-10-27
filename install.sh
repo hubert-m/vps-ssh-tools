@@ -59,7 +59,6 @@ latest_repo_tag() {
     echo ""
     return 0
   fi
-  # wyciągnij name; sort -V; ostatni = najnowszy
   tags="$(printf '%s' "${json}" | grep -oE '"name"[[:space:]]*:[[:space:]]*"[^"]+"' \
     | sed -E 's/.*"([^"]+)"$/\1/' || true)"
   if [[ -z "${tags}" ]]; then
@@ -69,7 +68,14 @@ latest_repo_tag() {
   printf '%s\n' "${tags}" | sort -V | tail -1
 }
 
-# Fallback gdy brak tagów: krótki SHA HEAD brancha
+# Fallback: plik VERSION z brancha (np. v0.1.0 zanim powstanie tag)
+latest_version_file() {
+  curl -fsSL --retry 2 \
+    "https://raw.githubusercontent.com/${REPO_SLUG}/${REPO_BRANCH}/VERSION" 2>/dev/null \
+    | tr -d '[:space:]' || true
+}
+
+# Ostateczny fallback: branch@sha
 latest_branch_sha() {
   local json sha
   json="$(curl -fsSL --retry 3 --retry-delay 1 \
@@ -86,28 +92,92 @@ latest_branch_sha() {
 }
 
 resolve_target_version() {
-  # Preferencja: HMTOOLS_VERSION (konkretny tag) → najnowszy tag → branch@sha
+  # Preferencja: HMTOOLS_VERSION → najnowszy tag → VERSION z brancha → branch@sha
   if [[ -n "${HMTOOLS_VERSION:-}" ]]; then
     echo "${HMTOOLS_VERSION}"
     return 0
   fi
-  local tag
+  local tag ver
   tag="$(latest_repo_tag)"
   if [[ -n "${tag}" ]]; then
     echo "${tag}"
     return 0
   fi
+  ver="$(latest_version_file)"
+  if [[ -n "${ver}" ]]; then
+    echo "${ver}"
+    return 0
+  fi
   latest_branch_sha
 }
 
+# 1 = pobieraj tarball brancha zamiast taga (gdy wersja z VERSION, a taga jeszcze nie ma)
+USE_BRANCH_TARBALL=0
+
 tarball_url_for_version() {
   local ver="$1"
-  if [[ "${ver}" == *"@"* ]]; then
-    # develop@abc1234 → tarball brancha (pełne drzewo brancha)
+  if [[ "${USE_BRANCH_TARBALL}" == "1" || "${ver}" == *"@"* ]]; then
     echo "https://github.com/${REPO_SLUG}/archive/refs/heads/${REPO_BRANCH}.tar.gz"
   else
-    echo "https://github.com/${REPO_SLUG}/archive/refs/tags/${ver}.tar.gz"
+    # jeśli tag nie istnieje jeszcze na remote — fallback do brancha
+    local code
+    code="$(curl -sSL -o /dev/null -w '%{http_code}' \
+      "https://github.com/${REPO_SLUG}/archive/refs/tags/${ver}.tar.gz" 2>/dev/null || echo 000)"
+    if [[ "${code}" == "200" ]]; then
+      echo "https://github.com/${REPO_SLUG}/archive/refs/tags/${ver}.tar.gz"
+    else
+      echo "https://github.com/${REPO_SLUG}/archive/refs/heads/${REPO_BRANCH}.tar.gz"
+    fi
   fi
+}
+
+print_changelog_file() {
+  local ver="$1"
+  local title="$2"
+  local f="${DEST}/changelogs/${ver}.txt"
+  if [[ ! -f "${f}" ]]; then
+    f="$(ls -1 "${DEST}/changelogs"/v*.txt 2>/dev/null | sort -V | tail -1 || true)"
+  fi
+  if [[ -z "${f}" || ! -f "${f}" ]]; then
+    return 0
+  fi
+  echo
+  echo "════════════════════════════════════════"
+  echo " ${title}"
+  echo "════════════════════════════════════════"
+  echo
+  cat "${f}"
+  echo
+}
+
+print_welcome() {
+  cat <<EOF
+
+════════════════════════════════════════
+ Witaj w hmtools!
+════════════════════════════════════════
+
+Narzędzia zostały zainstalowane w: ${DEST}
+Uruchomienie:
+
+  hmtools
+
+W środku:
+  help              — lista komend
+  webs              — lista stron na serwerze
+  use <n|domena>    — wejście w kontekst strony
+  version           — wersja + co nowego
+  update-hmtools    — aktualizacja z GitHuba
+  exit              — wyjście
+
+Dokumentacja: ${DEST}/README.md
+Logi:         ${DEST}/logs/
+Konfiguracja: ${DEST}/config/hmtools.conf
+
+Google Drive (backupy):
+  hmtools → backup setup
+
+EOF
 }
 
 TARGET_VERSION="$(resolve_target_version)"
@@ -116,7 +186,13 @@ if [[ -z "${TARGET_VERSION}" ]]; then
   exit 1
 fi
 
+# Brak taga na GitHubie, ale znamy wersję z VERSION → bierzemy tarball brancha
+if [[ -z "$(latest_repo_tag)" ]] && [[ "${TARGET_VERSION}" != *"@"* ]]; then
+  USE_BRANCH_TARBALL=1
+fi
+
 CURRENT_VERSION="$(installed_version)"
+PREV_VERSION="${CURRENT_VERSION}"
 
 echo "Repozytorium : ${REPO_SLUG}"
 echo "Wersja remote: ${TARGET_VERSION}"
@@ -129,6 +205,9 @@ fi
 if [[ "${IS_UPDATE}" -eq 1 && -n "${CURRENT_VERSION}" && "${CURRENT_VERSION}" == "${TARGET_VERSION}" && "${FORCE}" != "1" ]]; then
   echo
   echo "hmtools jest już w najnowszej wersji (${CURRENT_VERSION}). Nic do zrobienia."
+  if [[ -f "${DEST}/changelogs/${CURRENT_VERSION}.txt" ]]; then
+    print_changelog_file "${CURRENT_VERSION}" "Co zawiera ${CURRENT_VERSION}"
+  fi
   echo "Wymuszenie: HMTOOLS_FORCE=1 curl -fsSL ... | bash"
   echo "            lub: hmtools → update-hmtools --force"
   exit 0
@@ -212,11 +291,14 @@ USE_LOCAL=0
 if SRC="$(resolve_local_src)"; then
   USE_LOCAL=1
   echo "Tryb: lokalne źródło (${SRC})"
-  local_v="$(local_git_version "${SRC}")"
-  if [[ -n "${local_v}" ]]; then
-    INSTALL_VERSION="${local_v}"
+  if [[ -f "${SRC}/VERSION" ]]; then
+    INSTALL_VERSION="$(tr -d '[:space:]' < "${SRC}/VERSION")"
+  else
+    local_v="$(local_git_version "${SRC}")"
+    if [[ -n "${local_v}" ]]; then
+      INSTALL_VERSION="${local_v}"
+    fi
   fi
-  # Przy lokalnym klonie też pomiń, jeśli ta sama wersja (chyba że FORCE)
   if [[ "${IS_UPDATE}" -eq 1 && -n "${CURRENT_VERSION}" && "${CURRENT_VERSION}" == "${INSTALL_VERSION}" && "${FORCE}" != "1" ]]; then
     echo
     echo "hmtools jest już w wersji lokalnego źródła (${CURRENT_VERSION}). Nic do zrobienia."
@@ -225,6 +307,12 @@ if SRC="$(resolve_local_src)"; then
 else
   echo "Tryb: pobranie z GitHuba (wersja ${TARGET_VERSION})"
   SRC="$(fetch_remote_src)"
+  if [[ -f "${SRC}/VERSION" ]]; then
+    src_ver="$(tr -d '[:space:]' < "${SRC}/VERSION")"
+    if [[ "${INSTALL_VERSION}" == *"@"* && -n "${src_ver}" ]]; then
+      INSTALL_VERSION="${src_ver}"
+    fi
+  fi
 fi
 
 # --- Zachowaj istniejącą konfigurację ---
@@ -250,13 +338,15 @@ install_tree() {
       "${from}/" "${DEST}/"
   else
     local d
-    for d in bin lib commands scripts; do
+    for d in bin lib commands scripts changelogs; do
+      [[ -d "${from}/${d}" ]] || continue
       rm -rf "${DEST}/${d}"
       cp -a "${from}/${d}" "${DEST}/"
     done
     mkdir -p "${DEST}/config"
     cp -a "${from}/config/hmtools.conf.example" "${DEST}/config/"
     [[ -f "${from}/README.md" ]] && cp -a "${from}/README.md" "${DEST}/"
+    [[ -f "${from}/CHANGELOG.md" ]] && cp -a "${from}/CHANGELOG.md" "${DEST}/"
     [[ -f "${from}/install.sh" ]] && cp -a "${from}/install.sh" "${DEST}/"
   fi
 }
@@ -303,12 +393,13 @@ echo
 echo "Symlink: ${BIN_LINK} → ${DEST}/bin/hmtools"
 echo "Wersja  : ${INSTALL_VERSION}"
 echo "Logi    : ${DEST}/logs/"
-if [[ "${IS_UPDATE}" -eq 1 ]]; then
-  echo "Aktualizacja zakończona."
+
+if [[ "${IS_UPDATE}" -eq 0 ]]; then
+  print_welcome
+  print_changelog_file "${INSTALL_VERSION}" "Co nowego w ${INSTALL_VERSION}"
 else
-  echo "Instalacja zakończona."
+  echo "Aktualizacja zakończona: ${PREV_VERSION:-?} → ${INSTALL_VERSION}"
+  print_changelog_file "${INSTALL_VERSION}" "Co nowego w ${INSTALL_VERSION}"
+  echo "Ponowny update: curl -fsSL https://raw.githubusercontent.com/${REPO_SLUG}/${REPO_BRANCH}/install.sh | bash"
+  echo "                lub: hmtools → update-hmtools"
 fi
-echo "Uruchom: hmtools"
-echo "Update:  curl -fsSL https://raw.githubusercontent.com/${REPO_SLUG}/${REPO_BRANCH}/install.sh | bash"
-echo "         lub: hmtools → update-hmtools"
-echo "Konfiguracja Google Drive: hmtools → backup setup"

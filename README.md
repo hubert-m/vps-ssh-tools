@@ -50,7 +50,12 @@ Instalator porównuje:
 Jeśli wersje są równe — **nic nie pobiera i nie nadpisuje**.  
 Gdy nie ma jeszcze żadnego taga, używany jest fallback `develop@<sha>`.
 
-Po wydaniu nowej wersji utwórz tag na GitHubie, np.:
+Po wydaniu nowej wersji:
+
+1. Uzupełnij `VERSION` (np. `v0.2.0`)
+2. Dodaj `changelogs/v0.2.0.txt` (proste punkty — to widzi `version` / update)
+3. Dopisz wpis w `CHANGELOG.md`
+4. Utwórz tag:
 
 ```bash
 git tag v0.1.0
@@ -129,8 +134,8 @@ hmtools> exit
 | `backup full` | Pełna kopia serwera → Drive |
 | `backup site <domena>` | Kopia jednej strony |
 | `backup test` | Test połączenia rclone |
-| `update-hmtools [--force]` | Update z GitHuba tylko gdy nowszy tag |
-| `version` | Zainstalowana wersja vs najnowszy tag |
+| `update-hmtools [--force]` | Update z GitHuba + wypis „co nowego” |
+| `version` | Wersja lokalna/remote + changelog tej wersji |
 | `applog [N]` | Ostatnie N linii logu hmtools (domyślnie 50) |
 | `disk` | `df`, inody, top `/home` |
 | `ols [status\|reload\|restart\|log]` | OpenLiteSpeed |
@@ -384,6 +389,8 @@ Logi / ścieżki konfiguracji:
 vps-ssh-tools/
 ├── README.md
 ├── CHANGELOG.md
+├── VERSION                 # np. v0.1.0
+├── changelogs/v0.1.0.txt   # punktowy changelog (CLI + instalator)
 ├── install.sh
 ├── bin/hmtools
 ├── lib/           # common, logging, detect, sites, db, size, backup, rclone
@@ -391,6 +398,7 @@ vps-ssh-tools/
 ├── config/hmtools.conf.example
 └── scripts/setup-rclone.sh
 ```
+
 
 
 ---

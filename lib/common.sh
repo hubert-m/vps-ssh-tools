@@ -170,8 +170,8 @@ Komendy globalne:
   use <n|domena>     Wejście w kontekst strony
   backup setup       Konfiguracja rclone / Google Drive
   backup full        Pełna kopia serwera → Drive
-  update-hmtools     Aktualizacja z GitHuba (tylko gdy nowszy tag)
-  version            Zainstalowana vs najnowszy tag
+  update-hmtools     Aktualizacja z GitHuba (+ co nowego)
+  version            Wersja + changelog zainstalowanej wersji
   applog [N]         Ostatnie N linii logu hmtools (domyślnie 50)
   disk               Zużycie dysku
   ols [status|reload|restart|log]
@@ -204,4 +204,54 @@ cmd_applog() {
   echo "Log: ${f} (ostatnie ${n} linii)"
   echo "----"
   tail -n "${n}" "${f}"
+}
+
+hm_installed_version() {
+  if [[ -f "${HMTOOLS_ROOT}/VERSION" ]]; then
+    tr -d '[:space:]' < "${HMTOOLS_ROOT}/VERSION"
+    return 0
+  fi
+  echo ""
+}
+
+hm_changelog_path() {
+  local ver="${1:-}"
+  local f
+  if [[ -n "${ver}" ]]; then
+    f="${HMTOOLS_ROOT}/changelogs/${ver}.txt"
+    if [[ -f "${f}" ]]; then
+      echo "${f}"
+      return 0
+    fi
+    if [[ "${ver}" == v* ]]; then
+      f="${HMTOOLS_ROOT}/changelogs/${ver#v}.txt"
+    else
+      f="${HMTOOLS_ROOT}/changelogs/v${ver}.txt"
+    fi
+    if [[ -f "${f}" ]]; then
+      echo "${f}"
+      return 0
+    fi
+  fi
+  # fallback: najnowszy plik w changelogs/
+  f="$(ls -1 "${HMTOOLS_ROOT}/changelogs"/v*.txt 2>/dev/null | sort -V | tail -1 || true)"
+  [[ -n "${f}" && -f "${f}" ]] || return 1
+  echo "${f}"
+}
+
+hm_print_changelog() {
+  local ver="${1:-}"
+  local title="${2:-}"
+  local f
+  if ! f="$(hm_changelog_path "${ver}")"; then
+    hm_warn "Brak pliku changelog dla wersji ${ver}."
+    return 0
+  fi
+  if [[ -n "${title}" ]]; then
+    echo
+    echo "${C_BOLD}${title}${C_RESET}"
+    echo
+  fi
+  cat "${f}"
+  echo
 }
