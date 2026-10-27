@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# hmtools — interaktywny shell narzędzi VPS (OpenLiteSpeed / CyberPanel)
+set -euo pipefail
+
+# Rozwiąż katalog instalacji (symlink-safe)
+_SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "${_SOURCE}" ]]; do
+  _DIR="$(cd "$(dirname "${_SOURCE}")" && pwd)"
+  _SOURCE="$(readlink "${_SOURCE}")"
+  [[ "${_SOURCE}" != /* ]] && _SOURCE="${_DIR}/${_SOURCE}"
+done
+_BIN_DIR="$(cd "$(dirname "${_SOURCE}")" && pwd)"
+HMTOOLS_ROOT="$(cd "${_BIN_DIR}/.." && pwd)"
+export HMTOOLS_ROOT
+export HMTOOLS_CONF="${HMTOOLS_CONF:-${HMTOOLS_ROOT}/config/hmtools.conf}"
+
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/common.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/detect.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/size.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/db.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/sites.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/rclone_drive.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/backup.sh"
+
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/commands/webs.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/commands/site_shell.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/commands/backup.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/commands/disk.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/commands/ols.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/commands/ssl.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/commands/mysql.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/commands/health.sh"
+
+hm_require_root
+hm_load_config
+hm_detect_all
+
+hm_dispatch() {
+  local cmd="${1:-}"
+  shift || true
+
+  # W kontekście strony — lokalne komendy
+  if [[ -n "${HM_SITE_DOMAIN}" ]]; then
+    case "${cmd}" in
+      info)   cmd_site_info; return ;;
+      size)   cmd_site_size; return ;;
+      dbs|databases) cmd_site_dbs; return ;;
+      ssl)    cmd_site_ssl; return ;;
+      php)    cmd_site_php; return ;;
+      logs|log) cmd_site_logs "$@"; return ;;
+      backup)
+        if [[ "${1:-}" == "" ]]; then
+          cmd_site_backup
+        else
+          cmd_backup "$@"
+        fi
+        return
+        ;;
+      clean)  cmd_site_clean; return ;;
+      help|?) cmd_site_help; return ;;
+      exit|quit|back|.. )
+        hm_ok "Wyjście z kontekstu ${HM_SITE_DOMAIN}."
+        hm_clear_site_context
+        return
+        ;;
+    esac
+  fi
+
+  case "${cmd}" in
+    "" ) return 0 ;;
+    webs|sites|list) cmd_webs "$@" ;;
+    use|enter|cd)    cmd_use "$@" ;;
+    backup)          cmd_backup "$@" ;;
+    disk|df)         cmd_disk "$@" ;;
+    ols|lsws)        cmd_ols "$@" ;;
+    ssl)             cmd_ssl "$@" ;;
+    mysql|dbs|db)    cmd_mysql "$@" ;;
+    php)             cmd_php "$@" ;;
+    health|status)   cmd_health "$@" ;;
+    detect|env)      hm_detect_print ;;
+    help|h|\?)       hm_help_global ;;
+    exit|quit|q)     return 99 ;;
+    *)
+      hm_err "Nieznana komenda: ${cmd}. Wpisz 'help'."
+      return 1
+      ;;
+  esac
+}
+
+# Tryb jednorazowy: hmtools webs / hmtools use example.com info ...
+if [[ "${1:-}" == "-c" ]]; then
+  shift
+  # shellcheck disable=SC2068
+  hm_dispatch $@
+  exit $?
+fi
+
+if [[ $# -gt 0 ]]; then
+  set +e
+  hm_dispatch "$@"
+  rc=$?
+  set -e
+  if [[ "${rc}" -eq 99 ]]; then
+    exit 0
+  fi
+  exit "${rc}"
+fi
+
+hm_ok "hmtools — panel=${PANEL} webserver=${WEBSERVER} db=${DB_ENGINE}"
+hm_info "Wpisz 'help' aby zobaczyć komendy. 'exit' kończy."
+
+while true; do
+  hm_prompt_string
+  if ! read -r -e line; then
+    echo
+    break
+  fi
+  # trim
+  line="${line#"${line%%[![:space:]]*}"}"
+  line="${line%"${line##*[![:space:]]}"}"
+  [[ -z "${line}" ]] && continue
+
+  history -s "${line}" 2>/dev/null || true
+
+  set +e
+  # shellcheck disable=SC2086
+  hm_dispatch ${line}
+  rc=$?
+  set -e
+  if [[ "${rc}" -eq 99 ]]; then
+    break
+  fi
+done
+
+hm_info "Do widzenia."

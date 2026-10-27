@@ -1,0 +1,23 @@
+# Konfiguracja hmtools — skopiuj do hmtools.conf i dostosuj.
+# Lokalizacja na serwerze: /hm-tools/config/hmtools.conf
+
+# Remote rclone (nazwa:ścieżka). Przykład: gdrive:vps-backups
+RCLONE_REMOTE="gdrive:vps-backups"
+
+# Minimalny wolny procent dysku przed backupem (abort jeśli mniej)
+MIN_FREE_PERCENT=5
+
+# Rozmiar chunka (MB) przy trybie split (gdy stream rcat niedostępny / bardzo duże drzewa)
+CHUNK_SIZE_MB=512
+
+# Próg rozmiaru (MB), powyżej którego używany jest tryb chunk zamiast pojedynczego rcat
+CHUNK_THRESHOLD_MB=2048
+
+# Katalog tymczasowy na bieżący chunk (usuwany po uploadzie)
+TMP_DIR="/tmp/hmtools-backup"
+
+# Wzorce wykluczeń dla tar (oddzielone spacją, składnia --exclude)
+BACKUP_EXCLUDES="cache node_modules .git *.log tmp temp wp-content/cache wp-content/uploads/cache"
+
+# Hostname używany w ścieżkach backupu (domyślnie: hostname -f)
+# BACKUP_HOST_LABEL=""

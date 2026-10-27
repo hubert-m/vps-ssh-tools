@@ -1,0 +1,452 @@
+#!/usr/bin/env bash
+# Discovery i szczegóły stron webowych
+
+if [[ -n "${HMTOOLS_SITES_LOADED:-}" ]]; then
+  return 0 2>/dev/null || true
+fi
+HMTOOLS_SITES_LOADED=1
+
+_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=common.sh
+source "${_LIB_DIR}/common.sh"
+# shellcheck source=detect.sh
+source "${_LIB_DIR}/detect.sh"
+# shellcheck source=size.sh
+source "${_LIB_DIR}/size.sh"
+# shellcheck source=db.sh
+source "${_LIB_DIR}/db.sh"
+
+# Tablica domen (kolejność listy)
+declare -a HM_SITES_LIST=()
+
+hm_vhost_conf_path() {
+  local domain="$1"
+  local d
+  for d in \
+    "${OLS_VHOSTS}/${domain}/vhconf.conf" \
+    "${OLS_VHOSTS}/${domain}/vhost.conf" \
+    "${OLS_VHOSTS}/${domain}/httpd.conf"
+  do
+    if [[ -f "${d}" ]]; then
+      echo "${d}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+hm_parse_vhost_docroot() {
+  local conf="$1"
+  [[ -f "${conf}" ]] || return 1
+  # OLS: docRoot                   /home/example.com/public_html
+  awk '
+    tolower($1)=="docroot" {
+      gsub(/\r/,"",$2);
+      print $2;
+      exit
+    }
+  ' "${conf}" 2>/dev/null
+}
+
+hm_parse_vhost_php() {
+  local conf="$1"
+  [[ -f "${conf}" ]] || return 0
+  # szukaj lsphpXX w path / extProcessor
+  local php
+  php="$(grep -Eo 'lsphp[0-9]+' "${conf}" 2>/dev/null | head -1 || true)"
+  if [[ -n "${php}" ]]; then
+    # lsphp82 -> 8.2
+    local ver="${php#lsphp}"
+    if [[ "${#ver}" -eq 2 ]]; then
+      echo "${ver:0:1}.${ver:1:1}"
+      return
+    fi
+    echo "${php}"
+    return
+  fi
+  php="$(grep -Ei 'php[ _]version|phpPath' "${conf}" 2>/dev/null | head -1 || true)"
+  echo "${php:-?}"
+}
+
+hm_ssl_paths_for_domain() {
+  local domain="$1"
+  local candidates=(
+    "/etc/letsencrypt/live/${domain}/fullchain.pem"
+    "${OLS_ROOT}/conf/vhosts/${domain}/ssl/fullchain.pem"
+    "/home/${domain}/ssl/fullchain.pem"
+    "/etc/ssl/${domain}/fullchain.pem"
+  )
+  local p
+  for p in "${candidates[@]}"; do
+    if [[ -f "${p}" ]]; then
+      echo "${p}"
+      return 0
+    fi
+  done
+  # cert/key w vhost
+  local conf
+  conf="$(hm_vhost_conf_path "${domain}" 2>/dev/null || true)"
+  if [[ -n "${conf}" ]]; then
+    local cert
+    cert="$(awk 'tolower($1)=="keyfile" || tolower($1)=="certfile" || tolower($1)=="certfile" {print $2; exit}' "${conf}" 2>/dev/null || true)"
+    # OLS uses keyFile / certFile
+    cert="$(awk 'tolower($1)=="certfile"{print $2; exit}' "${conf}" 2>/dev/null || true)"
+    if [[ -n "${cert}" && -f "${cert}" ]]; then
+      echo "${cert}"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+hm_ssl_expiry() {
+  local cert="$1"
+  [[ -f "${cert}" ]] || { echo "-"; return; }
+  openssl x509 -enddate -noout -in "${cert}" 2>/dev/null | sed 's/notAfter=//' || echo "-"
+}
+
+hm_ssl_has() {
+  local domain="$1"
+  if hm_ssl_paths_for_domain "${domain}" >/dev/null 2>&1; then
+    echo "yes"
+  else
+    echo "no"
+  fi
+}
+
+hm_cyberpanel_list_domains() {
+  if hm_have_cmd cyberpanel; then
+    # różne wersje CLI — próbujemy JSON, potem tekst
+    if cyberpanel listWebsitesJson >/dev/null 2>&1; then
+      cyberpanel listWebsitesJson 2>/dev/null \
+        | tr ',' '\n' \
+        | grep -Eo '"domain"[[:space:]]*:[[:space:]]*"[^"]+"' \
+        | sed -E 's/.*"([^"]+)"$/\1/' \
+        || true
+      return
+    fi
+  fi
+  # DB cyberpanel
+  hm_mysql_exec cyberpanel -e "SELECT domainName FROM websites_website ORDER BY domainName;" 2>/dev/null || true
+}
+
+hm_cyberpanel_site_meta() {
+  local domain="$1"
+  # php, externalApp, state
+  hm_mysql_exec cyberpanel -e "
+    SELECT COALESCE(phpSelection,''), COALESCE(externalApp,''), COALESCE(state,1)
+    FROM websites_website WHERE domainName='${domain}' LIMIT 1;
+  " 2>/dev/null || true
+}
+
+hm_ols_list_vhost_dirs() {
+  [[ -n "${OLS_VHOSTS}" && -d "${OLS_VHOSTS}" ]] || return 0
+  local d name
+  for d in "${OLS_VHOSTS}"/*; do
+    [[ -d "${d}" ]] || continue
+    name="$(basename "${d}")"
+    case "${name}" in
+      Example|Example2|DEFAULT|localhost) continue ;;
+    esac
+    echo "${name}"
+  done
+}
+
+hm_home_public_html_domains() {
+  local d
+  for d in /home/*/public_html; do
+    [[ -d "${d}" ]] || continue
+    basename "$(dirname "${d}")"
+  done
+}
+
+# Buduje unikalną listę domen do HM_SITES_LIST
+hm_sites_add() {
+  # $1 = domain, uses globals HM_SITES_LIST + HM_SITES_SEEN
+  local d="$1"
+  [[ -n "${d}" ]] || return 0
+  [[ "${HM_SITES_SEEN}" == *"|${d}|"* ]] && return 0
+  HM_SITES_SEEN="${HM_SITES_SEEN}${d}|"
+  HM_SITES_LIST+=("${d}")
+}
+
+hm_discover_sites() {
+  hm_detect_all
+  HM_SITES_LIST=()
+  HM_SITES_SEEN="|"
+  local domain
+
+  if [[ "${PANEL}" == "cyberpanel" ]]; then
+    while IFS= read -r domain; do
+      hm_sites_add "${domain}"
+    done < <(hm_cyberpanel_list_domains)
+  fi
+
+  if [[ "${#HM_SITES_LIST[@]}" -eq 0 ]] && [[ -n "${OLS_VHOSTS}" ]]; then
+    while IFS= read -r domain; do
+      hm_sites_add "${domain}"
+    done < <(hm_ols_list_vhost_dirs)
+  fi
+
+  # uzupełnij / zbuduj z /home/*/public_html
+  while IFS= read -r domain; do
+    hm_sites_add "${domain}"
+  done < <(hm_home_public_html_domains)
+}
+
+hm_resolve_site_paths() {
+  local domain="$1"
+  local root="" docroot="" logs="" vhost="" php="?" user="" status="active"
+
+  vhost="$(hm_vhost_conf_path "${domain}" 2>/dev/null || true)"
+
+  if [[ -n "${vhost}" ]]; then
+    docroot="$(hm_parse_vhost_docroot "${vhost}" || true)"
+    php="$(hm_parse_vhost_php "${vhost}" || true)"
+  fi
+
+  if [[ -z "${docroot}" && -d "/home/${domain}/public_html" ]]; then
+    docroot="/home/${domain}/public_html"
+  fi
+  if [[ -z "${docroot}" && -d "/var/www/${domain}/html" ]]; then
+    docroot="/var/www/${domain}/html"
+  fi
+  if [[ -z "${docroot}" && -d "/var/www/${domain}" ]]; then
+    docroot="/var/www/${domain}"
+  fi
+
+  if [[ -n "${docroot}" ]]; then
+    root="$(dirname "${docroot}")"
+    # CyberPanel: site root = /home/domain
+    if [[ "$(basename "${docroot}")" == "public_html" ]]; then
+      root="$(dirname "${docroot}")"
+    fi
+  elif [[ -d "/home/${domain}" ]]; then
+    root="/home/${domain}"
+    docroot="${root}/public_html"
+  fi
+
+  if [[ -d "${root}/logs" ]]; then
+    logs="${root}/logs"
+  elif [[ -n "${OLS_ROOT}" && -d "${OLS_ROOT}/logs" ]]; then
+    logs="${OLS_ROOT}/logs"
+  fi
+
+  if [[ "${PANEL}" == "cyberpanel" ]]; then
+    local meta php_sel ext state
+    meta="$(hm_cyberpanel_site_meta "${domain}")"
+    if [[ -n "${meta}" ]]; then
+      php_sel="$(echo "${meta}" | awk -F'\t' '{print $1}')"
+      ext="$(echo "${meta}" | awk -F'\t' '{print $2}')"
+      state="$(echo "${meta}" | awk -F'\t' '{print $3}')"
+      [[ -n "${php_sel}" && "${php_sel}" != "NULL" ]] && php="${php_sel}"
+      [[ -n "${ext}" && "${ext}" != "NULL" ]] && user="${ext}"
+      if [[ "${state}" == "0" ]]; then
+        status="suspended"
+      fi
+    fi
+  fi
+
+  if [[ -z "${user}" && -n "${root}" && -d "${root}" ]]; then
+    user="$(stat -c '%U' "${root}" 2>/dev/null || true)"
+  fi
+
+  # Normalizacja PHP (PHP 8.2 -> 8.2)
+  php="$(echo "${php}" | sed -E 's/.*PHP[[:space:]]*//; s/lsphp//; s/^([0-9])([0-9])$/\1.\2/')"
+
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+    "${domain}" \
+    "${root}" \
+    "${docroot}" \
+    "${logs}" \
+    "${vhost}" \
+    "${php:-?}" \
+    "${user}|${status}"
+}
+
+hm_set_site_context() {
+  local domain="$1"
+  local row root docroot logs vhost php rest user status
+  row="$(hm_resolve_site_paths "${domain}")"
+  IFS=$'\t' read -r domain root docroot logs vhost php rest <<<"${row}"
+  user="${rest%%|*}"
+  status="${rest##*|}"
+
+  HM_SITE_DOMAIN="${domain}"
+  HM_SITE_ROOT="${root}"
+  HM_SITE_DOCROOT="${docroot}"
+  HM_SITE_LOGS="${logs}"
+  HM_SITE_VHOST="${vhost}"
+  HM_SITE_PHP="${php}"
+  HM_SITE_USER="${user}"
+  HM_SITE_STATUS="${status}"
+}
+
+hm_find_site_by_arg() {
+  # arg = numer (1-based) lub domena
+  local arg="$1"
+  hm_discover_sites
+  if [[ "${arg}" =~ ^[0-9]+$ ]]; then
+    local idx=$((arg - 1))
+    if [[ "${idx}" -lt 0 || "${idx}" -ge "${#HM_SITES_LIST[@]}" ]]; then
+      hm_err "Numer poza zakresem (1–${#HM_SITES_LIST[@]})."
+      return 1
+    fi
+    echo "${HM_SITES_LIST[$idx]}"
+    return 0
+  fi
+  local d
+  for d in "${HM_SITES_LIST[@]}"; do
+    if [[ "${d}" == "${arg}" ]]; then
+      echo "${d}"
+      return 0
+    fi
+  done
+  # częściowe dopasowanie
+  local matches=()
+  for d in "${HM_SITES_LIST[@]}"; do
+    if [[ "${d}" == *"${arg}"* ]]; then
+      matches+=("${d}")
+    fi
+  done
+  if [[ "${#matches[@]}" -eq 1 ]]; then
+    echo "${matches[0]}"
+    return 0
+  fi
+  if [[ "${#matches[@]}" -gt 1 ]]; then
+    hm_err "Ambiguous: ${matches[*]}"
+    return 1
+  fi
+  hm_err "Nie znaleziono strony: ${arg}"
+  return 1
+}
+
+hm_list_sites() {
+  local quick="${1:-0}"
+  hm_discover_sites
+
+  if [[ "${#HM_SITES_LIST[@]}" -eq 0 ]]; then
+    hm_warn "Nie wykryto żadnych usług webowych."
+    return 0
+  fi
+
+  printf '%-4s %-36s %-8s %-5s %-12s %s\n' "#" "DOMAIN" "PHP" "SSL" "SIZE" "STATUS"
+  printf '%-4s %-36s %-8s %-5s %-12s %s\n' "---" "------" "---" "---" "----" "------"
+
+  local i=0 domain row root docroot logs vhost php rest user status size ssl
+  for domain in "${HM_SITES_LIST[@]}"; do
+    i=$((i + 1))
+    row="$(hm_resolve_site_paths "${domain}")"
+    IFS=$'\t' read -r _ root docroot logs vhost php rest <<<"${row}"
+    status="${rest##*|}"
+    ssl="$(hm_ssl_has "${domain}")"
+    if [[ "${quick}" == "1" ]]; then
+      size="-"
+    else
+      if [[ -n "${root}" && -d "${root}" ]]; then
+        size="$(hm_format_size_from_path "${root}")"
+      elif [[ -n "${docroot}" && -d "${docroot}" ]]; then
+        size="$(hm_format_size_from_path "${docroot}")"
+      else
+        size="?"
+      fi
+    fi
+    printf '%-4s %-36s %-8s %-5s %-12s %s\n' \
+      "${i}" "${domain}" "${php:-?}" "${ssl}" "${size}" "${status}"
+  done
+  echo
+  hm_info "Użyj: use <numer|domena>  aby wejść w kontekst."
+}
+
+hm_print_site_info() {
+  local domain="${1:-${HM_SITE_DOMAIN}}"
+  [[ -n "${domain}" ]] || { hm_err "Brak domeny w kontekście."; return 1; }
+
+  hm_set_site_context "${domain}"
+
+  local size_root=0 size_doc=0
+  [[ -n "${HM_SITE_ROOT}" && -d "${HM_SITE_ROOT}" ]] && size_root="$(hm_dir_size_bytes "${HM_SITE_ROOT}")"
+  [[ -n "${HM_SITE_DOCROOT}" && -d "${HM_SITE_DOCROOT}" ]] && size_doc="$(hm_dir_size_bytes "${HM_SITE_DOCROOT}")"
+
+  local cert expiry
+  cert="$(hm_ssl_paths_for_domain "${domain}" 2>/dev/null || true)"
+  expiry="-"
+  [[ -n "${cert}" ]] && expiry="$(hm_ssl_expiry "${cert}")"
+
+  cat <<EOF
+${C_BOLD}Szczegóły: ${domain}${C_RESET}
+  Status      : ${HM_SITE_STATUS}
+  User        : ${HM_SITE_USER:--}
+  PHP         : ${HM_SITE_PHP:--}
+  Site root   : ${HM_SITE_ROOT:--}
+  Docroot     : ${HM_SITE_DOCROOT:--}
+  Logs        : ${HM_SITE_LOGS:--}
+  VHost conf  : ${HM_SITE_VHOST:--}
+  Rozmiar env : $(hm_human_size "${size_root}")  (całe środowisko)
+  Rozmiar www : $(hm_human_size "${size_doc}")  (docroot)
+  SSL cert    : ${cert:--}
+  SSL expiry  : ${expiry}
+  Wolne dysk  : $(hm_disk_free_percent /)% free  (used $(hm_disk_used_percent /)%)
+
+${C_BOLD}Bazy danych:${C_RESET}
+EOF
+  hm_print_dbs_for_site "${domain}" "${HM_SITE_DOCROOT}"
+}
+
+hm_print_site_ssl() {
+  local domain="${1:-${HM_SITE_DOMAIN}}"
+  [[ -n "${domain}" ]] || { hm_err "Brak domeny."; return 1; }
+  local cert
+  cert="$(hm_ssl_paths_for_domain "${domain}" 2>/dev/null || true)"
+  if [[ -z "${cert}" ]]; then
+    hm_warn "Brak certyfikatu dla ${domain}."
+    return 0
+  fi
+  echo "Cert: ${cert}"
+  echo "Expiry: $(hm_ssl_expiry "${cert}")"
+  openssl x509 -in "${cert}" -noout -subject -issuer -dates 2>/dev/null || true
+}
+
+hm_print_site_logs() {
+  local domain="${1:-${HM_SITE_DOMAIN}}"
+  local lines="${2:-40}"
+  hm_set_site_context "${domain}"
+  local candidates=()
+  [[ -n "${HM_SITE_LOGS}" ]] && candidates+=(
+    "${HM_SITE_LOGS}/access.log"
+    "${HM_SITE_LOGS}/error.log"
+    "${HM_SITE_LOGS}/${domain}.access_log"
+    "${HM_SITE_LOGS}/${domain}.error_log"
+  )
+  [[ -n "${OLS_ROOT}" ]] && candidates+=(
+    "${OLS_ROOT}/logs/error.log"
+    "${OLS_ROOT}/logs/access.log"
+  )
+  local f found=0
+  for f in "${candidates[@]}"; do
+    if [[ -f "${f}" ]]; then
+      found=1
+      echo "==== ${f} (ostatnie ${lines}) ===="
+      tail -n "${lines}" "${f}" 2>/dev/null || true
+      echo
+    fi
+  done
+  if [[ "${found}" -eq 0 ]]; then
+    hm_warn "Nie znaleziono plików logów."
+    [[ -n "${HM_SITE_LOGS}" ]] && ls -la "${HM_SITE_LOGS}" 2>/dev/null || true
+  fi
+}
+
+hm_list_available_php() {
+  local p ver
+  local root="${OLS_ROOT:-/usr/local/lsws}"
+  shopt -s nullglob
+  for p in "${root}"/lsphp*; do
+    [[ -d "${p}" ]] || continue
+    if [[ -x "${p}/bin/php" ]]; then
+      ver="$(${p}/bin/php -r 'echo PHP_VERSION;' 2>/dev/null || true)"
+      printf '%s → %s\n' "${p}" "${ver:-?}"
+    fi
+  done
+  shopt -u nullglob
+}
