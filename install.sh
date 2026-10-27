@@ -5,7 +5,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
 #
 # Konkretna wersja:
-#   HMTOOLS_VERSION=v0.1.2 curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
+#   HMTOOLS_VERSION=v0.1.3 curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
 #
 # Wymuszenie reinstalacji:
 #   HMTOOLS_FORCE=1 curl -fsSL ... | bash

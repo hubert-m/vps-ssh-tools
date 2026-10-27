@@ -1,0 +1,3 @@
+# hmtools v0.1.3
+
+- Fix: pm2.sh — błąd składni `[[ =~ ]]` (klasa `[= ]`) blokujący start hmtools

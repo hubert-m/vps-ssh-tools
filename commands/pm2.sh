@@ -112,13 +112,16 @@ hm_pm2_parse_apps() {
       ] | @tsv
     ' 2>/dev/null | while IFS=$'\t' read -r name pid status cwd script porthint mem restarts; do
       local port=""
-      # wyciągnij port: sama liczba, PORT=3000, -p/--port 3000
-      if [[ "${porthint}" =~ ^[0-9]+$ ]]; then
+      # regex w zmiennych — unika błędów parsowania [= ] / [[:space:]] w =~
+      local re_num='^[0-9]+$'
+      local re_port_eq='PORT(=|:)([0-9]+)'
+      local re_port_flag='(^|[[:space:]])(-p|--port)(=|[[:space:]])([0-9]+)'
+      if [[ "${porthint}" =~ $re_num ]]; then
         port="${porthint}"
-      elif [[ "${porthint}" =~ PORT[=:]([0-9]+) ]]; then
-        port="${BASH_REMATCH[1]}"
-      elif [[ "${porthint}" =~ (^|[[:space:]])(-p|--port)[= ]([0-9]+) ]]; then
-        port="${BASH_REMATCH[3]}"
+      elif [[ "${porthint}" =~ $re_port_eq ]]; then
+        port="${BASH_REMATCH[2]}"
+      elif [[ "${porthint}" =~ $re_port_flag ]]; then
+        port="${BASH_REMATCH[4]}"
       fi
       if [[ -z "${port}" && -n "${pid}" && "${pid}" != "0" ]]; then
         port="$(hm_pid_listen_ports "${pid}" | head -1)"

@@ -20,6 +20,24 @@ _(brak)_
 
 ---
 
+## [v0.1.3] — 2026-10-27
+
+### Instalacja tej wersji
+
+```bash
+# najnowsza (gdy v0.1.3 jest aktualnym tagiem) — bez HMTOOLS_VERSION
+curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
+
+# na sztywno v0.1.3
+HMTOOLS_VERSION=v0.1.3 curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
+```
+
+### Zmiany
+
+- Fix: `pm2.sh` — błąd składni `[[ =~ ]]` (klasa `[= ]`) blokujący start hmtools
+
+---
+
 ## [v0.1.2] — 2026-10-27
 
 ### Instalacja tej wersji
