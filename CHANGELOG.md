@@ -25,6 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `dbs` w kontekście strony — poprawny schemat CyberPanel + heurystyki
 - `dbs` globalnie: sortowanie malejąco po rozmiarze
 - `clean`: szczegółowy podgląd (ścieżki/rozmiary/zawartość) + potwierdzenie yes/no
+- `size` (kontekst strony): dodatkowy poziom — top w `public_html` / dużych katalogach
 
 ---
 

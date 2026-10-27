@@ -8,24 +8,54 @@ cmd_site_info() {
 cmd_site_size() {
   [[ -n "${HM_SITE_DOMAIN}" ]] || { hm_err "Brak kontekstu."; return 1; }
   local root="${HM_SITE_ROOT:-${HM_SITE_DOCROOT}}"
+  local doc="${HM_SITE_DOCROOT:-}"
   if [[ -z "${root}" || ! -d "${root}" ]]; then
     hm_err "Brak katalogu strony."
     return 1
   fi
-  echo "Środowisko: ${root}"
-  echo "Całość: $(hm_format_size_from_path "${root}")"
-  if [[ -d "${root}/public_html" ]]; then
-    echo "public_html: $(hm_format_size_from_path "${root}/public_html")"
+  [[ -z "${doc}" || ! -d "${doc}" ]] && doc=""
+  if [[ -z "${doc}" && -d "${root}/public_html" ]]; then
+    doc="${root}/public_html"
+  fi
+
+  echo "${C_BOLD}Rozmiary — ${HM_SITE_DOMAIN}${C_RESET}"
+  echo "  Środowisko : ${root}"
+  echo "  Całość     : $(hm_format_size_from_path "${root}")"
+  if [[ -n "${doc}" ]]; then
+    echo "  Docroot    : ${doc}  ($(hm_format_size_from_path "${doc}"))"
   fi
   if [[ -d "${root}/logs" ]]; then
-    echo "logs: $(hm_format_size_from_path "${root}/logs")"
+    echo "  logs       : $(hm_format_size_from_path "${root}/logs")"
   fi
   if [[ -d "${root}/mail" ]]; then
-    echo "mail: $(hm_format_size_from_path "${root}/mail")"
+    echo "  mail       : $(hm_format_size_from_path "${root}/mail")"
   fi
+
   echo
-  echo "Top katalogi:"
-  du -h --max-depth=1 "${root}" 2>/dev/null | sort -hr | head -20
+  echo "${C_BOLD}Top katalogi (środowisko)${C_RESET} ${C_DIM}— max-depth 1${C_RESET}"
+  du -h --max-depth=1 "${root}" 2>/dev/null | sort -hr | head -20 | sed 's/^/  /'
+
+  # drugi poziom: wnętrze docroot / public_html
+  if [[ -n "${doc}" && -d "${doc}" ]]; then
+    echo
+    echo "${C_BOLD}Top w $(basename "${doc}")${C_RESET} ${C_DIM}— ${doc}${C_RESET}"
+    du -h --max-depth=1 "${doc}" 2>/dev/null | sort -hr | head -25 | sed 's/^/  /'
+  fi
+
+  # jeśli największe katalogi poza docroot zasługują na 2. poziom (.npm, .nvm, .cache…)
+  local sub
+  for sub in .npm .nvm .cache .pm2 node_modules; do
+    if [[ -d "${root}/${sub}" ]]; then
+      local sz
+      sz="$(hm_dir_size_bytes "${root}/${sub}" 2>/dev/null || echo 0)"
+      # pokaż rozbicie tylko gdy > ~50MB
+      if [[ "${sz}" =~ ^[0-9]+$ ]] && [[ "${sz}" -ge 52428800 ]]; then
+        echo
+        echo "${C_BOLD}Top w ${sub}${C_RESET} ${C_DIM}— ${root}/${sub}${C_RESET}"
+        du -h --max-depth=1 "${root}/${sub}" 2>/dev/null | sort -hr | head -15 | sed 's/^/  /'
+      fi
+    fi
+  done
 }
 
 cmd_site_dbs() {
