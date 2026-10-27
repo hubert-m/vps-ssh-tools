@@ -184,10 +184,16 @@ cmd_site_clean() {
 
   local reply
   printf '%s [yes/no]: ' "Na pewno wyczyścić powyższą zawartość?"
-  read -r reply || return 1
+  read -r reply || {
+    hm_file_log WARN "CONFIRM: clean → (EOF/abort)"
+    return 1
+  }
   case "${reply}" in
-    yes|YES|Yes|y|Y|tak|Tak|TAK|t|T) ;;
+    yes|YES|Yes|y|Y|tak|Tak|TAK|t|T)
+      hm_file_log INFO "CONFIRM: clean → yes (${reply})"
+      ;;
     *)
+      hm_file_log INFO "CONFIRM: clean → no (${reply:-empty})"
       hm_info "Anulowano — nic nie usunięto."
       return 0
       ;;

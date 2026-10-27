@@ -190,11 +190,14 @@ hm_dispatch() {
 if [[ "${1:-}" == "-c" ]]; then
   shift
   hm_log_session_start "oneshot"
+  local _t0 rc
+  _t0="$(date +%s)"
   set +e
   # shellcheck disable=SC2068
   hm_dispatch $@
   rc=$?
   set -e
+  hm_log_cmd_end "${rc}" "$(( $(date +%s) - _t0 ))"
   [[ "${rc}" -ne 98 ]] && hm_log_session_end
   [[ "${rc}" -eq 99 || "${rc}" -eq 98 ]] && exit 0
   exit "${rc}"
@@ -202,10 +205,13 @@ fi
 
 if [[ $# -gt 0 ]]; then
   hm_log_session_start "oneshot"
+  local _t0 rc
+  _t0="$(date +%s)"
   set +e
   hm_dispatch "$@"
   rc=$?
   set -e
+  hm_log_cmd_end "${rc}" "$(( $(date +%s) - _t0 ))"
   [[ "${rc}" -ne 98 ]] && hm_log_session_end
   if [[ "${rc}" -eq 99 || "${rc}" -eq 98 ]]; then
     exit 0
@@ -236,11 +242,15 @@ while true; do
 
   history -s "${line}" 2>/dev/null || true
 
+  local _t0 _dur
+  _t0="$(date +%s)"
   set +e
   # shellcheck disable=SC2086
   hm_dispatch ${line}
   rc=$?
   set -e
+  _dur="$(( $(date +%s) - _t0 ))"
+  hm_log_cmd_end "${rc}" "${_dur}"
   if [[ "${rc}" -eq 99 ]]; then
     break
   fi

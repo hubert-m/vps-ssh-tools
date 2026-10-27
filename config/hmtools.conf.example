@@ -40,3 +40,7 @@ LOG_DIR="/hm-tools/logs"
 LOG_RETENTION_DAYS=30
 # Minimalny poziom zapisu: DEBUG | INFO | WARN | ERROR
 LOG_LEVEL="INFO"
+# 1 = kopiuj cały stdout/stderr sesji do logu (tabele, odpowiedzi, output komend)
+LOG_CAPTURE_OUTPUT=1
+# Limit linii outputu z hm_run (0 = bez limitu)
+LOG_RUN_MAX_LINES=400

@@ -27,11 +27,11 @@ else
   C_RESET= C_BOLD= C_DIM= C_RED= C_GREEN= C_YELLOW= C_BLUE= C_CYAN=
 fi
 
-hm_log()   { printf '%s\n' "$*"; hm_file_log INFO "$*"; }
-hm_info()  { printf '%s%s%s\n' "${C_CYAN}" "$*" "${C_RESET}"; hm_file_log INFO "$*"; }
-hm_ok()    { printf '%s%s%s\n' "${C_GREEN}" "$*" "${C_RESET}"; hm_file_log INFO "$*"; }
-hm_warn()  { printf '%s%s%s\n' "${C_YELLOW}" "$*" "${C_RESET}" >&2; hm_file_log WARN "$*"; }
-hm_err()   { printf '%s%s%s\n' "${C_RED}" "$*" "${C_RESET}" >&2; hm_file_log ERROR "$*"; }
+hm_log()   { printf '%s\n' "$*"; hm_file_log_ui INFO "$*"; }
+hm_info()  { printf '%s%s%s\n' "${C_CYAN}" "$*" "${C_RESET}"; hm_file_log_ui INFO "$*"; }
+hm_ok()    { printf '%s%s%s\n' "${C_GREEN}" "$*" "${C_RESET}"; hm_file_log_ui INFO "$*"; }
+hm_warn()  { printf '%s%s%s\n' "${C_YELLOW}" "$*" "${C_RESET}" >&2; hm_file_log_ui WARN "$*"; }
+hm_err()   { printf '%s%s%s\n' "${C_RED}" "$*" "${C_RESET}" >&2; hm_file_log_ui ERROR "$*"; }
 hm_die()   { hm_err "$*"; exit 1; }
 
 hm_require_root() {
@@ -53,6 +53,8 @@ hm_load_config() {
   LOG_DIR="${LOG_DIR:-${HMTOOLS_ROOT}/logs}"
   LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-30}"
   LOG_LEVEL="${LOG_LEVEL:-INFO}"
+  LOG_CAPTURE_OUTPUT="${LOG_CAPTURE_OUTPUT:-1}"
+  LOG_RUN_MAX_LINES="${LOG_RUN_MAX_LINES:-400}"
 
   if [[ -f "${HMTOOLS_CONF}" ]]; then
     # shellcheck disable=SC1090
@@ -73,10 +75,19 @@ hm_confirm() {
   local prompt="${1:-Kontynuować?}"
   local reply
   printf '%s [t/N]: ' "${prompt}"
-  read -r reply || return 1
+  read -r reply || {
+    hm_file_log WARN "CONFIRM: ${prompt} → (EOF/abort)"
+    return 1
+  }
   case "${reply}" in
-    t|T|tak|Tak|TAK|y|Y|yes|Yes) return 0 ;;
-    *) return 1 ;;
+    t|T|tak|Tak|TAK|y|Y|yes|Yes)
+      hm_file_log INFO "CONFIRM: ${prompt} → yes (${reply})"
+      return 0
+      ;;
+    *)
+      hm_file_log INFO "CONFIRM: ${prompt} → no (${reply:-empty})"
+      return 1
+      ;;
   esac
 }
 

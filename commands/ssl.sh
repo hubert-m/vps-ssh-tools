@@ -95,7 +95,7 @@ cmd_renew_ssl() {
   if hm_have_cmd cyberpanel; then
     hm_info "CyberPanel: issueSSL --domainName ${domain}"
     set +e
-    cyberpanel issueSSL --domainName "${domain}"
+    hm_run cyberpanel issueSSL --domainName "${domain}"
     local rc=$?
     set -e
     if [[ "${rc}" -eq 0 ]]; then

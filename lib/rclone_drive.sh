@@ -179,18 +179,31 @@ hm_rclone_rcat() {
   # stdin → remote path (pełny remote:path)
   local dest="$1"
   hm_rclone_check || return 1
+  hm_file_log INFO "RUN: rclone rcat ${dest}"
+  set +e
   rclone rcat "${dest}" --quiet
+  local rc=$?
+  set -e
+  hm_file_log INFO "RUN_END: rc=${rc} cmd=rclone rcat ${dest}"
+  return "${rc}"
 }
 
 hm_rclone_copyto() {
   local src="$1"
   local dest="$2"
   hm_rclone_check || return 1
+  hm_file_log INFO "RUN: rclone copyto ${src} → ${dest}"
+  set +e
   rclone copyto "${src}" "${dest}" --quiet
+  local rc=$?
+  set -e
+  hm_file_log INFO "RUN_END: rc=${rc} cmd=rclone copyto"
+  return "${rc}"
 }
 
 hm_rclone_mkdir() {
   local dest="$1"
   hm_rclone_check || return 1
+  hm_file_log DEBUG "RUN: rclone mkdir ${dest}"
   rclone mkdir "${dest}" >/dev/null 2>&1 || true
 }

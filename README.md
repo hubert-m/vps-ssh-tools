@@ -209,33 +209,39 @@ LOG_ENABLED=1
 LOG_DIR="/hm-tools/logs"
 LOG_RETENTION_DAYS=30
 LOG_LEVEL="INFO"
+LOG_CAPTURE_OUTPUT=1          # cały output sesji → log
+LOG_RUN_MAX_LINES=400         # limit linii z hm_run (apt, rclone, …)
 ```
 
 ---
 
 ## Logi pracy hmtools
 
-Każda sesja i komenda trafiają do plików dziennych:
+Każda sesja trafia do plików dziennych:
 
 ```text
 /hm-tools/logs/hmtools-2026-10-27.log
 ```
 
-Przykładowa linia:
+Rejestrowane m.in.:
+
+| Prefiks | Znaczenie |
+|---------|-----------|
+| `CMD` / `CMD_END` | Komenda użytkownika + kod wyjścia i czas |
+| `OUT` / `ERR` | Cały stdout/stderr sesji (tabele, komunikaty) |
+| `RUN` / `RUN_OUT` / `RUN_END` | Zewnętrzne polecenia (`apt`, `rclone`, `cyberpanel`, …) |
+| `CONFIRM` | Odpowiedzi yes/no / t/N |
+
+Przykład:
 
 ```text
 2026-10-27 14:35:01 [INFO] site=example.com CMD: backup
-2026-10-27 14:35:02 [INFO] site=example.com Backup strony example.com
+2026-10-27 14:35:01 [INFO] site=example.com RUN: rclone rcat gdrive:…/files.tar.gz
+2026-10-27 14:35:40 [INFO] site=example.com CMD_END: rc=0 duration=39s
 ```
 
-Podgląd z REPL:
-
-```text
-hmtools> applog
-hmtools> applog 200
-```
-
-Wyłączenie / zmiana poziomu — w `hmtools.conf` (`LOG_ENABLED=0`, `LOG_LEVEL=WARN`).
+Podgląd z REPL: `applog` / `applog 200`.  
+Wyłączenie capture outputu: `LOG_CAPTURE_OUTPUT=0` w `hmtools.conf`.
 
 ---
 

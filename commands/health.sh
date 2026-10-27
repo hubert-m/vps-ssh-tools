@@ -220,13 +220,13 @@ cmd_update_php() {
   case "${pm}" in
     apt)
       hm_info "apt-get update…"
-      apt-get update
+      hm_run apt-get update
       if [[ "${#pkgs[@]}" -gt 0 ]]; then
         hm_info "apt-get install --only-upgrade (${#pkgs[@]} pakietów)…"
-        DEBIAN_FRONTEND=noninteractive apt-get install --only-upgrade -y "${pkgs[@]}"
+        DEBIAN_FRONTEND=noninteractive hm_run apt-get install --only-upgrade -y "${pkgs[@]}"
       else
         hm_info "apt-get install lsphp${suffix} (+ typowe rozszerzenia)…"
-        DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        DEBIAN_FRONTEND=noninteractive hm_run apt-get install -y \
           "lsphp${suffix}" \
           "lsphp${suffix}-common" \
           "lsphp${suffix}-mysql" \
@@ -239,29 +239,29 @@ cmd_update_php() {
           "lsphp${suffix}-pgsql" \
           "lsphp${suffix}-sqlite3" \
           "lsphp${suffix}-ldap" || \
-        DEBIAN_FRONTEND=noninteractive apt-get install -y "lsphp${suffix}" "lsphp${suffix}-common" "lsphp${suffix}-mysql"
+        DEBIAN_FRONTEND=noninteractive hm_run apt-get install -y "lsphp${suffix}" "lsphp${suffix}-common" "lsphp${suffix}-mysql"
       fi
       ;;
     dnf)
       hm_info "dnf makecache…"
-      dnf makecache -y >/dev/null 2>&1 || dnf makecache -y || true
+      hm_run dnf makecache -y || true
       if [[ "${#pkgs[@]}" -gt 0 ]]; then
         hm_info "dnf update lsphp${suffix}*…"
-        dnf update -y "lsphp${suffix}*"
+        hm_run dnf update -y "lsphp${suffix}*"
       else
         hm_info "dnf install lsphp${suffix}*…"
-        dnf install -y "lsphp${suffix}*"
+        hm_run dnf install -y "lsphp${suffix}*"
       fi
       ;;
     yum)
       hm_info "yum makecache…"
-      yum makecache -y >/dev/null 2>&1 || yum makecache || true
+      hm_run yum makecache -y || true
       if [[ "${#pkgs[@]}" -gt 0 ]]; then
         hm_info "yum update lsphp${suffix}*…"
-        yum update -y "lsphp${suffix}*"
+        hm_run yum update -y "lsphp${suffix}*"
       else
         hm_info "yum install lsphp${suffix}*…"
-        yum install -y "lsphp${suffix}*"
+        hm_run yum install -y "lsphp${suffix}*"
       fi
       ;;
   esac
