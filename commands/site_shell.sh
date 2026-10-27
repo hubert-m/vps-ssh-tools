@@ -55,37 +55,122 @@ cmd_site_backup() {
   hm_backup_site "${HM_SITE_DOMAIN}"
 }
 
+hm_clean_count_entries() {
+  # liczba wpisów w katalogu (mindepth 1)
+  local dir="$1"
+  find "${dir}" -mindepth 1 2>/dev/null | wc -l | tr -d ' '
+}
+
+hm_clean_preview_top() {
+  # do 8 pozycji z pierwszego poziomu
+  local dir="$1"
+  local line n=0
+  while IFS= read -r line; do
+    n=$((n + 1))
+    [[ "${n}" -le 8 ]] || break
+    if [[ -d "${line}" ]]; then
+      printf '      · %s/  (%s)\n' "$(basename "${line}")" "$(hm_format_size_from_path "${line}")"
+    else
+      printf '      · %s  (%s)\n' "$(basename "${line}")" "$(hm_human_size "$(stat -c %s "${line}" 2>/dev/null || echo 0)")"
+    fi
+  done < <(find "${dir}" -mindepth 1 -maxdepth 1 2>/dev/null | sort)
+  local total
+  total="$(find "${dir}" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "${total}" -gt 8 ]]; then
+    echo "      … (+$((total - 8)) więcej na pierwszym poziomie)"
+  fi
+}
+
 cmd_site_clean() {
   [[ -n "${HM_SITE_DOMAIN}" ]] || { hm_err "Brak kontekstu."; return 1; }
   local doc="${HM_SITE_DOCROOT}"
+  local root="${HM_SITE_ROOT:-}"
   [[ -n "${doc}" && -d "${doc}" ]] || { hm_err "Brak docroot."; return 1; }
 
-  hm_warn "Bezpieczne czyszczenie cache/tmp dla ${HM_SITE_DOMAIN}"
-  local targets=()
-  [[ -d "${doc}/wp-content/cache" ]] && targets+=("${doc}/wp-content/cache")
-  [[ -d "${doc}/wp-content/uploads/cache" ]] && targets+=("${doc}/wp-content/uploads/cache")
-  [[ -d "${doc}/cache" ]] && targets+=("${doc}/cache")
-  [[ -d "${doc}/tmp" ]] && targets+=("${doc}/tmp")
-  [[ -d "${doc}/storage/framework/cache" ]] && targets+=("${doc}/storage/framework/cache")
-  [[ -d "${doc}/storage/framework/views" ]] && targets+=("${doc}/storage/framework/views")
+  # tylko typowe cache/tmp — NIE ruszamy uploads/media/node_modules
+  local -a candidates=(
+    "${doc}/wp-content/cache"
+    "${doc}/wp-content/uploads/cache"
+    "${doc}/wp-content/litespeed"
+    "${doc}/cache"
+    "${doc}/tmp"
+    "${doc}/temp"
+    "${doc}/storage/framework/cache"
+    "${doc}/storage/framework/views"
+    "${doc}/storage/framework/sessions"
+    "${doc}/.next/cache"
+    "${doc}/node_modules/.cache"
+  )
+  if [[ -n "${root}" && "${root}" != "${doc}" ]]; then
+    candidates+=(
+      "${root}/cache"
+      "${root}/tmp"
+      "${root}/.next/cache"
+      "${root}/node_modules/.cache"
+      "${root}/storage/framework/cache"
+      "${root}/storage/framework/views"
+    )
+  fi
+
+  local -a targets=()
+  local c
+  for c in "${candidates[@]}"; do
+    [[ -d "${c}" ]] || continue
+    # pomiń puste
+    if [[ -z "$(find "${c}" -mindepth 1 -maxdepth 1 2>/dev/null | head -1)" ]]; then
+      continue
+    fi
+    targets+=("${c}")
+  done
 
   if [[ "${#targets[@]}" -eq 0 ]]; then
-    hm_info "Nie znaleziono typowych katalogów cache."
+    hm_info "Nie znaleziono niepustych katalogów cache/tmp do wyczyszczenia."
     return 0
   fi
 
-  local t
+  echo "${C_BOLD}Podgląd czyszczenia — ${HM_SITE_DOMAIN}${C_RESET}"
+  echo "  ${C_DIM}Zostanie usunięta TYLKO zawartość poniższych katalogów (same foldery zostaną).${C_RESET}"
+  echo
+
+  local t bytes total_bytes=0 count entries
+  local -a sizes=()
   for t in "${targets[@]}"; do
-    echo "  - ${t} ($(hm_format_size_from_path "${t}"))"
+    bytes="$(hm_dir_size_bytes "${t}" 2>/dev/null || echo 0)"
+    [[ "${bytes}" =~ ^[0-9]+$ ]] || bytes=0
+    total_bytes=$((total_bytes + bytes))
+    sizes+=("${bytes}")
+    entries="$(hm_clean_count_entries "${t}")"
+    echo "  ${C_YELLOW}${t}${C_RESET}"
+    echo "    rozmiar : $(hm_human_size "${bytes}")"
+    echo "    wpisy   : ${entries} (pliki/katalogi łącznie)"
+    echo "    zawartość (1. poziom):"
+    hm_clean_preview_top "${t}"
+    echo
   done
-  if ! hm_confirm "Usunąć zawartość powyższych katalogów?"; then
-    hm_info "Anulowano."
-    return 0
-  fi
+
+  echo "  ${C_BOLD}Razem do usunięcia: $(hm_human_size "${total_bytes}") w ${#targets[@]} katalogach${C_RESET}"
+  echo
+  hm_warn "Tej operacji nie da się cofnąć (bez backupu)."
+
+  local reply
+  printf '%s [yes/no]: ' "Na pewno wyczyścić powyższą zawartość?"
+  read -r reply || return 1
+  case "${reply}" in
+    yes|YES|Yes|y|Y|tak|Tak|TAK|t|T) ;;
+    *)
+      hm_info "Anulowano — nic nie usunięto."
+      return 0
+      ;;
+  esac
+
+  echo
+  local i=0
   for t in "${targets[@]}"; do
     find "${t}" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
-    hm_ok "Wyczyszczono: ${t}"
+    hm_ok "Wyczyszczono: ${t}  (było $(hm_human_size "${sizes[$i]}"))"
+    i=$((i + 1))
   done
+  hm_ok "Czyszczenie zakończone."
 }
 
 cmd_site_help() {
@@ -101,7 +186,7 @@ Komendy w kontekście strony:
   cron      Crony użytkownika strony (+ heurystyka w /etc)
   pm2       Procesy PM2/Node powiązane ze stroną + porty proxy
   backup    Pełna kopia (pliki + DB) → Google Drive
-  clean     Bezpieczne czyszczenie cache/tmp
+  clean     Podgląd cache/tmp → potwierdzenie yes/no → czyszczenie
   help [cmd] Pomoc (lista lub help <polecenie>)
   exit      Wyjście z kontekstu strony
 EOF

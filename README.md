@@ -143,7 +143,7 @@ hmtools> exit
 | `cron` | Crony użytkownika strony (+ heurystyka w `/etc`) |
 | `pm2` | Procesy PM2 powiązane ze stroną + porty proxy |
 | `backup` | Pełna kopia środowiska (pliki + DB) → Drive |
-| `clean` | Bezpieczne czyszczenie cache/tmp (z potwierdzeniem) |
+| `clean` | Podgląd cache/tmp + potwierdzenie yes/no + czyszczenie |
 | `exit` | Wyjście z kontekstu |
 
 ### PM2 / Node / Next

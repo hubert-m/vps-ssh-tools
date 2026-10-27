@@ -276,7 +276,11 @@ EOF
       cat <<'EOF'
 Użycie: clean   (w kontekście strony)
 
-Bezpieczne czyszczenie typowych katalogów cache/tmp (z potwierdzeniem).
+1) Pokazuje podgląd: ścieżki, rozmiary, liczbę wpisów, próbkę zawartości
+2) Pyta o potwierdzenie [yes/no]
+3) Usuwa tylko zawartość typowych cache/tmp (foldery zostają)
+
+Nie rusza m.in. uploads, mediów ani całego node_modules.
 EOF
       ;;
     "")
