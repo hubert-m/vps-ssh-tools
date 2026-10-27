@@ -93,6 +93,13 @@ hm_dispatch() {
     php)             cmd_php "$@" ;;
     health|status)   cmd_health "$@" ;;
     detect|env)      hm_detect_print ;;
+    update|upgrade)
+      hm_info "Aktualizacja hmtools z GitHuba..."
+      local branch="${HMTOOLS_BRANCH:-develop}"
+      local url="https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/${branch}/install.sh"
+      curl -fsSL "${url}" | bash
+      hm_ok "Po update uruchom ponownie hmtools, jeśli jesteś w REPL."
+      ;;
     help|h|\?)       hm_help_global ;;
     exit|quit|q)     return 99 ;;
     *)

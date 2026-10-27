@@ -16,21 +16,43 @@ Panel i webserver **nie są hardcodowane** — skrypt wykrywa CyberPanel, OpenLi
 
 ---
 
-## Instalacja
+## Instalacja i aktualizacja
 
-Na serwerze (jako root):
+Repozytorium: [github.com/hubert-m/vps-ssh-tools](https://github.com/hubert-m/vps-ssh-tools) (branch `develop`).
+
+Na serwerze jako **root** — **to samo polecenie** instaluje i aktualizuje:
 
 ```bash
-# np. sklonuj lub wgraj repo do /root/vps-ssh-tools
-cd /root/vps-ssh-tools
-bash install.sh
+curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
 ```
 
-Skrypt:
+Alternatywa (GitHub przekierowuje na raw):
 
-1. Kopiuje pliki do `/hm-tools`
-2. Tworzy `/hm-tools/config/hmtools.conf` (jeśli nie istnieje) z przykładu
-3. Zakłada symlink `/usr/local/bin/hmtools`
+```bash
+curl -fsSL https://github.com/hubert-m/vps-ssh-tools/raw/develop/install.sh | bash
+```
+
+Z poziomu już zainstalowanego hmtools:
+
+```text
+hmtools> update
+```
+
+Co robi instalator:
+
+1. Pobiera aktualne źródła z GitHuba (tarball brancha `develop`) — albo używa lokalnego klona, jeśli uruchomisz `bash install.sh` z repo
+2. Wgrywa pliki do `/hm-tools` (nadpisuje bin/lib/commands/scripts)
+3. **Nie nadpisuje** istniejącego `/hm-tools/config/hmtools.conf`
+4. Przy pierwszej instalacji tworzy conf z przykładu
+5. Zakłada symlink `/usr/local/bin/hmtools`
+
+Zmienne opcjonalne (przed `| bash`):
+
+```bash
+# inny branch / katalog docelowy
+HMTOOLS_BRANCH=main curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/main/install.sh | bash
+HMTOOLS_DEST=/opt/hm-tools curl -fsSL ... | bash
+```
 
 Uruchomienie:
 
@@ -44,6 +66,7 @@ Jednorazowa komenda bez REPL:
 hmtools webs --quick
 hmtools health
 hmtools backup test
+hmtools update
 ```
 
 ---
@@ -86,6 +109,7 @@ hmtools> exit
 | `backup full` | Pełna kopia serwera → Drive |
 | `backup site <domena>` | Kopia jednej strony |
 | `backup test` | Test połączenia rclone |
+| `update` | Aktualizacja hmtools z GitHuba |
 | `disk` | `df`, inody, top `/home` |
 | `ols [status\|reload\|restart\|log]` | OpenLiteSpeed |
 | `ssl` | Certyfikaty SSL wszystkich stron |

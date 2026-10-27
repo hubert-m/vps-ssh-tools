@@ -158,6 +158,7 @@ Komendy globalne:
   use <n|domena>     Wejście w kontekst strony
   backup setup       Konfiguracja rclone / Google Drive
   backup full        Pełna kopia serwera → Drive
+  update             Aktualizacja hmtools z GitHuba
   disk               Zużycie dysku
   ols [status|reload|restart|log]
   ssl                Certyfikaty SSL stron
