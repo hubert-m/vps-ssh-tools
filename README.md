@@ -23,13 +23,18 @@ Repozytorium: [github.com/hubert-m/vps-ssh-tools](https://github.com/hubert-m/vp
 Na serwerze jako **root** — **to samo polecenie** instaluje i aktualizuje:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
+# ?$(date +%s) omija cache CDN przy raw.githubusercontent.com
+curl -fsSL "https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh?$(date +%s)" | bash
 ```
+
+Na początku powinno pojawić się m.in. `hmtools installer rev=...` — jeśli tego nie ma, leci stara (cache’owana) wersja skryptu.
+
+Wymagane na VPS: `curl`, `tar`, `bash` (oraz typowe `/bin/cp`). **`rsync nie jest potrzebny`** i nie jest używany.
 
 Alternatywa (GitHub przekierowuje na raw):
 
 ```bash
-curl -fsSL https://github.com/hubert-m/vps-ssh-tools/raw/develop/install.sh | bash
+curl -fsSL "https://github.com/hubert-m/vps-ssh-tools/raw/develop/install.sh?$(date +%s)" | bash
 ```
 
 Z poziomu już zainstalowanego hmtools:

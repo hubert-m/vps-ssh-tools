@@ -2,7 +2,7 @@
 # Instalacja / aktualizacja hmtools → /hm-tools
 #
 # Z GitHuba (zalecane — działa jako instalacja i update):
-#   curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
+#   curl -fsSL "https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh?$(date +%s)" | bash
 #
 # Wymuszenie reinstalacji tej samej wersji:
 #   HMTOOLS_FORCE=1 curl -fsSL ... | bash
@@ -12,6 +12,9 @@
 #
 set -euo pipefail
 
+# Podbijaj przy każdej istotnej zmianie instalatora — widać w logu, czy VPS dostał świeży skrypt
+INSTALLER_REV="20261027-4-cp-only"
+
 DEST="${HMTOOLS_DEST:-/hm-tools}"
 BIN_LINK="${HMTOOLS_BIN_LINK:-/usr/local/bin/hmtools}"
 REPO_SLUG="${HMTOOLS_REPO:-hubert-m/vps-ssh-tools}"
@@ -19,7 +22,20 @@ REPO_BRANCH="${HMTOOLS_BRANCH:-develop}"
 FORCE="${HMTOOLS_FORCE:-0}"
 API_BASE="https://api.github.com/repos/${REPO_SLUG}"
 
+# Bezpieczne lokalne kopiowanie (bez aliasów / rsync)
+if [[ -x /bin/cp ]]; then
+  HM_CP=(/bin/cp)
+elif [[ -x /usr/bin/cp ]]; then
+  HM_CP=(/usr/bin/cp)
+else
+  HM_CP=(cp)
+fi
+unalias cp 2>/dev/null || true
+unalias rsync 2>/dev/null || true
+
 umask 022
+
+echo "hmtools installer rev=${INSTALLER_REV}" >&2
 
 if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
   echo "Uruchom jako root." >&2
@@ -29,9 +45,12 @@ fi
 for need in curl tar; do
   if ! command -v "${need}" >/dev/null 2>&1; then
     echo "Brak wymaganej komendy: ${need}" >&2
+    echo "Zainstaluj: yum/dnf install curl tar   lub   apt install curl tar" >&2
     exit 1
   fi
 done
+
+# rsync NIE jest wymagany i NIE jest używany (na części VPS psuje lokalne ścieżki)
 
 IS_UPDATE=0
 [[ -x "${DEST}/bin/hmtools" ]] && IS_UPDATE=1
@@ -389,7 +408,7 @@ fi
 CONF_BACKUP=""
 if [[ -f "${DEST}/config/hmtools.conf" ]]; then
   CONF_BACKUP="$(mktemp /tmp/hmtools.conf.XXXXXX)"
-  cp -a "${DEST}/config/hmtools.conf" "${CONF_BACKUP}"
+  "${HM_CP[@]}" -a "${DEST}/config/hmtools.conf" "${CONF_BACKUP}"
   echo "Zachowano istniejącą konfigurację (hmtools.conf)."
 fi
 
@@ -411,20 +430,20 @@ install_tree() {
     exit 1
   fi
 
-  echo "Kopiowanie plików → ${DEST} ..." >&2
+  echo "Kopiowanie plików (cp, bez rsync) → ${DEST} ..." >&2
 
   for d in bin lib commands scripts changelogs; do
     if [[ -d "${from}/${d}" ]]; then
       rm -rf "${DEST}/${d}"
-      cp -a "${from}/${d}" "${DEST}/"
+      "${HM_CP[@]}" -a "${from}/${d}" "${DEST}/"
     fi
   done
 
   mkdir -p "${DEST}/config" "${DEST}/logs"
-  cp -a "${from}/config/hmtools.conf.example" "${DEST}/config/"
-  [[ -f "${from}/README.md" ]] && cp -a "${from}/README.md" "${DEST}/"
-  [[ -f "${from}/CHANGELOG.md" ]] && cp -a "${from}/CHANGELOG.md" "${DEST}/"
-  [[ -f "${from}/install.sh" ]] && cp -a "${from}/install.sh" "${DEST}/"
+  "${HM_CP[@]}" -a "${from}/config/hmtools.conf.example" "${DEST}/config/"
+  [[ -f "${from}/README.md" ]] && "${HM_CP[@]}" -a "${from}/README.md" "${DEST}/"
+  [[ -f "${from}/CHANGELOG.md" ]] && "${HM_CP[@]}" -a "${from}/CHANGELOG.md" "${DEST}/"
+  [[ -f "${from}/install.sh" ]] && "${HM_CP[@]}" -a "${from}/install.sh" "${DEST}/"
   # VERSION / .installed zapisujemy osobno po instalacji
   # logs/ i config/hmtools.conf — zachowane (nie kasujemy)
 }
@@ -433,10 +452,10 @@ install_tree "${SRC}"
 
 mkdir -p "${DEST}/config"
 if [[ -n "${CONF_BACKUP}" && -f "${CONF_BACKUP}" ]]; then
-  cp -a "${CONF_BACKUP}" "${DEST}/config/hmtools.conf"
+  "${HM_CP[@]}" -a "${CONF_BACKUP}" "${DEST}/config/hmtools.conf"
   rm -f "${CONF_BACKUP}"
 elif [[ ! -f "${DEST}/config/hmtools.conf" ]]; then
-  cp "${DEST}/config/hmtools.conf.example" "${DEST}/config/hmtools.conf"
+  "${HM_CP[@]}" -a "${DEST}/config/hmtools.conf.example" "${DEST}/config/hmtools.conf"
   echo "Utworzono ${DEST}/config/hmtools.conf (z przykładu)."
 fi
 
