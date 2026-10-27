@@ -277,13 +277,33 @@ fetch_remote_src() {
     echo "Nie udało się pobrać archiwum z GitHuba (${TARGET_VERSION})." >&2
     exit 1
   fi
-  tar -xzf "${tarball}" -C "${TMP_ROOT}"
-  local extracted
-  extracted="$(find "${TMP_ROOT}" -mindepth 1 -maxdepth 1 -type d | head -1)"
-  if [[ -z "${extracted}" || ! -x "${extracted}/bin/hmtools" ]]; then
-    echo "Nieprawidłowe archiwum repozytorium." >&2
+  # GitHub czasem zwraca HTML przy błędzie — sprawdź magię gzip
+  if ! gzip -t "${tarball}" 2>/dev/null; then
+    echo "Pobrany plik nie jest archiwum gzip (możliwy błąd GitHub / zły tag)." >&2
+    echo "URL: ${url}" >&2
+    head -c 200 "${tarball}" >&2 || true
+    echo >&2
     exit 1
   fi
+  tar -xzf "${tarball}" -C "${TMP_ROOT}"
+  local extracted
+  extracted="$(find "${TMP_ROOT}" -mindepth 1 -maxdepth 1 -type d ! -name '.*' | head -1)"
+  # -f zamiast -x: repo z Windowsa często nie ma bitu +x w gicie
+  if [[ -z "${extracted}" || ! -f "${extracted}/bin/hmtools" ]]; then
+    echo "Nieprawidłowe archiwum repozytorium." >&2
+    echo "URL: ${url}" >&2
+    echo "Rozpakowano do: ${TMP_ROOT}" >&2
+    ls -la "${TMP_ROOT}" >&2 || true
+    if [[ -n "${extracted}" ]]; then
+      echo "Katalog: ${extracted}" >&2
+      ls -la "${extracted}" >&2 || true
+      ls -la "${extracted}/bin" >&2 || true
+    fi
+    exit 1
+  fi
+  chmod +x "${extracted}/bin/hmtools" 2>/dev/null || true
+  chmod +x "${extracted}/install.sh" 2>/dev/null || true
+  chmod +x "${extracted}/scripts/"*.sh 2>/dev/null || true
   echo "${extracted}"
 }
 

@@ -1,0 +1,26 @@
+# Domyślnie: normalizacja końców linii do LF w repozytorium
+* text=auto eol=lf
+
+# Skrypty / entrypoint — zawsze LF (Linux VPS)
+*.sh                     text eol=lf
+bin/hmtools              text eol=lf
+install.sh               text eol=lf
+scripts/*                text eol=lf
+
+# Pliki tekstowe projektu
+*.md                     text eol=lf
+*.txt                    text eol=lf
+*.example                text eol=lf
+VERSION                  text eol=lf
+.gitignore               text eol=lf
+.gitattributes           text eol=lf
+
+# Na wszelki wypadek nie „psuj” binariów, gdy się pojawią
+*.png                    binary
+*.jpg                    binary
+*.jpeg                   binary
+*.gif                    binary
+*.ico                    binary
+*.zip                    binary
+*.gz                     binary
+*.tgz                    binary
