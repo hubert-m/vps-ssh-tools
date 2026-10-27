@@ -93,12 +93,50 @@ hm_dispatch() {
     php)             cmd_php "$@" ;;
     health|status)   cmd_health "$@" ;;
     detect|env)      hm_detect_print ;;
-    update|upgrade)
-      hm_info "Aktualizacja hmtools z GitHuba..."
+    update-hmtools)
+      local force=0
+      local a
+      for a in "$@"; do
+        case "${a}" in
+          --force|-f) force=1 ;;
+          --help|-h)
+            echo "Użycie: update-hmtools [--force]"
+            echo "  Porównuje /hm-tools/VERSION z najnowszym tagiem GitHuba."
+            echo "  Aktualizuje tylko gdy jest nowsza wersja (albo --force)."
+            return 0
+            ;;
+        esac
+      done
+      hm_info "Sprawdzanie aktualizacji hmtools..."
       local branch="${HMTOOLS_BRANCH:-develop}"
       local url="https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/${branch}/install.sh"
-      curl -fsSL "${url}" | bash
-      hm_ok "Po update uruchom ponownie hmtools, jeśli jesteś w REPL."
+      if [[ "${force}" -eq 1 ]]; then
+        HMTOOLS_FORCE=1 curl -fsSL "${url}" | bash
+      else
+        curl -fsSL "${url}" | bash
+      fi
+      hm_ok "Po update-hmtools uruchom ponownie hmtools, jeśli jesteś w REPL."
+      ;;
+    version|ver)
+      local cur latest
+      cur="?"
+      [[ -f "${HMTOOLS_ROOT}/VERSION" ]] && cur="$(tr -d '[:space:]' < "${HMTOOLS_ROOT}/VERSION")"
+      echo "Zainstalowana: ${cur}"
+      latest="$(curl -fsSL --retry 2 -H 'Accept: application/vnd.github+json' -H 'User-Agent: hmtools' \
+        'https://api.github.com/repos/hubert-m/vps-ssh-tools/tags?per_page=100' 2>/dev/null \
+        | grep -oE '"name"[[:space:]]*:[[:space:]]*"[^"]+"' \
+        | sed -E 's/.*"([^"]+)"$/\1/' \
+        | sort -V | tail -1 || true)"
+      if [[ -n "${latest}" ]]; then
+        echo "Najnowszy tag: ${latest}"
+        if [[ "${cur}" == "${latest}" ]]; then
+          hm_ok "Jesteś na najnowszej wersji."
+        else
+          hm_warn "Dostępna aktualizacja. Uruchom: update-hmtools"
+        fi
+      else
+        hm_warn "Nie udało się pobrać listy tagów z GitHuba."
+      fi
       ;;
     help|h|\?)       hm_help_global ;;
     exit|quit|q)     return 99 ;;

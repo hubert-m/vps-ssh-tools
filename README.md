@@ -35,22 +35,42 @@ curl -fsSL https://github.com/hubert-m/vps-ssh-tools/raw/develop/install.sh | ba
 Z poziomu już zainstalowanego hmtools:
 
 ```text
-hmtools> update
+hmtools> version
+hmtools> update-hmtools
+hmtools> update-hmtools --force    # reinstalacja tej samej wersji
+```
+
+### Wersjonowanie (git tags)
+
+Instalator porównuje:
+
+- **remote:** najnowszy [git tag](https://github.com/hubert-m/vps-ssh-tools/tags) repozytorium (sortowanie semver),
+- **local:** plik `/hm-tools/VERSION`.
+
+Jeśli wersje są równe — **nic nie pobiera i nie nadpisuje**.  
+Gdy nie ma jeszcze żadnego taga, używany jest fallback `develop@<sha>`.
+
+Po wydaniu nowej wersji utwórz tag na GitHubie, np.:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
 Co robi instalator:
 
-1. Pobiera aktualne źródła z GitHuba (tarball brancha `develop`) — albo używa lokalnego klona, jeśli uruchomisz `bash install.sh` z repo
-2. Wgrywa pliki do `/hm-tools` (nadpisuje bin/lib/commands/scripts)
-3. **Nie nadpisuje** istniejącego `/hm-tools/config/hmtools.conf`
-4. Przy pierwszej instalacji tworzy conf z przykładu
-5. Zakłada symlink `/usr/local/bin/hmtools`
+1. Sprawdza najnowszy tag na GitHubie vs `/hm-tools/VERSION`
+2. Gdy trzeba — pobiera tarball **tego taga** (nie „ślepo” cały branch)
+3. Wgrywa pliki do `/hm-tools` (nadpisuje bin/lib/commands/scripts)
+4. **Nie nadpisuje** istniejącego `/hm-tools/config/hmtools.conf`
+5. Zapisuje `VERSION` + symlink `/usr/local/bin/hmtools`
 
 Zmienne opcjonalne (przed `| bash`):
 
 ```bash
-# inny branch / katalog docelowy
-HMTOOLS_BRANCH=main curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/main/install.sh | bash
+# konkretny tag / wymuszenie / inny katalog
+HMTOOLS_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
+HMTOOLS_FORCE=1 curl -fsSL ... | bash
 HMTOOLS_DEST=/opt/hm-tools curl -fsSL ... | bash
 ```
 
@@ -65,8 +85,8 @@ Jednorazowa komenda bez REPL:
 ```bash
 hmtools webs --quick
 hmtools health
-hmtools backup test
-hmtools update
+hmtools version
+hmtools update-hmtools
 ```
 
 ---
@@ -109,7 +129,8 @@ hmtools> exit
 | `backup full` | Pełna kopia serwera → Drive |
 | `backup site <domena>` | Kopia jednej strony |
 | `backup test` | Test połączenia rclone |
-| `update` | Aktualizacja hmtools z GitHuba |
+| `update-hmtools [--force]` | Update z GitHuba tylko gdy nowszy tag |
+| `version` | Zainstalowana wersja vs najnowszy tag |
 | `disk` | `df`, inody, top `/home` |
 | `ols [status\|reload\|restart\|log]` | OpenLiteSpeed |
 | `ssl` | Certyfikaty SSL wszystkich stron |
@@ -329,6 +350,7 @@ Logi / ścieżki konfiguracji:
 ```text
 vps-ssh-tools/
 ├── README.md
+├── CHANGELOG.md
 ├── install.sh
 ├── bin/hmtools
 ├── lib/           # common, detect, sites, db, size, backup, rclone
