@@ -92,7 +92,7 @@ hmtools> exit
 ```
 
 - `webs` — lista usług (dodaj `--quick`, żeby pominąć wolne `du`)
-- `use <numer|domena>` — wejście w kontekst strony
+- `use <numer|domena>` — wejście w kontekst strony (**Tab** uzupełnia domenę)
 - `exit` w kontekście — powrót do `hmtools>`
 - `exit` na poziomie głównym — wyjście do SSH
 
@@ -105,7 +105,7 @@ hmtools> exit
 | Komenda | Opis |
 |---------|------|
 | `webs [--quick]` | Lista usług webowych |
-| `use <n\|domena>` | Wejście w kontekst strony |
+| `use <n\|domena>` | Wejście w kontekst (Tab uzupełnia domenę z listy) |
 | `backup setup` | Instalacja/konfiguracja rclone + Google Drive |
 | `backup full` | Pełna kopia serwera → Drive |
 | `backup site <domena>` | Kopia jednej strony |
@@ -122,7 +122,7 @@ hmtools> exit
 | `php` | Dostępne LSPHP |
 | `health` | Load, RAM, dysk, OLS/MySQL, certy &lt;14 dni |
 | `detect` | Wypisz wykryty panel / webserver / DB |
-| `help` | Pomoc |
+| `help [polecenie]` | Lista komend lub pomoc do wybranej (np. `help use`) |
 | `exit` | Wyjście |
 
 ### W kontekście strony (`[domena]>`)
@@ -370,7 +370,7 @@ vps-ssh-tools/
 ├── changelogs/*.txt        # punktowy changelog (CLI + instalator)
 ├── install.sh
 ├── bin/hmtools
-├── lib/           # common, logging, detect, sites, db, size, backup, rclone
+├── lib/           # common, help, complete, logging, detect, sites, db, size, backup, rclone
 ├── commands/      # webs, site_shell, backup, disk, ols, ssl, mysql, health
 ├── config/hmtools.conf.example
 └── scripts/setup-rclone.sh

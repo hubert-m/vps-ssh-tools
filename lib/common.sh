@@ -167,12 +167,9 @@ hm_help_global() {
   cat <<'EOF'
 Komendy globalne:
   webs [--quick]     Lista usług webowych
-  use <n|domena>     Wejście w kontekst strony
+  use <n|domena>     Wejście w kontekst strony (Tab = podpowiedź domen)
   backup setup       Konfiguracja rclone / Google Drive
   backup full        Pełna kopia serwera → Drive
-  update-hmtools     Aktualizacja z GitHuba (+ co nowego)
-  version            Wersja + changelog zainstalowanej wersji
-  uninstall-hmtools  Usuń hmtools z serwera (--yes bez pytania)
   applog [N]         Ostatnie N linii logu hmtools (domyślnie 50)
   disk               Zużycie dysku
   ols [status|reload|restart|log]
@@ -181,11 +178,16 @@ Komendy globalne:
   php                Dostępne wersje LSPHP
   health             Szybki przegląd zdrowia serwera
   detect             Pokaż wykryty panel / webserver
-  help               Ta pomoc
+  help [polecenie]   Lista komend lub pomoc do konkretnej (np. help use)
+  version            Wersja + changelog zainstalowanej wersji
+  update-hmtools     Aktualizacja z GitHuba (+ co nowego)
+  uninstall-hmtools  Usuń hmtools z serwera (--yes bez pytania)
   exit / quit        Wyjście z hmtools
 
 W kontekście strony (po 'use'):
   info, size, dbs, ssl, php, logs, backup, clean, exit
+
+Szczegóły: help <polecenie>
 EOF
 }
 

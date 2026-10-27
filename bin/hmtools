@@ -17,6 +17,10 @@ export HMTOOLS_CONF="${HMTOOLS_CONF:-${HMTOOLS_ROOT}/config/hmtools.conf}"
 # shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/common.sh"
 # shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/help.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/complete.sh"
+# shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/detect.sh"
 # shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/size.sh"
@@ -77,7 +81,7 @@ hm_dispatch() {
         return
         ;;
       clean)  cmd_site_clean; return ;;
-      help|?) cmd_site_help; return ;;
+      help|?) hm_cmd_help "$@"; return ;;
       exit|quit|back|.. )
         hm_ok "Wyjście z kontekstu ${HM_SITE_DOMAIN}."
         hm_clear_site_context
@@ -99,6 +103,7 @@ hm_dispatch() {
     health|status)   cmd_health "$@" ;;
     applog|selflog|hmlog) cmd_applog "$@" ;;
     detect|env)      hm_detect_print ;;
+    help|h|\?)       hm_cmd_help "$@" ;;
     update-hmtools)
       local force=0
       local a
@@ -153,7 +158,6 @@ hm_dispatch() {
     uninstall-hmtools)
       cmd_uninstall_hmtools "$@"
       ;;
-    help|h|\?)       hm_help_global ;;
     exit|quit|q)     return 99 ;;
     *)
       hm_err "Nieznana komenda: ${cmd}. Wpisz 'help'."
@@ -190,8 +194,9 @@ if [[ $# -gt 0 ]]; then
 fi
 
 hm_log_session_start "interactive"
+hm_setup_readline_complete
 hm_ok "hmtools — panel=${PANEL} webserver=${WEBSERVER} db=${DB_ENGINE}"
-hm_info "Wpisz 'help' aby zobaczyć komendy. 'exit' kończy."
+hm_info "Wpisz 'help' aby zobaczyć komendy. 'exit' kończy. Tab — uzupełnianie (np. use <domena>)."
 hm_info "Logi: ${LOG_DIR}/hmtools-$(date +%Y-%m-%d).log"
 
 while true; do

@@ -20,15 +20,31 @@ _(brak)_
 
 ---
 
+## [v0.1.2] — 2026-10-27
+
+### Instalacja tej wersji
+
+```bash
+# najnowsza (gdy v0.1.2 jest aktualnym tagiem) — bez HMTOOLS_VERSION
+curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
+
+# na sztywno v0.1.2
+HMTOOLS_VERSION=v0.1.2 curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
+```
+
+### Zmiany
+
+- Tab-complete w REPL: `use <domena>` (oraz komendy / `backup` / `ols`)
+- Dopasowanie domen także po zamianie `-`/`_` na kropki
+- `help <polecenie>` — szczegółowa pomoc do konkretnej komendy
+
+---
+
 ## [v0.1.1] — 2026-10-27
 
 ### Instalacja tej wersji
 
 ```bash
-# najnowsza (gdy v0.1.1 jest aktualnym tagiem) — bez HMTOOLS_VERSION
-curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
-
-# na sztywno v0.1.1
 HMTOOLS_VERSION=v0.1.1 curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
 ```
 
@@ -68,6 +84,7 @@ HMTOOLS_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/hubert-m/vps
 
 ---
 
-[Unreleased]: https://github.com/hubert-m/vps-ssh-tools/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/hubert-m/vps-ssh-tools/compare/v0.1.2...HEAD
+[v0.1.2]: https://github.com/hubert-m/vps-ssh-tools/releases/tag/v0.1.2
 [v0.1.1]: https://github.com/hubert-m/vps-ssh-tools/releases/tag/v0.1.1
 [v0.1.0]: https://github.com/hubert-m/vps-ssh-tools/releases/tag/v0.1.0

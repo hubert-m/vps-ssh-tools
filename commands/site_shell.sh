@@ -98,7 +98,7 @@ Komendy w kontekście strony:
   logs [N]  Ostatnie N linii logów (domyślnie 40)
   backup    Pełna kopia (pliki + DB) → Google Drive
   clean     Bezpieczne czyszczenie cache/tmp
-  help      Ta pomoc
+  help [cmd] Pomoc (lista lub help <polecenie>)
   exit      Wyjście z kontekstu strony
 EOF
 }
