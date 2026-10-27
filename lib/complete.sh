@@ -95,11 +95,14 @@ hm_complete_commands() {
 }
 
 # Wywoływane przez: bind -x '"\t": hm_tab_complete'
-# WAŻNE: przy 0/1 wyniku NIE wolno nic pisać na stdout/stderr —
-# inaczej bash czyści linię i prompt `hmtools>` / `[domena]>` znika.
-# Prompt jest w `read -e -p` (hm_prompt_for_read), więc po cichym
-# ustawieniu READLINE_* readline sam go przerysuje.
+# WAŻNE:
+# - przy 0/1 wyniku NIE wolno nic pisać na stdout/stderr (prompt znika)
+# - funkcja MUSI kończyć się statusem 0: przy set -e bind -x zabija cały hmtools
+#   (np. ostatnie `[[ … ]] && …` przy parzystej liczbie kandydatów → exit 1)
 hm_tab_complete() {
+  # bind -x działa w tym samym shellu co REPL (set -euo pipefail)
+  set +e
+
   local line="${READLINE_LINE-}"
   local point="${READLINE_POINT-0}"
   [[ "${point}" -gt ${#line} ]] && point=${#line}
@@ -203,12 +206,14 @@ hm_tab_complete() {
 
   local n="${#matches[@]}"
   if [[ "${n}" -eq 0 ]]; then
+    set -e
     return 0
   fi
 
   if [[ "${n}" -eq 1 ]]; then
     READLINE_LINE="${prefix}${matches[0]}${right}"
     READLINE_POINT=$(( ${#prefix} + ${#matches[0]} ))
+    set -e
     return 0
   fi
 
@@ -218,6 +223,7 @@ hm_tab_complete() {
   if [[ -n "${common}" && "${#common}" -gt ${#partial} ]]; then
     READLINE_LINE="${prefix}${common}${right}"
     READLINE_POINT=$(( ${#prefix} + ${#common} ))
+    set -e
     return 0
   fi
 
@@ -231,7 +237,12 @@ hm_tab_complete() {
       printf '\n'
     fi
   done
-  [[ $((col % 2)) -ne 0 ]] && printf '\n'
+  if [[ $((col % 2)) -ne 0 ]]; then
+    printf '\n'
+  fi
+
+  set -e
+  return 0
 }
 
 hm_setup_readline_complete() {

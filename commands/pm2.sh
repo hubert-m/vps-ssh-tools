@@ -1,42 +1,160 @@
 #!/usr/bin/env bash
 # pm2 / node / apps — procesy Node/React/Next pod PM2 + porty + powiązanie ze stronami
 
-hm_pm2_bin() {
+hm_pm2_unix_home() {
+  local user="$1"
+  [[ -n "${user}" ]] || return 1
+  getent passwd "${user}" 2>/dev/null | cut -d: -f6
+}
+
+hm_pm2_bin_in_home() {
+  # najnowszy nvm/pm2 w danym $HOME (nie bierz pierwszego globa z innego serwisu)
+  local home="$1"
+  [[ -n "${home}" && -d "${home}" ]] || return 1
+  local oldnull c best=""
+  oldnull="$(shopt -p nullglob || true)"
+  shopt -s nullglob
+  local cands=(
+    "${home}/.nvm/versions/node/"*/bin/pm2
+    "${home}/node_modules/.bin/pm2"
+    "${home}/.local/share/pnpm/pm2"
+  )
+  eval "${oldnull}" 2>/dev/null || shopt -u nullglob
+  while IFS= read -r c; do
+    [[ -x "${c}" ]] && best="${c}"
+  done < <(printf '%s\n' "${cands[@]}" | sort -V)
+  [[ -n "${best}" ]] || return 1
+  printf '%s' "${best}"
+}
+
+hm_pm2_site_homes() {
+  # katalogi-kandydaci na HOME strony (kolejność: root → /home/domena → home usera)
+  local -a out=()
+  local h
+  if [[ -n "${HM_SITE_ROOT:-}" && -d "${HM_SITE_ROOT}" ]]; then
+    out+=("${HM_SITE_ROOT}")
+  fi
+  if [[ -n "${HM_SITE_DOMAIN:-}" && -d "/home/${HM_SITE_DOMAIN}" ]]; then
+    out+=("/home/${HM_SITE_DOMAIN}")
+  fi
+  if [[ -n "${HM_SITE_USER:-}" ]]; then
+    h="$(hm_pm2_unix_home "${HM_SITE_USER}" || true)"
+    [[ -n "${h}" && -d "${h}" ]] && out+=("${h}")
+  fi
+  # unikalne zachowując kolejność
+  local seen="|" x
+  for x in "${out[@]}"; do
+    [[ "${seen}" == *"|${x}|"* ]] && continue
+    seen="${seen}${x}|"
+    printf '%s\n' "${x}"
+  done
+}
+
+hm_pm2_bin_system() {
+  # pm2 do odpytania jlist — bez losowego /home/*/nvm
+  local c best="" oldnull
   if hm_have_cmd pm2; then
     command -v pm2
     return 0
   fi
-  # typowe lokalizacje npm/nvm
-  local c oldnull
   oldnull="$(shopt -p nullglob || true)"
   shopt -s nullglob
   local candidates=(
     /usr/bin/pm2
     /usr/local/bin/pm2
     /root/.nvm/versions/node/*/bin/pm2
-    /home/*/.nvm/versions/node/*/bin/pm2
   )
   eval "${oldnull}" 2>/dev/null || shopt -u nullglob
-  for c in "${candidates[@]}"; do
-    if [[ -x "${c}" ]]; then
-      echo "${c}"
-      return 0
-    fi
-  done
+  while IFS= read -r c; do
+    [[ -x "${c}" ]] && best="${c}"
+  done < <(printf '%s\n' "${candidates[@]}" | sort -V)
+  [[ -n "${best}" ]] && { printf '%s' "${best}"; return 0; }
   return 1
 }
 
+hm_pm2_bin() {
+  local c h
+  # 1) kontekst strony — preferuj nvm/pm2 z home tej strony
+  if [[ -n "${HM_SITE_DOMAIN:-}" ]]; then
+    while IFS= read -r h; do
+      [[ -n "${h}" ]] || continue
+      c="$(hm_pm2_bin_in_home "${h}" || true)"
+      if [[ -n "${c}" ]]; then
+        printf '%s' "${c}"
+        return 0
+      fi
+    done < <(hm_pm2_site_homes)
+    # brak lokalnego nvm — systemowy pm2 (PM2_HOME i tak ze strony)
+    if c="$(hm_pm2_bin_system)"; then
+      printf '%s' "${c}"
+      return 0
+    fi
+    return 1
+  fi
+  # 2) globalnie
+  if c="$(hm_pm2_bin_system)"; then
+    printf '%s' "${c}"
+    return 0
+  fi
+  # 3) ostatnia deska: nvm z /home (tylko poza use)
+  local oldnull best=""
+  oldnull="$(shopt -p nullglob || true)"
+  shopt -s nullglob
+  local candidates=(/home/*/.nvm/versions/node/*/bin/pm2)
+  eval "${oldnull}" 2>/dev/null || shopt -u nullglob
+  while IFS= read -r c; do
+    [[ -x "${c}" ]] && best="${c}"
+  done < <(printf '%s\n' "${candidates[@]}" | sort -V)
+  [[ -n "${best}" ]] && { printf '%s' "${best}"; return 0; }
+  return 1
+}
+
+hm_pm2_home_dirs() {
+  # lista PM2_HOME do odpytania (w kontekście: tylko strona; globalnie: wszystkie)
+  local h seen="|"
+  if [[ -n "${HM_SITE_DOMAIN:-}" ]]; then
+    while IFS= read -r h; do
+      [[ -n "${h}" && -d "${h}/.pm2" ]] || continue
+      [[ "${seen}" == *"|${h}/.pm2|"* ]] && continue
+      seen="${seen}${h}/.pm2|"
+      printf '%s\n' "${h}/.pm2"
+    done < <(hm_pm2_site_homes)
+    return 0
+  fi
+  local oldnull
+  oldnull="$(shopt -p nullglob || true)"
+  shopt -s nullglob
+  local homes=(/root/.pm2 /home/*/.pm2)
+  eval "${oldnull}" 2>/dev/null || shopt -u nullglob
+  for h in "${homes[@]}"; do
+    [[ -d "${h}" ]] || continue
+    printf '%s\n' "${h}"
+  done
+}
+
 hm_pm2_jlist() {
-  # zbiera jlist z domyślnego PM2_HOME oraz ~/.pm2 użytkowników (VPS multi-site)
   local bin json home
+  local -a parts=()
   bin="$(hm_pm2_bin)" || return 1
 
-  if hm_have_cmd jq; then
-    local -a parts=()
+  while IFS= read -r home; do
+    [[ -n "${home}" && -d "${home}" ]] || continue
+    json="$(PM2_HOME="${home}" "${bin}" jlist 2>/dev/null || true)"
+    if [[ -n "${json}" && "${json}" != "[]" ]]; then
+      parts+=("${json}")
+    fi
+  done < <(hm_pm2_home_dirs)
+
+  # poza kontekstem / gdy pusto: spróbuj jeszcze domyślnego env binarki
+  if [[ "${#parts[@]}" -eq 0 && -z "${HM_SITE_DOMAIN:-}" ]]; then
     json="$("${bin}" jlist 2>/dev/null || true)"
     if [[ -n "${json}" && "${json}" != "[]" ]]; then
       parts+=("${json}")
     fi
+  fi
+
+  # w kontekście strony: jeśli lokalny PM2_HOME pusty — fallback globalny + filtr match_site
+  if [[ "${#parts[@]}" -eq 0 && -n "${HM_SITE_DOMAIN:-}" ]]; then
     local oldnull
     oldnull="$(shopt -p nullglob || true)"
     shopt -s nullglob
@@ -49,30 +167,30 @@ hm_pm2_jlist() {
         parts+=("${json}")
       fi
     done
-    if [[ "${#parts[@]}" -eq 0 ]]; then
-      echo "[]"
-      return 0
-    fi
-    # scal tablice JSON (unikalne po name+pid)
-    printf '%s\n' "${parts[@]}" | jq -s 'add | unique_by([.name, .pid])' 2>/dev/null \
-      || printf '%s\n' "${parts[0]}"
-    return 0
   fi
 
-  json="$("${bin}" jlist 2>/dev/null || true)"
-  if [[ -n "${json}" && "${json}" != "[]" ]]; then
-    echo "${json}"
+  if [[ "${#parts[@]}" -eq 0 ]]; then
+    echo "[]"
     return 0
   fi
-  for home in /root/.pm2 /home/*/.pm2; do
-    [[ -d "${home}" ]] || continue
-    json="$(PM2_HOME="${home}" "${bin}" jlist 2>/dev/null || true)"
-    if [[ -n "${json}" && "${json}" != "[]" ]]; then
-      echo "${json}"
-      return 0
-    fi
-  done
-  echo "[]"
+  if hm_have_cmd jq && [[ "${#parts[@]}" -gt 1 ]]; then
+    printf '%s\n' "${parts[@]}" | jq -s 'add | unique_by([.name, .pid])' 2>/dev/null \
+      || printf '%s\n' "${parts[0]}"
+  elif hm_have_cmd jq; then
+    printf '%s\n' "${parts[0]}"
+  else
+    printf '%s\n' "${parts[0]}"
+  fi
+}
+
+hm_pm2_describe_context() {
+  # krótki opis bin + PM2_HOME dla UI
+  local bin homes
+  bin="$(hm_pm2_bin 2>/dev/null || true)"
+  homes="$(hm_pm2_home_dirs 2>/dev/null | paste -sd ',' - || true)"
+  printf 'bin=%s' "${bin:-?}"
+  [[ -n "${homes}" ]] && printf '  PM2_HOME=%s' "${homes}"
+  printf '\n'
 }
 
 hm_pid_listen_ports() {
@@ -330,7 +448,8 @@ cmd_pm2() {
         return 0
       fi
       echo
-      echo "${C_BOLD}PM2 procesy${C_RESET} ${C_DIM}($(hm_pm2_bin))${C_RESET}"
+      echo "${C_BOLD}PM2 procesy${C_RESET}"
+      echo "  ${C_DIM}$(hm_pm2_describe_context | tr -d '\n')${C_RESET}"
       if [[ -n "${HM_SITE_DOMAIN}" ]]; then
         echo "  ${C_DIM}filtr: ${HM_SITE_DOMAIN}  user=${HM_SITE_USER:--}  root=${HM_SITE_ROOT:--}${C_RESET}"
         echo
@@ -359,8 +478,13 @@ cmd_pm2() {
       fi
       echo
       echo "${C_BOLD}PM2 procesy${C_RESET} ${C_DIM}(wszystkie)${C_RESET}"
+      echo "  ${C_DIM}$(hm_pm2_describe_context | tr -d '\n')${C_RESET}"
       echo
+      # all = bez kontekstu strony
+      local _sd="${HM_SITE_DOMAIN:-}"
+      HM_SITE_DOMAIN=""
       hm_pm2_parse_apps | hm_pm2_print_table
+      HM_SITE_DOMAIN="${_sd}"
       echo
       hm_print_proxy_map
       ;;

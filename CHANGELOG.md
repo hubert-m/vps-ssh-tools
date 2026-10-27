@@ -16,7 +16,8 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [v0.1.5]
 
-_(w przygotowaniu)_
+- Fix: `pm2` w kontekście `use` — bin/PM2_HOME ze strony (nie cudzy nvm z `/home/*`)
+- Fix: Tab przy wielu dopasowaniach nie wywala hmtools (`set -e` + `bind -x`)
 
 ---
 
