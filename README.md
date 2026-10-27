@@ -120,6 +120,7 @@ hmtools> exit
 | `mysql` / `dbs` | Lista baz (lub w kontekście: powiązane) |
 | `mysql dump <db>` | Jedna baza streamem na Drive |
 | `cron` / `crons` | Crony systemowe / users / strony; `cron edit` |
+| `pm2` / `node` / `apps` | PM2/Node/Next — porty, status, proxy OLS |
 | `php` | Dostępne LSPHP |
 | `health` | Load, RAM, dysk, OLS/MySQL, certy &lt;14 dni |
 | `detect` | Wypisz wykryty panel / webserver / DB |
@@ -137,9 +138,24 @@ hmtools> exit
 | `php` | PHP strony + lista LSPHP |
 | `logs [N]` | Ostatnie N linii logów |
 | `cron` | Crony użytkownika strony (+ heurystyka w `/etc`) |
+| `pm2` | Procesy PM2 powiązane ze stroną + porty proxy |
 | `backup` | Pełna kopia środowiska (pliki + DB) → Drive |
 | `clean` | Bezpieczne czyszczenie cache/tmp (z potwierdzeniem) |
 | `exit` | Wyjście z kontekstu |
+
+### PM2 / Node / Next
+
+Dla aplikacji React/Node/Next uruchamianych przez PM2 (często za reverse-proxy OLS na różnych portach):
+
+```text
+hmtools> pm2              # wszystkie procesy + mapa proxy OLS → port
+hmtools> pm2 ports        # nasłuchujące porty node/pm2/next (ss)
+hmtools> pm2 site app.pl  # procesy powiązane ze stroną
+hmtools> use app.pl
+[app.pl]> pm2             # filtr: cwd / nazwa / port proxy
+```
+
+Aliasy: `node`, `apps`. Pomoc: `help pm2`.
 
 ---
 

@@ -223,8 +223,7 @@ if [[ "${IS_UPDATE}" -eq 1 && -n "${CURRENT_VERSION}" && "${CURRENT_VERSION}" ==
   if [[ -f "${DEST}/changelogs/${CURRENT_VERSION}.txt" ]]; then
     print_changelog_file "${CURRENT_VERSION}" "Co zawiera ${CURRENT_VERSION}"
   fi
-  echo "Wymuszenie: HMTOOLS_FORCE=1 curl -fsSL ... | bash"
-  echo "            lub: hmtools → update-hmtools --force"
+  echo "Wymuszenie: hmtools → update-hmtools --force"
   exit 0
 fi
 

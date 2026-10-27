@@ -25,6 +25,7 @@ hm_help_topic() {
     upgrade) topic="update-hmtools" ;;
     log) topic="logs" ;;
     crons) topic="cron" ;;
+    node|apps) topic="pm2" ;;
     \?|h) topic="help" ;;
   esac
 
@@ -152,6 +153,24 @@ Przykłady:
   hmtools> use example.com
   [example.com]> cron
   [example.com]> cron edit
+EOF
+      ;;
+    pm2)
+      cat <<'EOF'
+Użycie:
+  pm2 | node | apps         Lista procesów PM2 + porty + mapa proxy OLS
+  pm2 all                   Wszystkie procesy PM2 (bez filtra kontekstu)
+  pm2 proxy                 Same mapowania extprocessor proxy → port
+  pm2 site <domena>         Procesy powiązane ze stroną
+  pm2 ports                 Nasłuchujące porty (node/pm2/next)
+  pm2 raw                   Surowy output: pm2 list
+
+W kontekście strony filtruje po:
+  - cwd procesu pod site root
+  - nazwie PM2 zawierającej domenę
+  - porcie zgodnym z proxy w vhost OLS
+
+Wykrywa też stack z package.json (next, react, nuxt, vite, …).
 EOF
       ;;
     version)

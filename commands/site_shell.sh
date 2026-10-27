@@ -97,6 +97,7 @@ Komendy w kontekście strony:
   php       Wersja PHP + dostępne LSPHP
   logs [N]  Ostatnie N linii logów (domyślnie 40)
   cron      Crony użytkownika strony (+ heurystyka w /etc)
+  pm2       Procesy PM2/Node powiązane ze stroną + porty proxy
   backup    Pełna kopia (pliki + DB) → Google Drive
   clean     Bezpieczne czyszczenie cache/tmp
   help [cmd] Pomoc (lista lub help <polecenie>)

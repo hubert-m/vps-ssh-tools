@@ -38,6 +38,7 @@ HMTOOLS_VERSION=v0.1.2 curl -fsSL https://raw.githubusercontent.com/hubert-m/vps
 - Dopasowanie domen także po zamianie `-`/`_` na kropki
 - `help <polecenie>` — szczegółowa pomoc do konkretnej komendy
 - `cron` / `crons` — lista i edycja CRON (system, users, kontekst strony)
+- `pm2` / `node` / `apps` — procesy PM2/Node (porty, status, proxy OLS, filtr strony)
 
 ---
 
