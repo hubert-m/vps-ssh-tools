@@ -211,13 +211,30 @@ hm_cyberpanel_list_domains() {
       return
     fi
   fi
-  # DB cyberpanel
+  # aktualny schemat Django
+  local out
+  out="$(hm_mysql_exec cyberpanel -e "SELECT domain FROM websiteFunctions_websites ORDER BY domain;" 2>/dev/null || true)"
+  if [[ -n "${out}" ]]; then
+    printf '%s\n' "${out}"
+    return 0
+  fi
+  # legacy
   hm_mysql_exec cyberpanel -e "SELECT domainName FROM websites_website ORDER BY domainName;" 2>/dev/null || true
 }
 
 hm_cyberpanel_site_meta() {
   local domain="$1"
-  # php, externalApp, state
+  local out
+  # php, externalApp, state — aktualny schemat
+  out="$(hm_mysql_exec cyberpanel -e "
+    SELECT COALESCE(phpSelection,''), COALESCE(externalApp,''), COALESCE(state,1)
+    FROM websiteFunctions_websites WHERE domain='${domain}' LIMIT 1;
+  " 2>/dev/null || true)"
+  if [[ -n "${out}" ]]; then
+    printf '%s\n' "${out}"
+    return 0
+  fi
+  # legacy
   hm_mysql_exec cyberpanel -e "
     SELECT COALESCE(phpSelection,''), COALESCE(externalApp,''), COALESCE(state,1)
     FROM websites_website WHERE domainName='${domain}' LIMIT 1;
@@ -515,7 +532,7 @@ ${C_BOLD}Szczegóły: ${domain}${C_RESET}
 
 ${C_BOLD}Bazy danych:${C_RESET}
 EOF
-  hm_print_dbs_for_site "${domain}" "${HM_SITE_DOCROOT}"
+  hm_print_dbs_for_site "${domain}" "${HM_SITE_DOCROOT}" "${HM_SITE_ROOT}" "${HM_SITE_USER}"
 }
 
 hm_print_site_ssl() {

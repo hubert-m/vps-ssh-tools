@@ -9,8 +9,10 @@ cmd_mysql() {
   case "${sub}" in
     list|ls|"")
       if [[ -n "${HM_SITE_DOMAIN}" ]]; then
-        hm_print_dbs_for_site "${HM_SITE_DOMAIN}" "${HM_SITE_DOCROOT}"
+        hm_print_dbs_for_site "${HM_SITE_DOMAIN}" "${HM_SITE_DOCROOT}" "${HM_SITE_ROOT}" "${HM_SITE_USER}"
       else
+        echo "${C_BOLD}Bazy danych${C_RESET} ${C_DIM}(sort: rozmiar ↓)${C_RESET}"
+        echo
         hm_print_all_dbs
       fi
       ;;

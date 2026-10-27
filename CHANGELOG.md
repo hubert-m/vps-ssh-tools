@@ -22,6 +22,8 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - `update-php` / `php update <ver>` — aktualizacja `lsphp*` z potwierdzeniem + reload OLS
 - `ssl`: wyraźny czerwony alert przy wygasłym certyfikacie
 - `renew-ssl` / `ssl renew` — odnowienie Let's Encrypt (cyberpanel / acme / certbot)
+- Fix: `dbs` w kontekście strony — poprawny schemat CyberPanel + heurystyki
+- `dbs` globalnie: sortowanie malejąco po rozmiarze
 
 ---
 
