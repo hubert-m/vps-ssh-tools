@@ -92,7 +92,18 @@ hmtools webs --quick
 hmtools health
 hmtools version
 hmtools update-hmtools
+hmtools uninstall-hmtools          # z potwierdzeniem
+hmtools uninstall-hmtools --yes    # bez pytania
 ```
+
+### Odinstalowanie
+
+```text
+hmtools> uninstall-hmtools
+```
+
+Usuwa katalog `/hm-tools` (w tym conf i logi) oraz symlink `/usr/local/bin/hmtools`.  
+**Nie** usuwa rclone ani backupów na Google Drive.
 
 ---
 
@@ -136,6 +147,7 @@ hmtools> exit
 | `backup test` | Test połączenia rclone |
 | `update-hmtools [--force]` | Update z GitHuba + wypis „co nowego” |
 | `version` | Wersja lokalna/remote + changelog tej wersji |
+| `uninstall-hmtools [--yes]` | Usuwa `/hm-tools` i symlink (z potwierdzeniem) |
 | `applog [N]` | Ostatnie N linii logu hmtools (domyślnie 50) |
 | `disk` | `df`, inody, top `/home` |
 | `ols [status\|reload\|restart\|log]` | OpenLiteSpeed |

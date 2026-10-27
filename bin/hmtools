@@ -150,6 +150,9 @@ hm_dispatch() {
       fi
       hm_print_changelog "${cur}" "Co zawiera zainstalowana wersja (${cur})"
       ;;
+    uninstall-hmtools)
+      cmd_uninstall_hmtools "$@"
+      ;;
     help|h|\?)       hm_help_global ;;
     exit|quit|q)     return 99 ;;
     *)
@@ -168,7 +171,8 @@ if [[ "${1:-}" == "-c" ]]; then
   hm_dispatch $@
   rc=$?
   set -e
-  hm_log_session_end
+  [[ "${rc}" -ne 98 ]] && hm_log_session_end
+  [[ "${rc}" -eq 99 || "${rc}" -eq 98 ]] && exit 0
   exit "${rc}"
 fi
 
@@ -178,8 +182,8 @@ if [[ $# -gt 0 ]]; then
   hm_dispatch "$@"
   rc=$?
   set -e
-  hm_log_session_end
-  if [[ "${rc}" -eq 99 ]]; then
+  [[ "${rc}" -ne 98 ]] && hm_log_session_end
+  if [[ "${rc}" -eq 99 || "${rc}" -eq 98 ]]; then
     exit 0
   fi
   exit "${rc}"
@@ -210,6 +214,10 @@ while true; do
   set -e
   if [[ "${rc}" -eq 99 ]]; then
     break
+  fi
+  if [[ "${rc}" -eq 98 ]]; then
+    # uninstall-hmtools — nie zapisuj logu do już usuniętego katalogu
+    exit 0
   fi
 done
 

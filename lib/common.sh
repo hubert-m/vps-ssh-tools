@@ -172,6 +172,7 @@ Komendy globalne:
   backup full        Pełna kopia serwera → Drive
   update-hmtools     Aktualizacja z GitHuba (+ co nowego)
   version            Wersja + changelog zainstalowanej wersji
+  uninstall-hmtools  Usuń hmtools z serwera (--yes bez pytania)
   applog [N]         Ostatnie N linii logu hmtools (domyślnie 50)
   disk               Zużycie dysku
   ols [status|reload|restart|log]
@@ -186,6 +187,82 @@ Komendy globalne:
 W kontekście strony (po 'use'):
   info, size, dbs, ssl, php, logs, backup, clean, exit
 EOF
+}
+
+cmd_uninstall_hmtools() {
+  local yes=0
+  local a
+  for a in "$@"; do
+    case "${a}" in
+      --yes|-y) yes=1 ;;
+      --help|-h)
+        cat <<'EOF'
+Użycie: uninstall-hmtools [--yes]
+
+Usuwa hmtools z serwera:
+  - katalog instalacji (domyślnie /hm-tools) — w tym conf i logi
+  - symlink /usr/local/bin/hmtools
+
+Nie usuwa rclone ani backupów na Google Drive.
+EOF
+        return 0
+        ;;
+    esac
+  done
+
+  local dest="${HMTOOLS_ROOT:-/hm-tools}"
+  local link="${HMTOOLS_BIN_LINK:-/usr/local/bin/hmtools}"
+
+  echo "Zostanie usunięte:"
+  echo "  - ${dest}/"
+  if [[ -L "${link}" ]] || [[ -e "${link}" ]]; then
+    echo "  - ${link}"
+  fi
+  echo
+  hm_warn "Konfiguracja, logi i pliki narzędzi zostaną skasowane."
+  hm_info "Backupy na Google Drive i konfiguracja rclone pozostaną nietknięte."
+
+  if [[ "${yes}" -ne 1 ]]; then
+    if ! hm_confirm "Na pewno odinstalować hmtools?"; then
+      hm_info "Anulowano."
+      return 0
+    fi
+  fi
+
+  hm_file_log INFO "uninstall-hmtools start dest=${dest}"
+
+  if [[ -L "${link}" ]]; then
+    rm -f "${link}"
+    hm_ok "Usunięto symlink ${link}"
+  elif [[ -e "${link}" ]]; then
+    # tylko jeśli wskazuje na nasze hmtools
+    if [[ "$(readlink -f "${link}" 2>/dev/null || true)" == "${dest}/bin/hmtools" ]] \
+      || [[ "$(command -v hmtools 2>/dev/null || true)" == "${link}" ]]; then
+      rm -f "${link}"
+      hm_ok "Usunięto ${link}"
+    else
+      hm_warn "Pominięto ${link} (nie wygląda na symlink hmtools)."
+    fi
+  fi
+
+  if [[ -d "${dest}" ]]; then
+    # bezpieczeństwo: nie kasuj / ani /
+    case "${dest}" in
+      /|/usr|/usr/local|/bin|/etc|/home|/var|/root)
+        hm_err "Odmowa usunięcia niebezpiecznej ścieżki: ${dest}"
+        return 1
+        ;;
+    esac
+    rm -rf "${dest}"
+    echo "Usunięto katalog ${dest}"
+  else
+    hm_warn "Katalog ${dest} już nie istnieje."
+  fi
+
+  echo
+  echo "hmtools zostało odinstalowane."
+  # kod specjalny — REPL powinien się zakończyć (katalog źródłowy mógł zniknąć)
+  return 98
 }
 
 cmd_applog() {

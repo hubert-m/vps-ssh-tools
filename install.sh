@@ -168,6 +168,7 @@ W środku:
   use <n|domena>    — wejście w kontekst strony
   version           — wersja + co nowego
   update-hmtools    — aktualizacja z GitHuba
+  uninstall-hmtools — usunięcie hmtools z serwera
   exit              — wyjście
 
 Dokumentacja: ${DEST}/README.md

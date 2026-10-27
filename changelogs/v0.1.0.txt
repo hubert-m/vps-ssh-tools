@@ -10,3 +10,4 @@
 - Logi pracy w /hm-tools/logs (applog)
 - Komendy: update-hmtools, version (z wypisem changelogu)
 - Powitanie po pierwszej instalacji z instrukcją startu
+- Odinstalowanie: uninstall-hmtools [--yes]

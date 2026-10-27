@@ -21,6 +21,7 @@ _(brak)_
 - Logi pracy w `/hm-tools/logs` (`applog`)
 - Komendy: `update-hmtools`, `version` (+ wypis changelogu)
 - Powitanie po pierwszej instalacji (curl)
+- Odinstalowanie: `uninstall-hmtools [--yes]`
 
 [Unreleased]: https://github.com/hubert-m/vps-ssh-tools/compare/v0.1.0...HEAD
 [v0.1.0]: https://github.com/hubert-m/vps-ssh-tools/releases/tag/v0.1.0
