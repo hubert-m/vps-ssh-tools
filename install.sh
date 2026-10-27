@@ -237,7 +237,7 @@ resolve_local_src() {
       base="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     fi
   fi
-  if [[ -n "${base}" && -x "${base}/bin/hmtools" && -d "${base}/lib" && -d "${base}/commands" ]]; then
+  if [[ -n "${base}" && -e "${base}/bin/hmtools" && -d "${base}/lib" && -d "${base}/commands" ]]; then
     echo "${base}"
     return 0
   fi
@@ -267,44 +267,93 @@ local_git_version() {
   echo ""
 }
 
-fetch_remote_src() {
-  local url
-  url="$(tarball_url_for_version "${TARGET_VERSION}")"
-  TMP_ROOT="$(mktemp -d /tmp/hmtools-install-XXXXXX)"
-  local tarball="${TMP_ROOT}/repo.tar.gz"
-  echo "Pobieranie ${url} ..."
+is_gzip_file() {
+  local f="$1"
+  # Nie wymagamy komendy gzip — sprawdzamy magię 1f 8b
+  local b1 b2
+  b1="$(od -An -tx1 -N 2 "${f}" 2>/dev/null | tr -d ' \n' || true)"
+  [[ "${b1}" == "1f8b" ]]
+}
+
+extract_github_tree() {
+  # $1 = url tarballa → wypisz ścieżkę katalogu źródłowego na stdout; logi na stderr
+  local url="$1"
+  local label="${2:-}"
+  local work tarball extracted="" d
+  work="$(mktemp -d /tmp/hmtools-install-XXXXXX)"
+  tarball="${work}/repo.tar.gz"
+  echo "Pobieranie${label:+ (${label})}: ${url}" >&2
   if ! curl -fsSL --retry 3 --retry-delay 1 "${url}" -o "${tarball}"; then
-    echo "Nie udało się pobrać archiwum z GitHuba (${TARGET_VERSION})." >&2
-    exit 1
+    echo "Nie udało się pobrać: ${url}" >&2
+    rm -rf "${work}"
+    return 1
   fi
-  # GitHub czasem zwraca HTML przy błędzie — sprawdź magię gzip
-  if ! gzip -t "${tarball}" 2>/dev/null; then
-    echo "Pobrany plik nie jest archiwum gzip (możliwy błąd GitHub / zły tag)." >&2
+  if ! is_gzip_file "${tarball}"; then
+    echo "Pobrany plik nie jest archiwum .tar.gz (GitHub mógł zwrócić HTML/błąd)." >&2
     echo "URL: ${url}" >&2
-    head -c 200 "${tarball}" >&2 || true
+    head -c 240 "${tarball}" >&2 || true
     echo >&2
-    exit 1
+    rm -rf "${work}"
+    return 1
   fi
-  tar -xzf "${tarball}" -C "${TMP_ROOT}"
-  local extracted
-  extracted="$(find "${TMP_ROOT}" -mindepth 1 -maxdepth 1 -type d ! -name '.*' | head -1)"
-  # -f zamiast -x: repo z Windowsa często nie ma bitu +x w gicie
-  if [[ -z "${extracted}" || ! -f "${extracted}/bin/hmtools" ]]; then
+  if ! tar -xzf "${tarball}" -C "${work}"; then
+    echo "Błąd tar przy rozpakowywaniu: ${url}" >&2
+    rm -rf "${work}"
+    return 1
+  fi
+  rm -f "${tarball}"
+
+  # Bez find|head — przy set -o pipefail to potrafi się wywalić (SIGPIPE)
+  for d in "${work}"/*; do
+    if [[ -d "${d}" ]]; then
+      extracted="${d}"
+      break
+    fi
+  done
+
+  if [[ -z "${extracted}" || ! -e "${extracted}/bin/hmtools" ]]; then
     echo "Nieprawidłowe archiwum repozytorium." >&2
     echo "URL: ${url}" >&2
-    echo "Rozpakowano do: ${TMP_ROOT}" >&2
-    ls -la "${TMP_ROOT}" >&2 || true
+    echo "TMP: ${work}" >&2
+    ls -la "${work}" >&2 || true
     if [[ -n "${extracted}" ]]; then
       echo "Katalog: ${extracted}" >&2
       ls -la "${extracted}" >&2 || true
       ls -la "${extracted}/bin" >&2 || true
     fi
-    exit 1
+    rm -rf "${work}"
+    return 1
   fi
+
   chmod +x "${extracted}/bin/hmtools" 2>/dev/null || true
   chmod +x "${extracted}/install.sh" 2>/dev/null || true
   chmod +x "${extracted}/scripts/"*.sh 2>/dev/null || true
-  echo "${extracted}"
+
+  # trap posprząta cały work (w tym extracted)
+  TMP_ROOT="${work}"
+  printf '%s\n' "${extracted}"
+}
+
+fetch_remote_src() {
+  local url extracted
+  url="$(tarball_url_for_version "${TARGET_VERSION}")"
+  if extracted="$(extract_github_tree "${url}" "${TARGET_VERSION}")"; then
+    printf '%s\n' "${extracted}"
+    return 0
+  fi
+
+  # Fallback: branch (bootstrap i tak pochodzi z brancha — nowsze poprawki niż stary tag)
+  local branch_url="https://github.com/${REPO_SLUG}/archive/refs/heads/${REPO_BRANCH}.tar.gz"
+  if [[ "${url}" != "${branch_url}" ]]; then
+    echo "Próbuję fallback: branch ${REPO_BRANCH} ..." >&2
+    if extracted="$(extract_github_tree "${branch_url}" "branch ${REPO_BRANCH}")"; then
+      printf '%s\n' "${extracted}"
+      return 0
+    fi
+  fi
+
+  echo "Nie udało się pobrać źródeł hmtools." >&2
+  exit 1
 }
 
 INSTALL_VERSION="${TARGET_VERSION}"
