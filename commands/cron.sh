@@ -103,41 +103,107 @@ hm_cron_list_all_users() {
   fi
 }
 
+hm_cron_infer_user_from_content() {
+  # gdy brak HM_SITE_USER — znajdź usera, którego crontab wspomina domenę/ścieżkę
+  local domain="$1"
+  local path_n="${2:-}"
+  local u out
+  while IFS= read -r u; do
+    [[ -n "${u}" ]] || continue
+    out="$(crontab -u "${u}" -l 2>/dev/null || true)"
+    [[ -n "${out}" ]] || continue
+    if echo "${out}" | grep -Fq -- "${domain}"; then
+      echo "${u}"
+      return 0
+    fi
+    if [[ -n "${path_n}" && "${path_n}" != *'$'* ]] && echo "${out}" | grep -Fq -- "${path_n}"; then
+      echo "${u}"
+      return 0
+    fi
+  done < <(hm_cron_list_users_with_crontab)
+  return 1
+}
+
+hm_cron_grep_file_or_text() {
+  # wypisz dopasowane linie; 0 = było trafienie
+  local needle="$1"
+  local path_n="$2"
+  local source_label="$3"
+  local file="${4:-}" # jeśli puste — czyta stdin
+  local matched
+  if [[ -n "${file}" ]]; then
+    [[ -f "${file}" ]] || return 1
+    if [[ -n "${path_n}" && "${path_n}" != *'$'* ]]; then
+      matched="$(grep -n -F -e "${needle}" -e "${path_n}" "${file}" 2>/dev/null || true)"
+    else
+      matched="$(grep -n -F -e "${needle}" "${file}" 2>/dev/null || true)"
+    fi
+  else
+    if [[ -n "${path_n}" && "${path_n}" != *'$'* ]]; then
+      matched="$(grep -n -F -e "${needle}" -e "${path_n}" 2>/dev/null || true)"
+    else
+      matched="$(grep -n -F -e "${needle}" 2>/dev/null || true)"
+    fi
+  fi
+  [[ -n "${matched}" ]] || return 1
+  echo "---- ${source_label} ----"
+  echo "${matched}" | sed 's/^/  /'
+  echo
+  return 0
+}
+
 hm_cron_list_site() {
   local domain="${1:-${HM_SITE_DOMAIN}}"
   [[ -n "${domain}" ]] || { hm_err "Brak domeny — use <domena> albo cron site <domena>."; return 1; }
   hm_set_site_context "${domain}"
-  local user="${HM_SITE_USER}"
+  local user="${HM_SITE_USER:-}"
+  local path_n="${HM_SITE_ROOT:-}"
+  # nie używaj literału OLS jako ścieżki do grep
+  if [[ "${path_n}" == *'$'* ]]; then
+    path_n=""
+  fi
+  if [[ -z "${path_n}" && -d "/home/${domain}" ]]; then
+    path_n="/home/${domain}"
+  fi
+
+  if [[ -z "${user}" ]]; then
+    user="$(hm_cron_infer_user_from_content "${domain}" "${path_n}" || true)"
+    [[ -n "${user}" ]] && HM_SITE_USER="${user}"
+  fi
+
   echo "${C_BOLD}Cron — ${domain}${C_RESET}"
   echo "User: ${user:--}"
   echo "Site root: ${HM_SITE_ROOT:--}"
   echo
-  if [[ -z "${user}" || "${user}" == "-" ]]; then
+  if [[ -z "${user}" ]]; then
     hm_warn "Nie ustalono użytkownika strony — pokazuję wpisy zawierające domenę / ścieżkę."
   else
     hm_cron_print_user "${user}" "crontab użytkownika strony (${user})"
   fi
 
-  # heurystyka: wpisy systemowe wspominające domenę lub docroot
   local needle="${domain}"
-  local path_n="${HM_SITE_ROOT:-}"
-  echo "${C_BOLD}Trafienia w /etc/crontab i /etc/cron.d (heurystyka)${C_RESET}"
   local hits=0
-  local f
+  local f u out
+
+  echo "${C_BOLD}Trafienia w /etc oraz crontabach użytkowników (heurystyka)${C_RESET}"
   for f in /etc/crontab /etc/cron.d/*; do
     [[ -f "${f}" ]] || continue
-    if grep -F "${needle}" "${f}" >/dev/null 2>&1 \
-      || { [[ -n "${path_n}" ]] && grep -F "${path_n}" "${f}" >/dev/null 2>&1; }; then
+    if hm_cron_grep_file_or_text "${needle}" "${path_n}" "${f}" "${f}"; then
       hits=1
-      echo "---- ${f} ----"
-      if [[ -n "${path_n}" ]]; then
-        grep -n -F -e "${needle}" -e "${path_n}" "${f}" 2>/dev/null | sed 's/^/  /' || true
-      else
-        grep -n -F -e "${needle}" "${f}" 2>/dev/null | sed 's/^/  /' || true
-      fi
-      echo
     fi
   done
+
+  while IFS= read -r u; do
+    [[ -n "${u}" ]] || continue
+    # pełny crontab usera strony już wyżej — tu tylko pozostali
+    [[ -n "${user}" && "${u}" == "${user}" ]] && continue
+    out="$(crontab -u "${u}" -l 2>/dev/null || true)"
+    [[ -n "${out}" ]] || continue
+    if echo "${out}" | hm_cron_grep_file_or_text "${needle}" "${path_n}" "crontab -u ${u}"; then
+      hits=1
+    fi
+  done < <(hm_cron_list_users_with_crontab)
+
   if [[ "${hits}" -eq 0 ]]; then
     echo "(brak dopasowań)"
     echo

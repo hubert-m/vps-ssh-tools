@@ -4,3 +4,6 @@
 - Prompt w `read -e -p` (readline); Tab bez zbędnego outputu
 - Wczesny cache domen; lista kandydatów dopiero przy 2. Tab (gdy brak postępu)
 - Ekran powitalny: żółte powiadomienie o nowszej wersji + komenda curl|bash
+- pm2: czytelniejsza tabela, sortowanie po porcie ↑, skan PM2_HOME użytkowników
+- Fix: resolucja `$VH_ROOT` / usera strony (cron w kontekście use, info, ścieżki)
+- cron w kontekście: skan także crontabów użytkowników + lista komend po use

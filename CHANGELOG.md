@@ -36,6 +36,9 @@ HMTOOLS_VERSION=v0.1.4 curl -fsSL https://raw.githubusercontent.com/hubert-m/vps
 - Prompt w `read -e -p` (readline); Tab bez zbędnego outputu
 - Wczesny cache domen; lista kandydatów dopiero przy 2. Tab (gdy brak postępu)
 - Ekran powitalny: żółte powiadomienie o nowszej wersji + komenda curl|bash
+- `pm2`: czytelniejsza tabela, sortowanie po porcie ↑, skan PM2_HOME użytkowników
+- Fix: resolucja `$VH_ROOT` / usera strony (`cron` w `use`, info, ścieżki)
+- `cron` w kontekście: skan crontabów użytkowników; kompletna lista komend po `use`
 
 ---
 

@@ -27,10 +27,52 @@ hm_pm2_bin() {
 }
 
 hm_pm2_jlist() {
-  local bin
+  # zbiera jlist z domyślnego PM2_HOME oraz ~/.pm2 użytkowników (VPS multi-site)
+  local bin json home
   bin="$(hm_pm2_bin)" || return 1
-  # PM2_HOME czasem pod root / konkretnym userem
-  "${bin}" jlist 2>/dev/null || true
+
+  if hm_have_cmd jq; then
+    local -a parts=()
+    json="$("${bin}" jlist 2>/dev/null || true)"
+    if [[ -n "${json}" && "${json}" != "[]" ]]; then
+      parts+=("${json}")
+    fi
+    local oldnull
+    oldnull="$(shopt -p nullglob || true)"
+    shopt -s nullglob
+    local homes=(/root/.pm2 /home/*/.pm2)
+    eval "${oldnull}" 2>/dev/null || shopt -u nullglob
+    for home in "${homes[@]}"; do
+      [[ -d "${home}" ]] || continue
+      json="$(PM2_HOME="${home}" "${bin}" jlist 2>/dev/null || true)"
+      if [[ -n "${json}" && "${json}" != "[]" ]]; then
+        parts+=("${json}")
+      fi
+    done
+    if [[ "${#parts[@]}" -eq 0 ]]; then
+      echo "[]"
+      return 0
+    fi
+    # scal tablice JSON (unikalne po name+pid)
+    printf '%s\n' "${parts[@]}" | jq -s 'add | unique_by([.name, .pid])' 2>/dev/null \
+      || printf '%s\n' "${parts[0]}"
+    return 0
+  fi
+
+  json="$("${bin}" jlist 2>/dev/null || true)"
+  if [[ -n "${json}" && "${json}" != "[]" ]]; then
+    echo "${json}"
+    return 0
+  fi
+  for home in /root/.pm2 /home/*/.pm2; do
+    [[ -d "${home}" ]] || continue
+    json="$(PM2_HOME="${home}" "${bin}" jlist 2>/dev/null || true)"
+    if [[ -n "${json}" && "${json}" != "[]" ]]; then
+      echo "${json}"
+      return 0
+    fi
+  done
+  echo "[]"
 }
 
 hm_pid_listen_ports() {
@@ -181,29 +223,52 @@ hm_pm2_match_site() {
   done
 }
 
+hm_pm2_status_color() {
+  local s
+  s="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  case "${s}" in
+    online|launching) printf '%s' "${C_GREEN}" ;;
+    stopped|errored|stopping) printf '%s' "${C_RED}" ;;
+    *) printf '%s' "${C_YELLOW}" ;;
+  esac
+}
+
 hm_pm2_print_table() {
-  # stdin: name|pid|status|cwd|script|port|mem|restarts
-  local any=0
-  printf '%-28s %-8s %-8s %-7s %-8s %-6s %s\n' \
-    "NAME" "PID" "STATUS" "PORT" "MEM(MB)" "RST" "CWD"
-  printf '%-28s %-8s %-8s %-7s %-8s %-6s %s\n' \
-    "----" "---" "------" "----" "-------" "---" "---"
-  local name pid status cwd script port mem restarts
+  # stdin: name|pid|status|cwd|script|port|mem|restarts — sortuj po porcie
+  local -a rows=()
+  local name pid status cwd script port mem restarts line sortkey
   while IFS='|' read -r name pid status cwd script port mem restarts; do
     [[ -n "${name}" ]] || continue
-    any=1
-    printf '%-28s %-8s %-8s %-7s %-8s %-6s %s\n' \
-      "${name:0:28}" \
+    if [[ "${port}" =~ ^[0-9]+$ ]]; then
+      sortkey=$(printf '%05d' "${port}")
+    else
+      sortkey="99999"
+    fi
+    rows+=("${sortkey}|${name}|${pid}|${status}|${cwd}|${script}|${port}|${mem}|${restarts}")
+  done
+
+  printf '  %s%-24s %-8s %-10s %6s %8s %5s  %s%s\n' \
+    "${C_DIM}" "NAME" "PID" "STATUS" "PORT" "MEM(MB)" "RST" "CWD" "${C_RESET}"
+  printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..78})" "${C_RESET}"
+
+  if [[ "${#rows[@]}" -eq 0 ]]; then
+    echo "  (brak procesów PM2 — sprawdź PM2_HOME użytkownika strony)"
+    return 0
+  fi
+
+  local stc
+  while IFS='|' read -r sortkey name pid status cwd script port mem restarts; do
+    [[ -n "${name}" ]] || continue
+    stc="$(hm_pm2_status_color "${status}")"
+    printf '  %-24s %-8s %s%-10s%s %6s %8s %5s  %s\n' \
+      "${name:0:24}" \
       "${pid}" \
-      "${status}" \
+      "${stc}" "${status:0:10}" "${C_RESET}" \
       "${port:--}" \
       "${mem:--}" \
       "${restarts:--}" \
       "${cwd:--}"
-  done
-  if [[ "${any}" -eq 0 ]]; then
-    echo "(brak procesów)"
-  fi
+  done < <(printf '%s\n' "${rows[@]}" | sort -t'|' -k1,1)
 }
 
 hm_detect_node_stack() {
@@ -225,29 +290,29 @@ hm_detect_node_stack() {
 }
 
 hm_print_proxy_map() {
-  echo "${C_BOLD}Proxy OLS → porty backend${C_RESET}"
-  printf '%-36s %s\n' "DOMAIN" "PORTS"
-  printf '%-36s %s\n' "------" "-----"
-  local any=0 domain ports
-  local -A acc=()
-  while IFS=$'\t' read -r domain ports; do
-    [[ -n "${domain}" ]] || continue
+  echo "${C_BOLD}Proxy OLS → porty backend${C_RESET} ${C_DIM}(sort: port ↑)${C_RESET}"
+  printf '  %s%6s%s  %s%s%s\n' "${C_DIM}" "PORT" "${C_RESET}" "${C_DIM}" "DOMAIN" "${C_RESET}"
+  printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..56})" "${C_RESET}"
+
+  local domain port any=0
+  local -a rows=()
+  while IFS=$'\t' read -r domain port; do
+    [[ -n "${domain}" && -n "${port}" ]] || continue
     any=1
-    if [[ -n "${acc[$domain]:-}" ]]; then
-      acc[$domain]="${acc[$domain]},${ports}"
-    else
-      acc[$domain]="${ports}"
-    fi
+    rows+=("${port}"$'\t'"${domain}")
   done < <(hm_ols_proxy_ports_global)
+
   if [[ "${any}" -eq 0 ]]; then
-    echo "(brak extprocessor type proxy w vhostach)"
-  else
-    local k
-    while IFS= read -r k; do
-      [[ -n "${k}" ]] || continue
-      printf '%-36s %s\n' "${k}" "${acc[$k]}"
-    done < <(printf '%s\n' "${!acc[@]}" | sort)
+    echo "  (brak extprocessor type proxy w vhostach)"
+    echo
+    return 0
   fi
+
+  while IFS=$'\t' read -r port domain; do
+    [[ -n "${port}" ]] || continue
+    printf '  %s%6s%s  %s\n' "${C_CYAN}" "${port}" "${C_RESET}" "${domain}"
+  done < <(printf '%s\n' "${rows[@]}" | sort -t$'\t' -k1,1n -k2,2)
+
   echo
 }
 
@@ -264,9 +329,10 @@ cmd_pm2() {
         hm_print_proxy_map
         return 0
       fi
-      echo "${C_BOLD}PM2 procesy${C_RESET} ($(hm_pm2_bin))"
+      echo
+      echo "${C_BOLD}PM2 procesy${C_RESET} ${C_DIM}($(hm_pm2_bin))${C_RESET}"
       if [[ -n "${HM_SITE_DOMAIN}" ]]; then
-        echo "Filtr kontekstu: ${HM_SITE_DOMAIN} (user=${HM_SITE_USER:--}, root=${HM_SITE_ROOT:--})"
+        echo "  ${C_DIM}filtr: ${HM_SITE_DOMAIN}  user=${HM_SITE_USER:--}  root=${HM_SITE_ROOT:--}${C_RESET}"
         echo
         hm_pm2_parse_apps | hm_pm2_match_site "${HM_SITE_DOMAIN}" "${HM_SITE_ROOT}" | hm_pm2_print_table
         echo
@@ -274,11 +340,11 @@ cmd_pm2() {
         stack="$(hm_detect_node_stack "${HM_SITE_DOCROOT}")"
         [[ -z "${stack}" && -n "${HM_SITE_ROOT}" ]] && stack="$(hm_detect_node_stack "${HM_SITE_ROOT}")"
         [[ -z "${stack}" && -n "${HM_SITE_ROOT}" ]] && stack="$(hm_detect_node_stack "${HM_SITE_ROOT}/app")"
-        echo "Stack (package.json): ${stack:-nie wykryto next/react/…}"
-        echo "Proxy OLS ports:"
+        echo "  Stack: ${stack:-nie wykryto next/react/…}"
         local p
-        p="$(hm_ols_proxy_ports_for_domain "${HM_SITE_DOMAIN}" | tr '\n' ',' | sed 's/,$//')"
-        echo "  ${p:-—}"
+        p="$(hm_ols_proxy_ports_for_domain "${HM_SITE_DOMAIN}" | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+        echo "  Proxy OLS: ${C_CYAN}${p:-—}${C_RESET}"
+        echo
       else
         echo
         hm_pm2_parse_apps | hm_pm2_print_table
@@ -291,11 +357,15 @@ cmd_pm2() {
         hm_err "Brak pm2 w PATH."
         return 1
       fi
+      echo
+      echo "${C_BOLD}PM2 procesy${C_RESET} ${C_DIM}(wszystkie)${C_RESET}"
+      echo
       hm_pm2_parse_apps | hm_pm2_print_table
       echo
       hm_print_proxy_map
       ;;
     proxy)
+      echo
       hm_print_proxy_map
       ;;
     site)
@@ -313,12 +383,25 @@ cmd_pm2() {
       HM_SITE_LOGS="${_l}" HM_SITE_STATUS="${_s}"
       ;;
     ports)
-      echo "${C_BOLD}Nasłuchujące porty (node/pm2)${C_RESET}"
+      echo
+      echo "${C_BOLD}Nasłuchujące porty (node/pm2/next)${C_RESET} ${C_DIM}(sort: port ↑)${C_RESET}"
+      printf '  %s%6s  %s%s\n' "${C_DIM}" "PORT" "ADRES / PROCES" "${C_RESET}"
+      printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..56})" "${C_RESET}"
       if hm_have_cmd ss; then
-        ss -lntp 2>/dev/null | grep -E 'node|pm2|next' || ss -lntp 2>/dev/null | head -40
+        ss -lntp 2>/dev/null | awk '
+          NR==1 { next }
+          /node|pm2|next/ {
+            n = split($4, a, ":");
+            port = a[n];
+            if (port ~ /^[0-9]+$/) printf "%s\t%s\n", port, $0;
+          }
+        ' | sort -n -k1,1 | while IFS=$'\t' read -r port rest; do
+          printf '  %s%6s%s  %s\n' "${C_CYAN}" "${port}" "${C_RESET}" "${rest}"
+        done
       else
         hm_warn "Brak ss — zainstaluj iproute."
       fi
+      echo
       ;;
     raw)
       local bin

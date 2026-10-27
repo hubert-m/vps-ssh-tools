@@ -39,6 +39,7 @@ hm_parse_vhost_docroot() {
   local conf="$1"
   [[ -f "${conf}" ]] || return 1
   # OLS: docRoot                   /home/example.com/public_html
+  #      docRoot                   $VH_ROOT/public_html
   awk '
     tolower($1)=="docroot" {
       gsub(/\r/,"",$2);
@@ -46,6 +47,51 @@ hm_parse_vhost_docroot() {
       exit
     }
   ' "${conf}" 2>/dev/null
+}
+
+hm_ols_vhroot_for_domain() {
+  # CyberPanel/OLS: vhRoot w vhconf lub w virtualHost { } w httpd_config
+  local domain="$1"
+  local conf vhroot=""
+  conf="$(hm_vhost_conf_path "${domain}" 2>/dev/null || true)"
+  if [[ -n "${conf}" && -f "${conf}" ]]; then
+    vhroot="$(awk 'tolower($1)=="vhroot" { gsub(/\r/,"",$2); print $2; exit }' "${conf}" 2>/dev/null || true)"
+  fi
+  if [[ -z "${vhroot}" && -n "${OLS_CONF:-}" && -f "${OLS_CONF}" ]]; then
+    vhroot="$(awk -v d="${domain}" '
+      BEGIN { inv=0 }
+      tolower($1)=="virtualhost" && $2==d { inv=1; next }
+      inv && tolower($1)=="vhroot" { gsub(/\r/,"",$2); print $2; exit }
+      inv && $0 ~ /^[ \t]*\}/ { inv=0 }
+    ' "${OLS_CONF}" 2>/dev/null || true)"
+  fi
+  vhroot="${vhroot%/}"
+  # nie zostawiaj nierozwiniętych zmiennych OLS
+  if [[ -z "${vhroot}" || "${vhroot}" == *'$'* ]]; then
+    if [[ -d "/home/${domain}" ]]; then
+      vhroot="/home/${domain}"
+    elif [[ -d "/home/${domain}/public_html" ]]; then
+      vhroot="/home/${domain}"
+    else
+      vhroot=""
+    fi
+  fi
+  printf '%s' "${vhroot}"
+}
+
+hm_expand_ols_vars() {
+  # $VH_ROOT / $VH_NAME / $DOC_ROOT → realne ścieżki
+  local path="$1"
+  local domain="$2"
+  local vhroot="${3:-}"
+  [[ -n "${path}" ]] || { printf '%s' ""; return 0; }
+  [[ -n "${vhroot}" ]] || vhroot="$(hm_ols_vhroot_for_domain "${domain}")"
+  path="${path//\$VH_NAME/${domain}}"
+  if [[ -n "${vhroot}" ]]; then
+    path="${path//\$VH_ROOT/${vhroot}}"
+    path="${path//\$DOC_ROOT/${vhroot}/public_html}"
+  fi
+  printf '%s' "${path}"
 }
 
 hm_parse_vhost_php() {
@@ -197,14 +243,27 @@ hm_discover_sites() {
 hm_resolve_site_paths() {
   local domain="$1"
   local root="" docroot="" logs="" vhost="" php="?" user="" status="active"
+  local vhroot=""
 
   vhost="$(hm_vhost_conf_path "${domain}" 2>/dev/null || true)"
+  vhroot="$(hm_ols_vhroot_for_domain "${domain}")"
 
   if [[ -n "${vhost}" ]]; then
     docroot="$(hm_parse_vhost_docroot "${vhost}" || true)"
     php="$(hm_parse_vhost_php "${vhost}" || true)"
   fi
+  # OLS często ma docRoot $VH_ROOT/public_html
+  if [[ -n "${docroot}" ]]; then
+    docroot="$(hm_expand_ols_vars "${docroot}" "${domain}" "${vhroot}")"
+  fi
+  # nadal nierozwinięte / puste?
+  if [[ -z "${docroot}" || "${docroot}" == *'$'* ]]; then
+    docroot=""
+  fi
 
+  if [[ -z "${docroot}" && -n "${vhroot}" && -d "${vhroot}/public_html" ]]; then
+    docroot="${vhroot}/public_html"
+  fi
   if [[ -z "${docroot}" && -d "/home/${domain}/public_html" ]]; then
     docroot="/home/${domain}/public_html"
   fi
@@ -215,9 +274,10 @@ hm_resolve_site_paths() {
     docroot="/var/www/${domain}"
   fi
 
-  if [[ -n "${docroot}" ]]; then
+  if [[ -n "${vhroot}" && -d "${vhroot}" ]]; then
+    root="${vhroot}"
+  elif [[ -n "${docroot}" ]]; then
     root="$(dirname "${docroot}")"
-    # CyberPanel: site root = /home/domain
     if [[ "$(basename "${docroot}")" == "public_html" ]]; then
       root="$(dirname "${docroot}")"
     fi
@@ -226,7 +286,17 @@ hm_resolve_site_paths() {
     docroot="${root}/public_html"
   fi
 
-  if [[ -d "${root}/logs" ]]; then
+  # ostatnia szansa: nie trzymaj literału $VH_ROOT
+  if [[ "${root}" == *'$'* ]]; then
+    root=""
+    [[ -d "/home/${domain}" ]] && root="/home/${domain}"
+  fi
+  if [[ "${docroot}" == *'$'* ]]; then
+    docroot=""
+    [[ -n "${root}" && -d "${root}/public_html" ]] && docroot="${root}/public_html"
+  fi
+
+  if [[ -n "${root}" && -d "${root}/logs" ]]; then
     logs="${root}/logs"
   elif [[ -n "${OLS_ROOT}" && -d "${OLS_ROOT}/logs" ]]; then
     logs="${OLS_ROOT}/logs"
@@ -240,15 +310,31 @@ hm_resolve_site_paths() {
       ext="$(echo "${meta}" | awk -F'\t' '{print $2}')"
       state="$(echo "${meta}" | awk -F'\t' '{print $3}')"
       [[ -n "${php_sel}" && "${php_sel}" != "NULL" ]] && php="${php_sel}"
-      [[ -n "${ext}" && "${ext}" != "NULL" ]] && user="${ext}"
+      [[ -n "${ext}" && "${ext}" != "NULL" && "${ext}" != "" ]] && user="${ext}"
       if [[ "${state}" == "0" ]]; then
         status="suspended"
       fi
     fi
   fi
 
+  # właściciel katalogu strony (CyberPanel externalApp bywa puste dla Node)
   if [[ -z "${user}" && -n "${root}" && -d "${root}" ]]; then
     user="$(stat -c '%U' "${root}" 2>/dev/null || true)"
+  fi
+  if [[ -z "${user}" && -d "/home/${domain}" ]]; then
+    user="$(stat -c '%U' "/home/${domain}" 2>/dev/null || true)"
+  fi
+  # root/nobody nie są „userem strony”
+  case "${user}" in
+    root|nobody|www-data|apache|nginx|"") user="" ;;
+  esac
+  if [[ -z "${user}" && -d "/home/${domain}" ]]; then
+    # CyberPanel: często user = skrót domeny jako nazwa systemu
+    local cand
+    cand="$(stat -c '%U' "/home/${domain}" 2>/dev/null || true)"
+    if [[ -n "${cand}" && "${cand}" != "root" ]] && id "${cand}" >/dev/null 2>&1; then
+      user="${cand}"
+    fi
   fi
 
   # Normalizacja PHP (PHP 8.2 -> 8.2)
