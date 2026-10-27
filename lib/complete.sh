@@ -82,6 +82,7 @@ hm_complete_commands() {
   local cmds=(
     webs sites list use enter cd
     backup disk df ols lsws ssl mysql dbs db cron crons pm2 node apps php
+    update-php php-update
     health status applog selflog hmlog detect env
     update-hmtools version ver uninstall-hmtools
     help h exit quit q
@@ -200,6 +201,43 @@ hm_tab_complete() {
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi
+        ;;
+      php)
+        local re_php_upd='php[[:space:]]+(update|upgrade)[[:space:]]'
+        if [[ "${prefix}" =~ $re_php_upd ]]; then
+          local root="${OLS_ROOT:-/usr/local/lsws}" d base bn br oldnull
+          oldnull="$(shopt -p nullglob || true)"
+          shopt -s nullglob
+          for d in "${root}"/lsphp*; do
+            [[ -d "${d}" ]] || continue
+            base="$(basename "${d}")"
+            bn="${base#lsphp}"
+            if [[ "${bn}" =~ ^[0-9][0-9]$ ]]; then
+              br="${bn:0:1}.${bn:1:1}"
+              [[ "${br}" == "${partial}"* || "${bn}" == "${partial}"* ]] && matches+=("${br}")
+            fi
+          done
+          eval "${oldnull}" 2>/dev/null || shopt -u nullglob
+        else
+          for m in update upgrade help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
+      update-php|php-update)
+        local root="${OLS_ROOT:-/usr/local/lsws}" d base bn br oldnull
+        oldnull="$(shopt -p nullglob || true)"
+        shopt -s nullglob
+        for d in "${root}"/lsphp*; do
+          [[ -d "${d}" ]] || continue
+          base="$(basename "${d}")"
+          bn="${base#lsphp}"
+          if [[ "${bn}" =~ ^[0-9][0-9]$ ]]; then
+            br="${bn:0:1}.${bn:1:1}"
+            [[ "${br}" == "${partial}"* || "${bn}" == "${partial}"* || "${base}" == "${partial}"* ]] && matches+=("${br}")
+          fi
+        done
+        eval "${oldnull}" 2>/dev/null || shopt -u nullglob
         ;;
     esac
   fi

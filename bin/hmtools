@@ -74,7 +74,15 @@ hm_dispatch() {
       size)   cmd_site_size; return ;;
       dbs|databases) cmd_site_dbs; return ;;
       ssl)    cmd_site_ssl; return ;;
-      php)    cmd_site_php; return ;;
+      php)
+        if [[ "${1:-}" == "update" || "${1:-}" == "upgrade" ]]; then
+          shift || true
+          cmd_update_php "$@"
+          return
+        fi
+        cmd_site_php
+        return
+        ;;
       logs|log) cmd_site_logs "$@"; return ;;
       backup)
         if [[ "${1:-}" == "" ]]; then
@@ -106,6 +114,7 @@ hm_dispatch() {
     ssl)             cmd_ssl "$@" ;;
     mysql|dbs|db)    cmd_mysql "$@" ;;
     php)             cmd_php "$@" ;;
+    update-php|php-update) cmd_update_php "$@" ;;
     health|status)   cmd_health "$@" ;;
     applog|selflog|hmlog) cmd_applog "$@" ;;
     cron|crons)      cmd_cron "$@" ;;

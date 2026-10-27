@@ -195,6 +195,7 @@ Komendy globalne:
   cron [list|edit…]  Crony systemowe / użytkowników / strony
   pm2|node|apps      Procesy PM2/Node (porty, status, proxy OLS)
   php                LSPHP na serwerze + najnowsze z php.net
+  update-php <ver>   Aktualizacja LSPHP (np. update-php 8.4) — z potwierdzeniem
   health             Szybki przegląd zdrowia serwera
   detect             Pokaż wykryty panel / webserver
   help [polecenie]   Lista komend lub pomoc do konkretnej (np. help use)

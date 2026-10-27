@@ -26,6 +26,7 @@ hm_help_topic() {
     log) topic="logs" ;;
     crons) topic="cron" ;;
     node|apps) topic="pm2" ;;
+    php-update) topic="update-php" ;;
     \?|h) topic="help" ;;
   esac
 
@@ -107,10 +108,31 @@ EOF
       ;;
     php)
       cat <<'EOF'
-Użycie: php
+Użycie:
+  php                 Lista LSPHP + porównanie z php.net
+  php update <ver>    Alias: update-php <ver>
 
-Globalnie: lista LSPHP + porównanie z najnowszymi z php.net.
-W kontekście: wersja PHP strony + ta sama lista LSPHP.
+Globalnie / w kontekście: lista zainstalowanych lsphp* vs najnowsze z php.net.
+EOF
+      ;;
+    update-php|php-update)
+      cat <<'EOF'
+Użycie:
+  update-php <wersja>
+  php update <wersja>
+
+Przykłady:
+  update-php 8.4
+  update-php 84
+  php update lsphp83
+
+Działanie:
+  1) pokazuje wersję lokalną vs php.net
+  2) pyta o potwierdzenie [t/N]
+  3) aktualizuje pakiety lsphpXX* (apt/dnf/yum)
+  4) przeładowuje OpenLiteSpeed
+
+Uwaga: repozytorium LiteSpeed czasem dogania php.net z opóźnieniem.
 EOF
       ;;
     health)

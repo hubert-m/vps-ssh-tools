@@ -122,6 +122,7 @@ hmtools> exit
 | `cron` / `crons` | Crony systemowe / users / strony; `cron edit` |
 | `pm2` / `node` / `apps` | PM2/Node/Next — porty, status, proxy OLS |
 | `php` | LSPHP + porównanie z najnowszymi z php.net |
+| `update-php <ver>` | Aktualizacja LSPHP (np. `8.4`) z potwierdzeniem |
 | `health` | Load, RAM, dysk, OLS/MySQL, certy &lt;14 dni |
 | `detect` | Wypisz wykryty panel / webserver / DB |
 | `help [polecenie]` | Lista komend lub pomoc do wybranej (np. `help use`) |
