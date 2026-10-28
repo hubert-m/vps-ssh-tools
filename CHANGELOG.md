@@ -34,6 +34,10 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - `backup restore` — odtwarzanie `files.tar.gz` / `files.chunks` + baz (+ vhost/chown/ols)
 - `backup prune [--days N] [--dry-run] [--yes]` + `BACKUP_KEEP_DAYS` / `BACKUP_KEEP_MIN`
 - `backup schedule [enable|disable|status]` → `/etc/cron.d/hmtools-backup`
+- Refactor: `lib/backup.sh` → `lib/backup/{core,list,restore,prune,schedule}.sh`
+- Refactor: `lib/sites.sh` → `lib/sites/{vhost,ssl,discover,print,php}.sh`
+- Refactor: `lib/common.sh` → `lib/common/{ui,config,context,self}.sh`
+- Refactor: `lib/complete.sh` → `lib/complete/{helpers,tab}.sh`
 
 ---
 

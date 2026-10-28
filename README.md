@@ -403,7 +403,11 @@ vps-ssh-tools/
 ├── changelogs/*.txt        # punktowy changelog (CLI + instalator)
 ├── install.sh
 ├── bin/hmtools
-├── lib/           # common, help, complete, logging, detect, sites, db, size, backup, rclone
+├── lib/           # help, logging, detect, db, size, rclone (+ *.sh loadery)
+│   ├── common/    # ui, config, context, self
+│   ├── complete/  # helpers, tab
+│   ├── backup/    # core, list, restore, prune, schedule
+│   └── sites/     # vhost, ssl, discover, print, php
 ├── commands/      # webs, site_shell, backup, disk, ols, ssl, mysql, health
 ├── config/hmtools.conf.example
 └── scripts/setup-rclone.sh
