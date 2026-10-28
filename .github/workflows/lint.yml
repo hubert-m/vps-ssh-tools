@@ -1,14 +1,12 @@
 name: lint
 
 on:
-  push:
-  pull_request:
+  # push:
+  # pull_request:
 
 jobs:
   bash:
     name: bash -n + shellcheck
-    # tymczasowo wyłączone (plik zostaje — włącz: usuń / ustaw if: true)
-    if: false
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

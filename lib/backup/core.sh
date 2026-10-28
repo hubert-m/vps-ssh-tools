@@ -28,39 +28,111 @@ hm_backup_stamp() {
   date +%Y%m%d-%H%M%S
 }
 
+hm_mysql_db_exists() {
+  local dbname="$1"
+  local n
+  n="$(hm_mysql_exec -e "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=$(hm_sql_quote "${dbname}");" 2>/dev/null | tr -d '[:space:]')"
+  [[ "${n}" == "1" ]]
+}
+
 hm_stream_mysqldump() {
   local dbname="$1"
   local dest="$2"
-  local dumpcli
+  local dumpcli tmp errf dump_rc gzip_rc
   if ! hm_is_valid_db_name "${dbname}"; then
     hm_err "Nieprawidłowa nazwa bazy (odrzucam dump): ${dbname}"
     return 1
   fi
   dumpcli="$(hm_mysqldump_cli)" || { hm_err "Brak mysqldump/mariadb-dump."; return 1; }
 
+  if ! hm_mysql_db_exists "${dbname}"; then
+    hm_err "Baza nie istnieje: ${dbname}"
+    return 1
+  fi
+
   hm_info "Dump DB ${dbname} → ${dest}"
   local sock_args=()
   [[ -n "${MYSQL_SOCKET}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
 
-  # -- przed nazwą: nie traktuj dbname zaczynającego się od - jako flagi
-  if ! "${dumpcli}" "${sock_args[@]}" --single-transaction --quick --routines --triggers \
-      -- "${dbname}" 2>/dev/null | gzip -c | hm_rclone_rcat "${dest}"; then
-    hm_err "Nie udało się zrzucić/wgrać DB ${dbname}."
+  mkdir -m 0700 -p "${TMP_DIR}" 2>/dev/null || mkdir -p "${TMP_DIR}"
+  tmp="$(mktemp "${TMP_DIR}/mysqldump-XXXXXX.sql.gz")"
+  errf="$(mktemp "${TMP_DIR}/mysqldump-XXXXXX.err")"
+
+  # najpierw lokalny plik — unikamy pustego 20 B .sql.gz na Drive przy błędzie mysqldump
+  set +e
+  set +o pipefail
+  "${dumpcli}" "${sock_args[@]}" --single-transaction --quick --routines --triggers \
+    -- "${dbname}" 2>"${errf}" | gzip -c > "${tmp}"
+  dump_rc=${PIPESTATUS[0]}
+  gzip_rc=${PIPESTATUS[1]}
+  set -o pipefail
+  set -e
+
+  if [[ "${dump_rc}" -ne 0 || "${gzip_rc}" -ne 0 || ! -s "${tmp}" ]]; then
+    hm_err "Nie udało się zrzucić DB ${dbname} (mysqldump rc=${dump_rc})."
+    if [[ -s "${errf}" ]]; then
+      hm_warn "mysqldump: $(head -c 400 "${errf}" | tr '\n' ' ')"
+    fi
+    rm -f "${tmp}" "${errf}"
     return 1
   fi
+  rm -f "${errf}"
+
+  if ! hm_rclone_copyto "${tmp}" "${dest}"; then
+    hm_err "Upload dumpa nieudany: ${dest}"
+    # nie zostawiaj częściowego artefaktu
+    rclone deletefile "${dest}" >/dev/null 2>&1 || true
+    rm -f "${tmp}"
+    return 1
+  fi
+  rm -f "${tmp}"
   hm_ok "DB ${dbname} OK."
+}
+
+# tar exit 1 = ostrzeżenie (file changed); 2 = błąd krytyczny
+hm_tar_pipe_ok() {
+  local tar_rc="$1"
+  if [[ "${tar_rc}" -eq 0 ]]; then
+    return 0
+  fi
+  if [[ "${tar_rc}" -eq 1 ]]; then
+    hm_warn "tar: pliki zmieniły się podczas odczytu (kod 1) — traktuję jako ostrzeżenie."
+    return 0
+  fi
+  return 1
 }
 
 hm_stream_tar_rcat() {
   local src_dir="$1"
   local dest="$2"
-  local excludes
+  local excludes tar_err tar_rc gzip_rc rcat_rc
   excludes="$(hm_backup_tar_excludes)"
+  tar_err="$(mktemp "${TMP_DIR:-/tmp}/hmtools-tar.XXXXXX.err")"
 
   hm_info "Archiwum (stream) ${src_dir} → ${dest}"
+  set +e
+  set +o pipefail
   # shellcheck disable=SC2086
-  if ! tar -C "${src_dir}" ${excludes} -cf - . 2>/dev/null | gzip -c | hm_rclone_rcat "${dest}"; then
-    hm_err "Stream tar nieudany dla ${src_dir}."
+  tar -C "${src_dir}" --warning=no-file-changed --ignore-failed-read ${excludes} -cf - . 2>"${tar_err}" \
+    | gzip -c \
+    | hm_rclone_rcat "${dest}"
+  tar_rc=${PIPESTATUS[0]}
+  gzip_rc=${PIPESTATUS[1]}
+  rcat_rc=${PIPESTATUS[2]}
+  set -o pipefail
+  set -e
+
+  if [[ -s "${tar_err}" ]]; then
+    hm_warn "tar: $(head -c 300 "${tar_err}" | tr '\n' ' ')"
+  fi
+  rm -f "${tar_err}"
+
+  if [[ "${gzip_rc}" -ne 0 || "${rcat_rc}" -ne 0 ]]; then
+    hm_err "Stream tar nieudany dla ${src_dir} (gzip=${gzip_rc} rcat=${rcat_rc})."
+    return 1
+  fi
+  if ! hm_tar_pipe_ok "${tar_rc}"; then
+    hm_err "tar błąd krytyczny (kod ${tar_rc}) dla ${src_dir}."
     return 1
   fi
   hm_ok "Pliki ${src_dir} OK (stream)."
@@ -72,20 +144,38 @@ hm_chunked_tar_upload() {
   local remote_dir="$2"   # pełny remote:path/dir
   local chunk_bytes=$((CHUNK_SIZE_MB * 1024 * 1024))
   local work="${TMP_DIR}/$$"
-  local excludes
+  local excludes tar_err tar_rc gzip_rc split_rc
   excludes="$(hm_backup_tar_excludes)"
 
   mkdir -p "${work}"
+  tar_err="$(mktemp "${work}/tar.XXXXXX.err")"
 
   hm_info "Tryb chunk (${CHUNK_SIZE_MB} MB): ${src_dir} → ${remote_dir}"
   hm_rclone_mkdir "${remote_dir}"
 
+  set +e
+  set +o pipefail
   # shellcheck disable=SC2086
-  if ! tar -C "${src_dir}" ${excludes} -cf - . 2>/dev/null | gzip -c \
-      | split -b "${chunk_bytes}" -d -a 4 - "${work}/part_"; then
-    hm_err "Błąd tworzenia chunków."
-    rm -rf "${work}"
-    return 1
+  tar -C "${src_dir}" --warning=no-file-changed --ignore-failed-read ${excludes} -cf - . 2>"${tar_err}" \
+    | gzip -c \
+    | split -b "${chunk_bytes}" -d -a 4 - "${work}/part_"
+  tar_rc=${PIPESTATUS[0]}
+  gzip_rc=${PIPESTATUS[1]}
+  split_rc=${PIPESTATUS[2]}
+  set -o pipefail
+  set -e
+
+  if [[ -s "${tar_err}" ]]; then
+    hm_warn "tar: $(head -c 300 "${tar_err}" | tr '\n' ' ')"
+  fi
+  rm -f "${tar_err}"
+
+  if [[ "${gzip_rc}" -ne 0 || "${split_rc}" -ne 0 ]] || ! hm_tar_pipe_ok "${tar_rc}"; then
+    if [[ "${gzip_rc}" -ne 0 || "${split_rc}" -ne 0 ]] || [[ "${tar_rc}" -ge 2 ]]; then
+      hm_err "Błąd tworzenia chunków (tar=${tar_rc} gzip=${gzip_rc} split=${split_rc})."
+      rm -rf "${work}"
+      return 1
+    fi
   fi
 
   local part dest_file n=0
@@ -101,6 +191,12 @@ hm_chunked_tar_upload() {
     fi
     rm -f "${part}"
   done
+
+  if [[ "${n}" -eq 0 ]]; then
+    hm_err "Brak chunków do wysłania."
+    rm -rf "${work}"
+    return 1
+  fi
 
   # marker
   echo "chunks=${n}" | hm_rclone_rcat "${remote_dir}/files.tar.gz.chunks.txt" || true
@@ -178,7 +274,9 @@ hm_backup_site() {
     hm_err "Brak katalogu strony do backupu."
     return 1
   fi
-  hm_upload_files_smart "${backup_root}" "${remote_base}"
+  if ! hm_upload_files_smart "${backup_root}" "${remote_base}"; then
+    hm_warn "Błąd podczas wysyłania plików dla ${domain} — kontynuuję (vhost/manifest)."
+  fi
 
   # Vhost conf (jeśli jest)
   if [[ -n "${HM_SITE_VHOST}" && -f "${HM_SITE_VHOST}" ]]; then
@@ -214,7 +312,10 @@ hm_backup_system_configs() {
   [[ -d /etc ]] && paths+=(/etc)
   [[ -n "${OLS_ROOT}" && -d "${OLS_ROOT}/conf" ]] && paths+=("${OLS_ROOT}/conf")
   [[ -n "${CYBERPANEL_ROOT}" && -d "${CYBERPANEL_ROOT}" ]] && paths+=("${CYBERPANEL_ROOT}")
-  [[ -f /etc/crontab ]] && paths+=(/etc/crontab)
+  # /etc/crontab tylko gdy nie archiwizujemy całego /etc (unikamy duplikatu w tar)
+  if [[ ! -d /etc ]] && [[ -f /etc/crontab ]]; then
+    paths+=(/etc/crontab)
+  fi
   [[ -d /var/spool/cron ]] && paths+=(/var/spool/cron)
 
   if [[ "${#paths[@]}" -eq 0 ]]; then
@@ -223,13 +324,27 @@ hm_backup_system_configs() {
   fi
 
   # Lekki tar wybranych ścieżek (bez ogromnych logów) — stream, bez lokalnego archiwum
+  local tar_err tar_rc gzip_rc rcat_rc
+  tar_err="$(mktemp "${TMP_DIR:-/tmp}/hmtools-syscfg.XXXXXX.err")"
+  set +e
+  set +o pipefail
   # shellcheck disable=SC2086
-  if tar --ignore-failed-read -cf - \
-      --exclude='*.log' --exclude='cache' --exclude='tmp' \
-      "${paths[@]}" 2>/dev/null | gzip -c | hm_rclone_rcat "${remote_base}/system-configs.tar.gz"; then
+  tar --warning=no-file-changed --ignore-failed-read -cf - \
+    --exclude='*.log' --exclude='cache' --exclude='tmp' \
+    "${paths[@]}" 2>"${tar_err}" | gzip -c | hm_rclone_rcat "${remote_base}/system-configs.tar.gz"
+  tar_rc=${PIPESTATUS[0]}
+  gzip_rc=${PIPESTATUS[1]}
+  rcat_rc=${PIPESTATUS[2]}
+  set -o pipefail
+  set -e
+  if [[ -s "${tar_err}" ]]; then
+    hm_warn "tar (system): $(head -c 200 "${tar_err}" | tr '\n' ' ')"
+  fi
+  rm -f "${tar_err}"
+  if [[ "${gzip_rc}" -eq 0 && "${rcat_rc}" -eq 0 ]] && hm_tar_pipe_ok "${tar_rc}"; then
     hm_ok "Konfiguracje systemowe OK."
   else
-    hm_warn "Częściowy błąd przy archiwum konfiguracji."
+    hm_warn "Częściowy błąd przy archiwum konfiguracji (tar=${tar_rc} gzip=${gzip_rc} rcat=${rcat_rc})."
   fi
 }
 
@@ -272,7 +387,9 @@ hm_backup_full() {
     local backup_root="${HM_SITE_ROOT}"
     [[ -z "${backup_root}" || ! -d "${backup_root}" ]] && backup_root="${HM_SITE_DOCROOT}"
     if [[ -n "${backup_root}" && -d "${backup_root}" ]]; then
-      hm_upload_files_smart "${backup_root}" "${site_remote}"
+      if ! hm_upload_files_smart "${backup_root}" "${site_remote}"; then
+        hm_warn "Błąd wysyłania plików dla ${domain} — kontynuuję kolejne strony."
+      fi
     else
       hm_warn "Brak plików dla ${domain}."
     fi

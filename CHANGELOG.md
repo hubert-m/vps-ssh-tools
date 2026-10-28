@@ -59,6 +59,9 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Security: `pm2` tylko systemowy bin + `runuser` na właścicielu `PM2_HOME`
 - Security: `clean` — bez symlinków poza katalogiem strony
 - Security: `LOG_DIR` / `TMP_DIR` `0700`, pliki logów `0600`
+- Fix: tar kod 1 (file changed) nie przerywa `backup site`/`full`; stderr widoczny
+- Fix: `mysqldump` → lokalny tmp, potem upload (bez pustych `.sql.gz` na Drive)
+- Fix: brak duplikatu `/etc/crontab` w backup system configs
 
 ---
 
