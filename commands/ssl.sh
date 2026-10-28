@@ -119,7 +119,7 @@ cmd_renew_ssl() {
       "${acme}" --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
       set +e
       if "${acme}" --list 2>/dev/null | grep -Fq -- "${domain}"; then
-        "${acme}" --renew -d "${domain}" --force
+        hm_run "${acme}" --renew -d "${domain}" --force
         rc=$?
       else
         local webroot=""
@@ -130,14 +130,14 @@ cmd_renew_ssl() {
         fi
         mkdir -p "/etc/letsencrypt/live/${domain}" 2>/dev/null || true
         if [[ -n "${webroot}" ]]; then
-          "${acme}" --issue -d "${domain}" -d "www.${domain}" -w "${webroot}" --force \
+          hm_run "${acme}" --issue -d "${domain}" -d "www.${domain}" -w "${webroot}" --force \
             --cert-file "/etc/letsencrypt/live/${domain}/cert.pem" \
             --key-file "/etc/letsencrypt/live/${domain}/privkey.pem" \
             --fullchain-file "/etc/letsencrypt/live/${domain}/fullchain.pem"
           rc=$?
           # www może nie istnieć — retry bez www
           if [[ "${rc}" -ne 0 ]]; then
-            "${acme}" --issue -d "${domain}" -w "${webroot}" --force \
+            hm_run "${acme}" --issue -d "${domain}" -w "${webroot}" --force \
               --cert-file "/etc/letsencrypt/live/${domain}/cert.pem" \
               --key-file "/etc/letsencrypt/live/${domain}/privkey.pem" \
               --fullchain-file "/etc/letsencrypt/live/${domain}/fullchain.pem"
@@ -162,7 +162,7 @@ cmd_renew_ssl() {
   if [[ "${ok}" -eq 0 ]] && hm_have_cmd certbot; then
     hm_info "certbot renew --cert-name ${domain}…"
     set +e
-    certbot renew --cert-name "${domain}" --force-renewal
+    hm_run certbot renew --cert-name "${domain}" --force-renewal
     rc=$?
     set -e
     if [[ "${rc}" -eq 0 ]]; then
@@ -179,12 +179,8 @@ cmd_renew_ssl() {
     return 1
   fi
 
-  # reload OLS
-  if [[ -n "${OLS_CTRL:-}" && -x "${OLS_CTRL}" ]]; then
-    "${OLS_CTRL}" reload 2>/dev/null || true
-  elif hm_have_cmd systemctl; then
-    systemctl reload lsws 2>/dev/null || systemctl reload lshttpd 2>/dev/null || true
-  fi
+  hm_info "Reload OLS…"
+  hm_ols_reload_soft || hm_warn "ols reload nieudany — zrób ręcznie: ols reload"
 
   echo
   hm_ok "Gotowe — stan certyfikatu po odnowieniu:"

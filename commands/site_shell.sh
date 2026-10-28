@@ -183,22 +183,10 @@ cmd_site_clean() {
   echo
   hm_warn "Tej operacji nie da się cofnąć (bez backupu)."
 
-  local reply
-  printf '%s [yes/no]: ' "Na pewno wyczyścić powyższą zawartość?"
-  read -r reply || {
-    hm_file_log WARN "CONFIRM: clean → (EOF/abort)"
-    return 1
-  }
-  case "${reply}" in
-    yes|YES|Yes|y|Y|tak|Tak|TAK|t|T)
-      hm_file_log INFO "CONFIRM: clean → yes (${reply})"
-      ;;
-    *)
-      hm_file_log INFO "CONFIRM: clean → no (${reply:-empty})"
-      hm_info "Anulowano — nic nie usunięto."
-      return 0
-      ;;
-  esac
+  if ! hm_confirm "Na pewno wyczyścić powyższą zawartość"; then
+    hm_info "Anulowano — nic nie usunięto."
+    return 0
+  fi
 
   echo
   local i=0

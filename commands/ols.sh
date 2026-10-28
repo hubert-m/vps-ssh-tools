@@ -25,10 +25,10 @@ cmd_ols() {
       pgrep -a lshttpd 2>/dev/null | head -5 || true
       ;;
     reload)
-      if [[ -x "${OLS_CTRL}" ]]; then
-        "${OLS_CTRL}" reload && hm_ok "OLS reload OK."
+      if hm_ols_reload_soft; then
+        hm_ok "OLS reload OK."
       else
-        hm_err "Brak lswsctrl."
+        hm_err "Nie udało się przeładować OLS (lswsctrl / systemctl)."
         return 1
       fi
       ;;

@@ -111,3 +111,17 @@ Wykryte środowisko:
   MYSQL_SOCKET  : ${MYSQL_SOCKET:--}
 EOF
 }
+
+hm_ols_reload_soft() {
+  # wspólny reload OLS (lswsctrl → systemctl → service)
+  hm_detect_all 2>/dev/null || true
+  if [[ -n "${OLS_CTRL:-}" && -x "${OLS_CTRL}" ]]; then
+    "${OLS_CTRL}" reload 2>/dev/null && return 0
+  fi
+  if hm_have_cmd systemctl; then
+    systemctl reload lsws 2>/dev/null && return 0
+    systemctl reload lshttpd 2>/dev/null && return 0
+  fi
+  service lsws reload 2>/dev/null && return 0
+  return 1
+}

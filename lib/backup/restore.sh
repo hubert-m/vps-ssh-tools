@@ -85,20 +85,11 @@ hm_backup_restore_dbs() {
 }
 
 hm_backup_ols_reload() {
-  hm_detect_all 2>/dev/null || true
-  if [[ -n "${OLS_CTRL:-}" && -x "${OLS_CTRL}" ]]; then
-    if "${OLS_CTRL}" reload 2>/dev/null; then
-      hm_ok "OLS reload OK."
-      return 0
-    fi
+  if hm_ols_reload_soft; then
+    hm_ok "OLS reload OK."
+  else
+    hm_warn "Nie udało się przeładować OLS — zrób ręcznie: ols reload"
   fi
-  if hm_have_cmd systemctl; then
-    if systemctl reload lsws 2>/dev/null || systemctl reload lshttpd 2>/dev/null; then
-      hm_ok "OLS reload OK (systemctl)."
-      return 0
-    fi
-  fi
-  hm_warn "Nie udało się przeładować OLS — zrób ręcznie: ols reload"
   return 0
 }
 

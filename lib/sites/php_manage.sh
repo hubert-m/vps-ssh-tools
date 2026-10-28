@@ -52,17 +52,7 @@ hm_php_installed_packages() {
   return 1
 }
 
-hm_ols_reload_soft() {
-  if [[ -n "${OLS_CTRL:-}" && -x "${OLS_CTRL}" ]]; then
-    "${OLS_CTRL}" reload 2>/dev/null && return 0
-  fi
-  if hm_have_cmd systemctl; then
-    systemctl reload lsws 2>/dev/null && return 0
-    systemctl reload lshttpd 2>/dev/null && return 0
-  fi
-  service lsws reload 2>/dev/null && return 0
-  return 1
-}
+# hm_ols_reload_soft — w lib/detect.sh
 
 hm_php_root_for_branch() {
   local branch="$1" suffix

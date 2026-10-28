@@ -50,9 +50,8 @@ hm_ols_vhroot_for_domain() {
   vhroot="${vhroot%/}"
   # nie zostawiaj nierozwiniętych zmiennych OLS
   if [[ -z "${vhroot}" || "${vhroot}" == *'$'* ]]; then
+    # /home/<domena>/public_html ⇒ katalog nadrzędny też istnieje
     if [[ -d "/home/${domain}" ]]; then
-      vhroot="/home/${domain}"
-    elif [[ -d "/home/${domain}/public_html" ]]; then
       vhroot="/home/${domain}"
     else
       vhroot=""

@@ -135,10 +135,8 @@ hm_resolve_site_paths() {
   if [[ -n "${vhroot}" && -d "${vhroot}" ]]; then
     root="${vhroot}"
   elif [[ -n "${docroot}" ]]; then
+    # dirname public_html → site root; inaczej parent docroot
     root="$(dirname "${docroot}")"
-    if [[ "$(basename "${docroot}")" == "public_html" ]]; then
-      root="$(dirname "${docroot}")"
-    fi
   elif [[ -d "/home/${domain}" ]]; then
     root="/home/${domain}"
     docroot="${root}/public_html"

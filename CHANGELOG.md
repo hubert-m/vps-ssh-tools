@@ -42,6 +42,11 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - `php ext` / `php ext install` — moduły `php -m` + instalacja `lsphpXX-*`
 - `php ini` / `php ini set` — limity `php.ini` + nadpisania vhost / `.user.ini`
 - `php restart` / `php ps` — kill workerów Detached Mode + podgląd procesów
+- Refactor: `setup-rclone` → `hm_rclone_save_remote_conf` (bez `.bak`)
+- Refactor: wspólny `hm_ols_reload_soft` (`detect`) w `ols` / `ssl` / health / php
+- Refactor: health SSL przez `hm_ssl_status` / `hm_ssl_days_left`
+- Fix: martwe warunki vhroot/docroot; `clean` → `hm_confirm`; ssl acme/certbot → `hm_run`
+- CI: `.github/workflows/lint.yml` (`bash -n` + shellcheck)
 
 ---
 

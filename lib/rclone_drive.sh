@@ -68,17 +68,22 @@ hm_backup_dest_dbdump() {
 }
 
 hm_rclone_save_remote_conf() {
-  # zapis RCLONE_REMOTE do hmtools.conf
+  # zapis RCLONE_REMOTE do hmtools.conf (bez plików .bak)
   local value="$1"
   local conf="${HMTOOLS_CONF:-${HMTOOLS_ROOT}/config/hmtools.conf}"
+  local tmp
   mkdir -p "$(dirname "${conf}")"
   if [[ -f "${conf}" ]] && grep -q '^RCLONE_REMOTE=' "${conf}" 2>/dev/null; then
-    sed -i.bak "s|^RCLONE_REMOTE=.*|RCLONE_REMOTE=\"${value}\"|" "${conf}"
+    tmp="$(mktemp "${conf}.XXXXXX")"
+    sed "s|^RCLONE_REMOTE=.*|RCLONE_REMOTE=\"${value}\"|" "${conf}" > "${tmp}"
+    mv -f "${tmp}" "${conf}"
   elif [[ -f "${conf}" ]]; then
     echo "RCLONE_REMOTE=\"${value}\"" >> "${conf}"
   elif [[ -f "${HMTOOLS_ROOT}/config/hmtools.conf.example" ]]; then
     cp "${HMTOOLS_ROOT}/config/hmtools.conf.example" "${conf}"
-    sed -i.bak "s|^RCLONE_REMOTE=.*|RCLONE_REMOTE=\"${value}\"|" "${conf}"
+    tmp="$(mktemp "${conf}.XXXXXX")"
+    sed "s|^RCLONE_REMOTE=.*|RCLONE_REMOTE=\"${value}\"|" "${conf}" > "${tmp}"
+    mv -f "${tmp}" "${conf}"
   else
     echo "RCLONE_REMOTE=\"${value}\"" > "${conf}"
   fi

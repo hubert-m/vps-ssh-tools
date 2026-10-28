@@ -2,24 +2,27 @@
 # Guided setup: rclone + Google Drive dla hmtools
 set -euo pipefail
 
-HMTOOLS_ROOT="${HMTOOLS_ROOT:-/hm-tools}"
-CONF="${HMTOOLS_CONF:-${HMTOOLS_ROOT}/config/hmtools.conf}"
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HMTOOLS_ROOT="${HMTOOLS_ROOT:-$(cd "${_SCRIPT_DIR}/.." && pwd)}"
+HMTOOLS_CONF="${HMTOOLS_CONF:-${HMTOOLS_ROOT}/config/hmtools.conf}"
+CONF="${HMTOOLS_CONF}"
+
+# shellcheck source=../lib/common.sh
+source "${HMTOOLS_ROOT}/lib/common.sh"
+# shellcheck source=../lib/rclone_drive.sh
+source "${HMTOOLS_ROOT}/lib/rclone_drive.sh"
 
 echo "=== hmtools: konfiguracja rclone / Google Drive ==="
 echo
 
-if ! command -v rclone >/dev/null 2>&1; then
+if ! hm_have_cmd rclone; then
   echo "rclone nie jest zainstalowany."
-  read -r -p "Zainstalować rclone teraz? [t/N]: " ans
-  case "${ans}" in
-    t|T|tak|y|Y)
-      curl -fsSL https://rclone.org/install.sh | bash
-      ;;
-    *)
-      echo "Zainstaluj ręcznie: https://rclone.org/install/"
-      exit 1
-      ;;
-  esac
+  if hm_confirm "Zainstalować rclone teraz"; then
+    curl -fsSL https://rclone.org/install.sh | bash
+  else
+    echo "Zainstaluj ręcznie: https://rclone.org/install/"
+    exit 1
+  fi
 fi
 
 echo
@@ -59,28 +62,12 @@ remote_path="${remote_path#/}"
 remote_path="${remote_path%/}"
 
 RCLONE_REMOTE="${remote_name}:${remote_path}"
-
-mkdir -p "$(dirname "${CONF}")"
-if [[ -f "${CONF}" ]]; then
-  if grep -q '^RCLONE_REMOTE=' "${CONF}" 2>/dev/null; then
-    sed -i.bak "s|^RCLONE_REMOTE=.*|RCLONE_REMOTE=\"${RCLONE_REMOTE}\"|" "${CONF}"
-  else
-    echo "RCLONE_REMOTE=\"${RCLONE_REMOTE}\"" >> "${CONF}"
-  fi
-else
-  if [[ -f "${HMTOOLS_ROOT}/config/hmtools.conf.example" ]]; then
-    cp "${HMTOOLS_ROOT}/config/hmtools.conf.example" "${CONF}"
-    sed -i.bak "s|^RCLONE_REMOTE=.*|RCLONE_REMOTE=\"${RCLONE_REMOTE}\"|" "${CONF}"
-  else
-    echo "RCLONE_REMOTE=\"${RCLONE_REMOTE}\"" > "${CONF}"
-  fi
-fi
+hm_rclone_save_remote_conf "${RCLONE_REMOTE}"
 
 echo
 echo "Zapisano RCLONE_REMOTE=\"${RCLONE_REMOTE}\" w ${CONF}"
 echo "Tworzenie katalogów root/ i full/ …"
-rclone mkdir "${RCLONE_REMOTE}" 2>/dev/null || true
-rclone mkdir "${RCLONE_REMOTE}/full" 2>/dev/null || true
+hm_rclone_ensure_backup_layout
 
 echo "Test:"
 if rclone lsd "${remote_name}:" >/dev/null 2>&1; then

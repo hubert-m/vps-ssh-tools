@@ -1,0 +1,51 @@
+name: lint
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  bash:
+    name: bash -n + shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+
+      - name: Collect scripts
+        id: files
+        run: |
+          set -euo pipefail
+          {
+            echo "bin/hmtools"
+            find install.sh scripts lib commands -type f \( -name '*.sh' -o -name 'hmtools' \) 2>/dev/null || true
+          } | sort -u > /tmp/hmtools-scripts.txt
+          echo "Scripts:"
+          cat /tmp/hmtools-scripts.txt
+          count="$(wc -l < /tmp/hmtools-scripts.txt | tr -d ' ')"
+          echo "count=${count}" >> "$GITHUB_OUTPUT"
+          test "${count}" -gt 0
+
+      - name: bash -n (syntax)
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r f; do
+            [[ -f "${f}" ]] || continue
+            echo "== bash -n ${f}"
+            if ! bash -n "${f}"; then
+              echo "::error file=${f}::bash -n failed"
+              fail=1
+            fi
+          done < /tmp/hmtools-scripts.txt
+          exit "${fail}"
+
+      - name: shellcheck
+        run: |
+          set -euo pipefail
+          # -S error: błędy krytyczne (np. local poza funkcją); ostrzeżenia nie blokują
+          mapfile -t files < /tmp/hmtools-scripts.txt
+          shellcheck -S error -x "${files[@]}"
