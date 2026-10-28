@@ -47,6 +47,8 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Refactor: health SSL przez `hm_ssl_status` / `hm_ssl_days_left`
 - Fix: martwe warunki vhroot/docroot; `clean` → `hm_confirm`; ssl acme/certbot → `hm_run`
 - CI: `.github/workflows/lint.yml` (`bash -n` + shellcheck)
+- Fix: REPL/`-c` — bez rozwijania globów (`set -f`, `"$@"`) przy `?` / `*`
+- Fix: log capture — TTY fd 3/4, detach przy prompcie; `hm_run_on_tty` dla `cron edit` / `rclone config`
 
 ---
 

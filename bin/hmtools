@@ -190,8 +190,8 @@ if [[ "${1:-}" == "-c" ]]; then
   _t0="$(date +%s)"
   rc=0
   set +e
-  # shellcheck disable=SC2068
-  hm_dispatch $@
+  # quoted "$@" — bez rozwijania globów (*, ?, [...])
+  hm_dispatch "$@"
   rc=$?
   set -e
   hm_log_cmd_end "${rc}" "$(( $(date +%s) - _t0 ))"
@@ -225,10 +225,11 @@ hm_ok "hmtools — panel=${PANEL} webserver=${WEBSERVER} db=${DB_ENGINE}"
 hm_info "Wpisz 'help' aby zobaczyć komendy. 'exit' kończy. Tab — uzupełnianie (np. use <domena>)."
 hm_info "Logi: ${LOG_DIR}/hmtools-$(date +%Y-%m-%d).log"
 hm_welcome_update_notice
+# welcome przez tee — potem TTY na prompt (bez wyścigu z asynchronicznym tee)
+hm_log_detach_output_capture
 
 while true; do
-  # Prompt MUSI być w read -p (readline), nie osobnym printf —
-  # wtedy Tab/bind -x zawsze przerysowuje hmtools> / [domena]> wraz z linią.
+  # Prompt na prawdziwym TTY (po detach) — Tab/readline działają poprawnie
   if ! read -r -e -p "$(hm_prompt_for_read)" line; then
     echo
     break
@@ -240,15 +241,23 @@ while true; do
 
   history -s "${line}" 2>/dev/null || true
 
+  # rozbijanie słów BEZ rozwijania globów (*, ?, [...]) względem CWD
+  _args=()
+  set -f
+  # shellcheck disable=SC2206
+  _args=( ${line} )
+  set +f
+
   # bez 'local' — pętla REPL jest na poziomie top-level skryptu
   _t0="$(date +%s)"
   _dur=0
   rc=0
+  hm_log_attach_output_capture
   set +e
-  # shellcheck disable=SC2086
-  hm_dispatch ${line}
+  hm_dispatch "${_args[@]}"
   rc=$?
   set -e
+  hm_log_detach_output_capture
   _dur="$(( $(date +%s) - _t0 ))"
   hm_log_cmd_end "${rc}" "${_dur}"
   if [[ "${rc}" -eq 99 ]]; then

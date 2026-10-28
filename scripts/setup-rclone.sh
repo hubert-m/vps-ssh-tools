@@ -43,7 +43,10 @@ echo
 read -r -p "Uruchomić rclone config? [T/n]: " go
 case "${go}" in
   n|N|nie) ;;
-  *) rclone config ;;
+  *)
+    # prawdziwe TTY — nie przez tee logów sesji hmtools
+    hm_run_on_tty rclone config
+    ;;
 esac
 
 echo

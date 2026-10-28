@@ -230,7 +230,8 @@ hm_cron_edit_user() {
   fi
   hm_info "Edycja crontab użytkownika ${user} (EDITOR=${EDITOR})"
   hm_info "Zapisz i zamknij edytor, aby zastosować zmiany."
-  crontab -u "${user}" -e
+  # prawdziwe TTY — nie przez tee logów (nano/vi)
+  hm_run_on_tty crontab -u "${user}" -e
 }
 
 cmd_cron() {

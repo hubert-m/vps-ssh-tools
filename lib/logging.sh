@@ -19,6 +19,7 @@ LOG_CAPTURE_OUTPUT="${LOG_CAPTURE_OUTPUT:-1}"
 LOG_RUN_MAX_LINES="${LOG_RUN_MAX_LINES:-400}"
 
 HM_LOG_TEE_ATTACHED="${HM_LOG_TEE_ATTACHED:-0}"
+HM_LOG_TTY_FDS="${HM_LOG_TTY_FDS:-0}"
 
 hm_log_init() {
   [[ "${LOG_ENABLED}" == "1" ]] || return 0
@@ -96,26 +97,88 @@ hm_log_stream_to_file() {
   done
 }
 
-# Podłącz tee: terminal widzi wszystko, kopia (bez ANSI) → log
+# Zachowaj oryginalne deskryptory TTY (przed pierwszym tee)
+hm_log_save_tty_fds() {
+  [[ "${HM_LOG_TTY_FDS}" == "1" ]] && return 0
+  # tylko gdy stdout nadal jest terminalem
+  if [[ -t 1 ]]; then
+    exec 3>&1 4>&2
+    HM_LOG_TTY_FDS=1
+    export HM_LOG_TTY_FDS
+  fi
+}
+
+# Podłącz tee: wyświetlanie na zapisanym TTY (fd 3/4), kopia (bez ANSI) → log
 hm_log_attach_output_capture() {
   [[ "${LOG_ENABLED}" == "1" ]] || return 0
   [[ "${LOG_CAPTURE_OUTPUT}" == "1" ]] || return 0
   [[ "${HM_LOG_TEE_ATTACHED}" == "1" ]] && return 0
-  # tylko TTY — przy przekierowaniu zostawiamy surowy stream
-  [[ -t 1 ]] || return 0
+
+  hm_log_save_tty_fds
+  # bez zapisanych TTY nie podpinamy (np. stdout już przekierowany z zewnątrz)
+  if [[ "${HM_LOG_TTY_FDS}" != "1" ]]; then
+    [[ -t 1 ]] || return 0
+    hm_log_save_tty_fds
+    [[ "${HM_LOG_TTY_FDS}" == "1" ]] || return 0
+  fi
 
   hm_log_init
   local logf
   logf="$(hm_log_file_path)"
 
-  # tee dziedziczy poprzedni stdout/stderr (TTY) — użytkownik widzi to samo;
-  # druga gałąź (bez ANSI) trafia do pliku logu.
-  exec > >(tee >(hm_log_strip_ansi | hm_log_stream_to_file OUT INFO))
-  exec 2> >(tee >(hm_log_strip_ansi | hm_log_stream_to_file ERR WARN) >&2)
+  # tee → prawdziwy TTY (3/4); druga gałąź bez ANSI → plik
+  # stdbuf -oL zmniejsza wyścig z promptem REPL
+  if command -v stdbuf >/dev/null 2>&1; then
+    exec > >(stdbuf -oL -eL tee >(hm_log_strip_ansi | hm_log_stream_to_file OUT INFO) >&3)
+    exec 2> >(stdbuf -oL -eL tee >(hm_log_strip_ansi | hm_log_stream_to_file ERR WARN) >&4)
+  else
+    exec > >(tee >(hm_log_strip_ansi | hm_log_stream_to_file OUT INFO) >&3)
+    exec 2> >(tee >(hm_log_strip_ansi | hm_log_stream_to_file ERR WARN) >&4)
+  fi
 
   HM_LOG_TEE_ATTACHED=1
   export HM_LOG_TEE_ATTACHED
   hm_file_log INFO "LOG: podłączono przechwyt stdout/stderr → ${logf}"
+}
+
+# Przywróć TTY (domyka potoki tee → flush logu)
+hm_log_detach_output_capture() {
+  [[ "${HM_LOG_TEE_ATTACHED}" == "1" ]] || return 0
+  [[ "${HM_LOG_TTY_FDS}" == "1" ]] || return 0
+  exec 1>&3 2>&4
+  HM_LOG_TEE_ATTACHED=0
+  export HM_LOG_TEE_ATTACHED
+  # daj process substitution czas na domknięcie i zapis
+  sleep 0.05 2>/dev/null || true
+}
+
+hm_log_flush_capture() {
+  [[ "${HM_LOG_TEE_ATTACHED}" == "1" ]] || return 0
+  sleep 0.05 2>/dev/null || true
+}
+
+# Komendy TUI (crontab -e, rclone config, nano/vi): prawdziwe TTY, bez śmieci w logu
+hm_run_on_tty() {
+  local -a cmd=("$@")
+  [[ "${#cmd[@]}" -gt 0 ]] || return 1
+  hm_file_log INFO "RUN_TTY: ${cmd[*]}"
+
+  hm_log_save_tty_fds
+  local rc=0
+  set +e
+  if [[ "${HM_LOG_TTY_FDS}" == "1" ]] && [[ -e /dev/tty ]]; then
+    "${cmd[@]}" >&3 2>&4 </dev/tty
+    rc=$?
+  elif [[ -e /dev/tty ]]; then
+    "${cmd[@]}" </dev/tty
+    rc=$?
+  else
+    "${cmd[@]}"
+    rc=$?
+  fi
+  set -e
+  hm_file_log INFO "RUN_TTY_END: rc=${rc} cmd=${cmd[*]}"
+  return "${rc}"
 }
 
 hm_log_session_start() {
@@ -130,6 +193,7 @@ hm_log_session_start() {
 }
 
 hm_log_session_end() {
+  hm_log_detach_output_capture
   hm_file_log INFO "=== sesja koniec pid=$$ ==="
 }
 
