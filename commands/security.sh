@@ -178,6 +178,13 @@ cmd_security_unban() {
   [[ -n "${ip}" ]] || { hm_err "Użycie: security unban <IP>"; return 1; }
   hm_is_valid_ip "${ip}" || { hm_err "Nieprawidłowe IP: ${ip}"; return 1; }
 
+  if ! hm_confirm_plan "security unban — ${ip}" \
+    "Odblokowanie adresu IP." \
+    "Usunięcie blokady adresu IP ${ip} we wszystkich aktywnych jailach Fail2Ban" \
+    "Usunięcie reguły firewall (UFW deny / iptables DROP) dla ${ip}"; then
+    return 0
+  fi
+
   if hm_have_cmd fail2ban-client; then
     local jails jail
     jails="$(fail2ban-client status 2>/dev/null | awk -F: '/Jail list/{print $2}' | tr ',' ' ')"
@@ -195,10 +202,8 @@ cmd_security_unban() {
 
   if hm_have_cmd ufw; then
     if ufw status 2>/dev/null | grep -q "${ip}"; then
-      if hm_confirm "Usunąć reguły UFW dla ${ip}"; then
-        ufw delete deny from "${ip}" 2>/dev/null || true
-        ufw status | grep "${ip}" || true
-      fi
+      ufw delete deny from "${ip}" 2>/dev/null || true
+      ufw status | grep "${ip}" || true
     fi
   fi
 }
@@ -207,8 +212,10 @@ cmd_security_ban() {
   local ip="${1:-}"
   [[ -n "${ip}" ]] || { hm_err "Użycie: security ban <IP>"; return 1; }
   hm_is_valid_ip "${ip}" || { hm_err "Nieprawidłowe IP: ${ip}"; return 1; }
-  if ! hm_confirm "Zablokować ${ip}"; then
-    hm_info "Anulowano."
+  if ! hm_confirm_plan "security ban — ${ip}" \
+    "Blokada adresu IP na firewallu i w Fail2Ban." \
+    "Dodanie blokady adresu IP ${ip} we wszystkich aktywnych jailach Fail2Ban" \
+    "Dodanie reguły firewall (UFW deny / iptables DROP) dla ${ip}"; then
     return 0
   fi
 

@@ -37,9 +37,21 @@ hm_backup_schedule_enable() {
   fi
 
   prune_line=""
+  local schedule_desc="codzienny backup full o godz. ${hour}:00"
   if [[ "${BACKUP_SCHEDULE_PRUNE:-1}" == "1" ]]; then
     local phour=$(( (hour + 1) % 24 ))
     prune_line="30 ${phour} * * * root ${bin} -c \"backup prune --yes\" >> ${logf} 2>&1"
+    schedule_desc="codzienny backup full o godz. ${hour}:00 + opcjonalny prune o ${phour}:30"
+  fi
+  local -a plan_steps=(
+    "Zapisanie pliku ${f} (${schedule_desc})"
+    "Ustawienie uprawnień 0644 na ${f}"
+  )
+
+  if ! hm_confirm_plan "backup schedule enable" \
+    "Nadpisanie pliku cron ${f} (jeśli istnieje)." \
+    "${plan_steps[@]}"; then
+    return 0
   fi
 
   cat > "${f}" <<EOF
@@ -71,6 +83,11 @@ hm_backup_schedule_disable() {
   if [[ ! -w "$(dirname "${f}")" ]] && [[ "$(id -u)" -ne 0 ]]; then
     hm_err "Potrzebujesz root, aby usunąć ${f}"
     return 1
+  fi
+  if ! hm_confirm_plan "backup schedule disable" \
+    "Wyłączenie automatycznych backupów." \
+    "Usunięcie pliku ${f}"; then
+    return 0
   fi
   rm -f "${f}"
   hm_ok "Wyłączono harmonogram (usunięto ${f})."

@@ -423,11 +423,12 @@ hm_mysql_import() {
   cli="$(hm_mysql_cli)" || { hm_err "Brak mysql/mariadb."; return 1; }
   [[ -n "${MYSQL_SOCKET:-}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
 
-  echo "  Baza  : ${dbname}"
-  echo "  Plik  : ${file} ($(hm_human_size "$(stat -c%s "${file}" 2>/dev/null || echo 0)"))"
-  hm_warn "Import NADPISZE dane w bazie ${dbname}."
-  if ! hm_confirm "Importować zrzut do ${dbname}"; then
-    hm_info "Anulowano."
+  local fsize
+  fsize="$(hm_human_size "$(stat -c%s "${file}" 2>/dev/null || echo 0)")"
+  if ! hm_confirm_plan "mysql import — ${dbname}" \
+    "Import NADPISZE dane w bazie ${dbname}." \
+    "Rozpakowanie (jeśli .gz) i wykonanie skryptu SQL z pliku ${file} (${fsize})" \
+    "Nadpisanie istniejących tabel/danych w bazie ${dbname}"; then
     return 0
   fi
 
@@ -513,8 +514,9 @@ WHERE table_schema=$(hm_sql_quote "${dbname}") AND data_free > 0
 ORDER BY data_free DESC LIMIT 10;
 " 2>/dev/null | awk 'NF{printf "    %-40s free=%s\n", $1, $2}' || echo "    (brak / brak dostępu)"
 
-  if ! hm_confirm "Uruchomić mysqlcheck --optimize dla ${dbname}"; then
-    hm_info "Anulowano."
+  if ! hm_confirm_plan "mysql optimize — ${dbname}" \
+    "Defragmentacja tabel (Data_free)." \
+    "Uruchomienie mysqlcheck --optimize dla wszystkich tabel w bazie ${dbname} (rozmiar przed: $(hm_human_size "${before}"))"; then
     return 0
   fi
 
@@ -565,10 +567,11 @@ hm_mysql_create() {
   pass="$(hm_gen_password)"
   [[ -n "${pass}" && ${#pass} -ge 12 ]] || { hm_err "Nie udało się wygenerować hasła."; return 1; }
 
-  echo "  DATABASE : ${dbname}"
-  echo "  USER     : '${dbuser}'@'localhost'"
-  if ! hm_confirm "Utworzyć bazę i użytkownika"; then
-    hm_info "Anulowano."
+  if ! hm_confirm_plan "mysql create — ${dbname}" \
+    "Hasło użytkownika zostanie wyświetlone po utworzeniu." \
+    "Utworzenie bazy danych \`${dbname}\` (utf8mb4_unicode_ci)" \
+    "Utworzenie użytkownika '${dbuser}'@'localhost' z wygenerowanym hasłem" \
+    "Nadanie pełnych uprawnień (GRANT ALL PRIVILEGES) do \`${dbname}\`.* i FLUSH PRIVILEGES"; then
     return 0
   fi
 

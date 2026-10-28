@@ -111,11 +111,17 @@ hm_backup_prune() {
     return 0
   fi
 
-  if [[ "${yes}" -ne 1 ]]; then
-    if ! hm_confirm "Usunąć ${#to_purge[@]} snapshot(ów) z Google Drive"; then
-      hm_info "Anulowano."
-      return 0
-    fi
+  local -a plan_steps=()
+  for path in "${to_purge[@]}"; do
+    plan_steps+=("Trwałe usunięcie (rclone purge) ${path}")
+  done
+  local yes_flag=()
+  [[ "${yes}" -eq 1 ]] && yes_flag=(--yes)
+  if ! hm_confirm_plan "backup prune — ${#to_purge[@]} snapshot(ów)" \
+    "Zachowane min. ${keep_min} najnowszych na katalog; retencja ${days} dni." \
+    "${yes_flag[@]}" \
+    "${plan_steps[@]}"; then
+    return 0
   fi
 
   local rc=0 i=0 total="${#to_purge[@]}"

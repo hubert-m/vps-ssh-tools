@@ -638,10 +638,30 @@ hm_pm2_ctl() {
     hm_warn "Właściciel PM2_HOME (${owner}) ≠ HM_SITE_USER (${HM_SITE_USER})"
   fi
 
-  hm_info "pm2 ${action} ${target}  (user=${owner} PM2_HOME=${home})"
   case "${action}" in
     delete|del) action=delete ;;
   esac
+
+  local need_plan=0
+  case "${action}" in
+    stop|delete) need_plan=1 ;;
+    restart|reload)
+      [[ "${target}" == "all" ]] && need_plan=1
+      ;;
+  esac
+  if [[ "${need_plan}" -eq 1 ]]; then
+    local -a plan_steps=(
+      "Wykonanie pm2 ${action} ${target} jako użytkownik ${owner} (PM2_HOME=${home})"
+    )
+    [[ "${action}" == "delete" ]] && plan_steps+=("Usunięcie procesu z listy zarządzanej przez PM2")
+    if ! hm_confirm_plan "pm2 ${action} ${target}" \
+      "Modyfikacja procesów Node/PM2." \
+      "${plan_steps[@]}"; then
+      return 0
+    fi
+  else
+    hm_info "pm2 ${action} ${target}  (user=${owner} PM2_HOME=${home})"
+  fi
   hm_pm2_run_as_owner "${home}" "${action}" "${target}"
 }
 

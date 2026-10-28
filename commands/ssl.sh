@@ -91,8 +91,11 @@ cmd_renew_ssl() {
   fi
   echo
 
-  if ! hm_confirm "Na pewno odnowić / wystawić certyfikat Let's Encrypt dla ${domain}?"; then
-    hm_info "Anulowano."
+  if ! hm_confirm_plan "renew-ssl — ${domain}" \
+    "Wystawienie/odnowienie certyfikatu Let's Encrypt." \
+    "Odnowienie/wystawienie certyfikatu Let's Encrypt dla ${domain} (cyberpanel issueSSL → acme.sh → certbot)" \
+    "Zapisanie plików certyfikatu w /etc/letsencrypt/live/${domain}/" \
+    "Przeładowanie OpenLiteSpeed (ols reload)"; then
     return 0
   fi
 

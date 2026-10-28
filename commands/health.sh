@@ -226,25 +226,19 @@ cmd_update_php() {
       echo
       if [[ "${inst_pkg}" == "${cand_pkg}" && "${upg_count}" -eq 0 ]]; then
         hm_ok "Po odświeżeniu nadal brak nowszej wersji w repo (${cur})."
-        if ! hm_confirm "Mimo to spróbować odświeżyć pakiety lsphp${suffix}*?"; then
-          hm_info "Anulowano."
-          return 0
-        fi
-      else
-        if ! hm_confirm "Na pewno zaktualizować PHP ${branch} (lsphp${suffix}*)?"; then
-          hm_info "Anulowano."
-          return 0
-        fi
       fi
     else
       hm_info "Anulowano."
       return 0
     fi
-  else
-    if ! hm_confirm "Na pewno zaktualizować PHP ${branch} (lsphp${suffix}*)?"; then
-      hm_info "Anulowano."
-      return 0
-    fi
+  fi
+
+  if ! hm_confirm_plan "update-php — LSPHP ${branch}" \
+    "Aktualizacja pakietów z repozytorium LiteSpeed." \
+    "Odświeżenie repozytorium pakietów" \
+    "Aktualizacja pakietów lsphp${suffix}* z wersji ${inst_pkg:-${cur}} do ${cand_pkg:-${cand_clean:-?}}" \
+    "Przeładowanie OpenLiteSpeed (ols reload)"; then
+    return 0
   fi
 
   local pm

@@ -5,3 +5,4 @@
 - UX: hm_run — spinner + czas + ostatnia linia podczas apt/acme/certbot/…
 - UX: postęp w webs/php/info/size/clean/perms/disk/ssl/health/mysql/backup/security/logs/pm2
 - php: Candidate z apt-cache/dnf (nie php.net); --refresh / --phpnet; update-php spójny z repo
+- UX: hm_confirm_plan / hm_confirm_plan_critical — plan kroków + wpisanie yes (ciężkie operacje)

@@ -75,6 +75,101 @@ hm_confirm() {
   esac
 }
 
+# Wyświetla ustandaryzowany plan krok po kroku i wymaga wpisania dokładnie 'yes'.
+# Opcjonalnie po ostrzeżeniu: "--yes" jako pierwszy krok → wypisz plan, pomiń pytanie.
+# Użycie:
+#   hm_confirm_plan "TYTUŁ" "OSTRZEŻENIE (opcjonalne)" "Krok 1..." "Krok 2..."
+#   hm_confirm_plan "TYTUŁ" "" --yes "Krok 1..." "Krok 2..."
+hm_confirm_plan() {
+  local title="${1:-Operacja}"
+  local warning="${2:-}"
+  shift 2 || true
+  local auto_yes=0
+  if [[ "${1:-}" == "--yes" ]]; then
+    auto_yes=1
+    shift || true
+  fi
+  local -a steps=("$@")
+
+  echo
+  echo "${C_BOLD}══════════════════════════════════════════════════════════════════════${C_RESET}"
+  echo "  ${C_BOLD}${title}${C_RESET}"
+  echo "${C_BOLD}══════════════════════════════════════════════════════════════════════${C_RESET}"
+  echo "  ${C_CYAN}Po potwierdzeniu zostaną wykonane kolejno następujące kroki:${C_RESET}"
+  echo
+  local i=0 step
+  for step in "${steps[@]}"; do
+    [[ -n "${step}" ]] || continue
+    i=$((i + 1))
+    printf '    %s%d.%s %s\n' "${C_BOLD}" "${i}" "${C_RESET}" "${step}"
+  done
+  echo
+  if [[ -n "${warning}" ]]; then
+    hm_warn "  UWAGA: ${warning}"
+    echo
+  fi
+
+  if [[ "${auto_yes}" -eq 1 ]]; then
+    hm_file_log INFO "CONFIRM_PLAN: ${title} -> yes (--yes, ${i} steps)"
+    echo "  ${C_DIM}(--yes: pomijam interaktywne potwierdzenie)${C_RESET}"
+    echo
+    return 0
+  fi
+
+  local reply
+  printf '  Wpisz %syes%s, aby wykonać powyższy plan (cokolwiek innego = anuluj): ' \
+    "${C_BOLD}${C_YELLOW}" "${C_RESET}"
+  read -r reply || {
+    echo
+    hm_file_log WARN "CONFIRM_PLAN: ${title} -> (EOF/abort)"
+    return 1
+  }
+  if [[ "${reply}" == "yes" ]]; then
+    hm_file_log INFO "CONFIRM_PLAN: ${title} -> yes (${i} steps)"
+    echo
+    return 0
+  fi
+  hm_file_log INFO "CONFIRM_PLAN: ${title} -> aborted (reply=${reply:-empty})"
+  hm_info "Anulowano — żaden krok nie został wykonany."
+  return 1
+}
+
+# Wariant o podwyższonym rygorze: po 'yes' wymaga wpisania dokładnej nazwy domeny.
+# Wspiera --yes jako 4. argument (po domain/title/warning) — pomija obie interakcje.
+hm_confirm_plan_critical() {
+  local domain="$1"
+  local title="$2"
+  local warning="$3"
+  shift 3 || true
+  local auto_yes=0
+  if [[ "${1:-}" == "--yes" ]]; then
+    auto_yes=1
+    shift || true
+  fi
+  if [[ "${auto_yes}" -eq 1 ]]; then
+    if ! hm_confirm_plan "${title}" "${warning}" --yes "$@"; then
+      return 1
+    fi
+    hm_file_log INFO "CONFIRM_CRITICAL: confirmed domain=${domain} (--yes)"
+    return 0
+  fi
+  if ! hm_confirm_plan "${title}" "${warning}" "$@"; then
+    return 1
+  fi
+  local confirm_dom
+  printf '  Potwierdź docelową domenę, wpisując dokładnie %s%s%s: ' \
+    "${C_BOLD}${C_RED}" "${domain}" "${C_RESET}"
+  read -r confirm_dom || return 1
+  if [[ "${confirm_dom}" != "${domain}" ]]; then
+    hm_file_log WARN "CONFIRM_CRITICAL: mismatch expected=${domain} got=${confirm_dom:-empty}"
+    hm_err "Nazwa domeny nie zgadza się (${confirm_dom:-pusto} != ${domain}). Operacja przerwana."
+    return 1
+  fi
+  hm_file_log INFO "CONFIRM_CRITICAL: confirmed domain=${domain}"
+  echo
+  return 0
+}
+
 hm_human_size() {
   # Wejście: bajty (liczba całkowita)
   local bytes="${1:-0}"

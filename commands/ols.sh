@@ -34,7 +34,9 @@ cmd_ols() {
       fi
       ;;
     restart)
-      if ! hm_confirm "Zrestartować OpenLiteSpeed?"; then
+      if ! hm_confirm_plan "ols restart" \
+        "Chwilowe przerwanie połączeń HTTP/HTTPS dla wszystkich vhostów." \
+        "Zatrzymanie i ponowne uruchomienie procesu głównego OpenLiteSpeed (${OLS_CTRL} restart)"; then
         return 0
       fi
       if [[ -x "${OLS_CTRL}" ]]; then

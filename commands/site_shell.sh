@@ -255,15 +255,19 @@ cmd_site_clean() {
   hm_progress_done
 
   echo "  ${C_BOLD}Razem do usunięcia: $(hm_human_size "${total_bytes}") w ${#targets[@]} katalogach${C_RESET}"
-  echo
-  hm_warn "Tej operacji nie da się cofnąć (bez backupu)."
 
-  if ! hm_confirm "Na pewno wyczyścić powyższą zawartość"; then
-    hm_info "Anulowano — nic nie usunięto."
+  local -a plan_steps=()
+  local si=0
+  for t in "${targets[@]}"; do
+    plan_steps+=("Wyczyszczenie zawartości ${t} ($(hm_human_size "${sizes[$si]}"), $(hm_clean_count_entries "${t}") wpisów) — zachowanie pustego folderu")
+    si=$((si + 1))
+  done
+  if ! hm_confirm_plan "clean — ${HM_SITE_DOMAIN}" \
+    "Tej operacji nie da się cofnąć (bez backupu)." \
+    "${plan_steps[@]}"; then
     return 0
   fi
 
-  echo
   local i=0 ent
   for t in "${targets[@]}"; do
     i=$((i + 1))
@@ -429,18 +433,18 @@ cmd_site_perms_fix() {
       ;;
   esac
 
-  echo "${C_BOLD}perms fix — plan${C_RESET}"
-  echo "  1) chown -R ${user}:${user}  zawartość ${doc}"
-  echo "  2) chown ${user}:${webgrp} ${doc} && chmod 750 ${doc}"
-  echo "  3) find: katalogi 755, pliki 644"
-  echo "  4) chmod 600: .env / wp-config.php (jeśli są)"
+  local -a plan_steps=(
+    "Ustawienie właściciela chown -R ${user}:${user} wewnątrz ${doc}"
+    "Ustawienie ${user}:${webgrp} i chmod 750 na katalogu ${doc}"
+    "Ustawienie chmod 755 dla katalogów i 644 dla plików w ${doc}"
+    "Zabezpieczenie chmod 600 dla wrażliwych plików (.env, wp-config.php)"
+  )
   if [[ -n "${root}" && -d "${root}" && "${root}" != "${doc}" ]]; then
-    echo "  (+ opcjonalnie root strony ${root} → ${user}:${user})"
+    plan_steps+=("Opcjonalnie root strony ${root} → ${user}:${user}")
   fi
-  hm_warn "Operacja masowa na plikach — zrób backup przy wątpliwościach."
-
-  if ! hm_confirm "Naprawić uprawnienia dla ${HM_SITE_DOMAIN}"; then
-    hm_info "Anulowano."
+  if ! hm_confirm_plan "perms fix — ${HM_SITE_DOMAIN}" \
+    "Operacja masowa na plikach — zrób backup przy wątpliwościach." \
+    "${plan_steps[@]}"; then
     return 0
   fi
 

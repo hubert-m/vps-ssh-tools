@@ -62,23 +62,18 @@ EOF
     links+=("${HMTOOLS_BIN_LINK}")
   fi
 
-  echo "Zostanie usunięte:"
-  echo "  - ${dest}/"
-  local link
-  for link in "${links[@]}"; do
-    if [[ -L "${link}" ]] || [[ -e "${link}" ]]; then
-      echo "  - ${link}"
-    fi
-  done
-  echo
-  hm_warn "Konfiguracja, logi i pliki narzędzi zostaną skasowane."
-  hm_info "Backupy na Google Drive i konfiguracja rclone pozostaną nietknięte."
-
-  if [[ "${yes}" -ne 1 ]]; then
-    if ! hm_confirm "Na pewno odinstalować hmtools?"; then
-      hm_info "Anulowano."
-      return 0
-    fi
+  local -a plan_steps=(
+    "Usunięcie symlinków /usr/bin/hmtools i /usr/local/bin/hmtools"
+    "Trwałe usunięcie katalogu ${dest} (wraz z hmtools.conf i logami sesji; backupy na Google Drive zostają)"
+    "Zakończenie sesji hmtools"
+  )
+  local yes_flag=()
+  [[ "${yes}" -eq 1 ]] && yes_flag=(--yes)
+  if ! hm_confirm_plan "uninstall-hmtools" \
+    "Konfiguracja, logi i pliki narzędzi zostaną skasowane. rclone i backupy na Drive zostają." \
+    "${yes_flag[@]}" \
+    "${plan_steps[@]}"; then
+    return 0
   fi
 
   hm_file_log INFO "uninstall-hmtools start dest=${dest}"

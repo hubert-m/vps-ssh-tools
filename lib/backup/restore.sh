@@ -174,32 +174,40 @@ hm_backup_restore() {
   fi
   [[ -n "${target_dir}" ]] || { hm_err "Brak katalogu docelowego strony."; return 1; }
 
-  echo
-  echo "${C_BOLD}Restore — ${domain}${C_RESET}"
-  echo "  Snapshot : ${stamp}"
-  echo "  Remote   : ${remote_base}"
-  echo "  Cel plików: ${target_dir}"
-  local mode_label="pliki + DB"
-  [[ "${files_only}" -eq 1 ]] && mode_label="tylko pliki"
-  [[ "${db_only}" -eq 1 ]] && mode_label="tylko DB"
-  echo "  Tryb     : ${mode_label}"
-  echo
-
   hm_backup_check_space || return 1
 
-  if ! hm_confirm "Nadpisać dane strony ${domain} z kopii ${stamp}"; then
-    hm_info "Anulowano."
+  local -a plan_steps=()
+  local restore_vhost=0
+  local db_list=""
+  if [[ "${db_only}" -eq 0 ]]; then
+    plan_steps+=("Pobranie i rozpakowanie archiwum plików z ${remote_base} do ${target_dir} (nadpisanie plików strony)")
+    if [[ -n "${HM_SITE_VHOST:-}" ]] && rclone cat "${remote_base}/vhost.conf" >/dev/null 2>&1; then
+      restore_vhost=1
+      plan_steps+=("Przywrócenie pliku vhost.conf → ${HM_SITE_VHOST}")
+    fi
+    if [[ -n "${HM_SITE_USER:-}" ]] && id "${HM_SITE_USER}" >/dev/null 2>&1; then
+      plan_steps+=("Ustawienie właściciela plików chown -R ${HM_SITE_USER}:${HM_SITE_USER} na ${target_dir}")
+    fi
+  fi
+  if [[ "${files_only}" -eq 0 ]]; then
+    db_list="$(rclone lsf "${remote_base}/db/" 2>/dev/null | grep '\.sql\.gz$' | sed 's|.*/||;s|\.sql\.gz$||' | paste -sd',' - || true)"
+    [[ -z "${db_list}" ]] && db_list="$(rclone cat "${remote_base}/manifest.json" 2>/dev/null | grep -oE '"databases?"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 || true)"
+    plan_steps+=("Pobranie i import zrzutów baz danych (${db_list:-z snapshota}) z nadpisaniem tabel")
+  fi
+  plan_steps+=("Przeładowanie OpenLiteSpeed (ols reload)")
+
+  if ! hm_confirm_plan_critical "${domain}" \
+    "backup restore — ${domain} (${stamp})" \
+    "Nadpisanie danych strony i/lub baz — operacja trudna do cofnięcia." \
+    "${plan_steps[@]}"; then
     return 0
   fi
 
   if [[ "${db_only}" -eq 0 ]]; then
     hm_backup_restore_files "${remote_base}" "${target_dir}" || return 1
-    # vhost (opcjonalnie)
-    if [[ -n "${HM_SITE_VHOST:-}" ]] && rclone cat "${remote_base}/vhost.conf" >/dev/null 2>&1; then
-      if hm_confirm "Przywrócić też vhost.conf → ${HM_SITE_VHOST}"; then
-        rclone cat "${remote_base}/vhost.conf" > "${HM_SITE_VHOST}" \
-          || hm_warn "Nie udało się zapisać vhost.conf"
-      fi
+    if [[ "${restore_vhost}" -eq 1 ]]; then
+      rclone cat "${remote_base}/vhost.conf" > "${HM_SITE_VHOST}" \
+        || hm_warn "Nie udało się zapisać vhost.conf"
     fi
     if [[ -n "${HM_SITE_USER:-}" ]] && id "${HM_SITE_USER}" >/dev/null 2>&1; then
       hm_info "chown -R ${HM_SITE_USER}: → ${target_dir}"

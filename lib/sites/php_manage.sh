@@ -177,13 +177,15 @@ hm_php_set_site() {
     return 1
   fi
 
-  echo "${C_BOLD}PHP set — ${HM_SITE_DOMAIN}${C_RESET}"
-  echo "  Było     : ${HM_SITE_PHP:--}"
-  echo "  Będzie   : ${branch} (${bin})"
-  echo "  Vhost    : ${HM_SITE_VHOST:--}"
-  echo
-  if ! hm_confirm "Przełączyć PHP strony na ${branch}"; then
-    hm_info "Anulowano."
+  local -a plan_steps=(
+    "Kopia ${HM_SITE_VHOST:-vhost}.bak.hmtools i podmiana handlera lsphp* na lsphp${suffix} w ${HM_SITE_VHOST:--}"
+    "Aktualizacja phpSelection w bazie CyberPanel (jeśli dotyczy)"
+    "Przeładowanie OpenLiteSpeed (ols reload)"
+    "Zatrzymanie starych procesów workerów lsphp użytkownika ${HM_SITE_USER:--} (pkill)"
+  )
+  if ! hm_confirm_plan "php set — ${HM_SITE_DOMAIN} → ${branch}" \
+    "Było: ${HM_SITE_PHP:--}; będzie: ${branch} (${bin})." \
+    "${plan_steps[@]}"; then
     return 0
   fi
 
@@ -271,14 +273,19 @@ hm_php_ext_install() {
   name="$(printf '%s' "${name}" | sed -E 's/^php-//; s/^lsphp[0-9]+-//')"
   pkg="lsphp${suffix}-${name}"
 
-  echo "${C_BOLD}Install ${pkg}${C_RESET}"
-  if ! hm_confirm "Zainstalować pakiet ${pkg}"; then
-    hm_info "Anulowano."
-    return 0
-  fi
   if ! pm="$(hm_pkg_manager)"; then
     hm_err "Brak apt-get / dnf / yum."
     return 1
+  fi
+  local refresh_step="Odświeżenie indeksów pakietów (dnf/yum)"
+  [[ "${pm}" == "apt" ]] && refresh_step="Odświeżenie indeksów pakietów (apt-get update)"
+  if ! hm_confirm_plan "php ext install — ${pkg}" \
+    "Instalacja rozszerzenia PHP z repozytorium LiteSpeed." \
+    "${refresh_step}" \
+    "Instalacja pakietu ${pkg}" \
+    "Przeładowanie OpenLiteSpeed (ols reload)" \
+    "Restart workerów lsphp"; then
+    return 0
   fi
 
   set +e
@@ -450,18 +457,18 @@ hm_php_ini_set() {
     return 1
   fi
 
-  echo "${C_BOLD}php.ini set${C_RESET}"
-  echo "  PHP   : ${branch}"
-  echo "  Klucz : ${key} = ${val}"
+  local target_desc
   if [[ "${use_vhost}" -eq 1 ]]; then
-    echo "  Cel   : phpIniOverride w ${HM_SITE_VHOST:--}"
+    target_desc="phpIniOverride w ${HM_SITE_VHOST:--}"
   else
     ini="$(hm_php_ini_path "${branch}" 2>/dev/null || true)"
-    echo "  Cel   : ${ini:--}"
+    target_desc="${ini:--}"
   fi
-  echo
-  if ! hm_confirm "Zapisać zmianę"; then
-    hm_info "Anulowano."
+  if ! hm_confirm_plan "php ini set — ${key}=${val}" \
+    "Zmiana konfiguracji PHP ${branch}." \
+    "Kopia zapasowa pliku docelowego (.bak.hmtools)" \
+    "Zapis dyrektywy ${key} = ${val} w ${target_desc}" \
+    "Przeładowanie OpenLiteSpeed i restart workerów lsphp"; then
     return 0
   fi
 
@@ -526,20 +533,22 @@ hm_php_restart() {
   esac
 
   if [[ "${scope}" == "global" ]] || [[ -z "${HM_SITE_DOMAIN:-}" ]]; then
-    echo "${C_BOLD}php restart — globalnie${C_RESET}"
-    if ! hm_confirm "Zabić wszystkie procesy lsphp na serwerze"; then
-      hm_info "Anulowano."
+    if ! hm_confirm_plan "php restart — globalnie" \
+      "Dotknie wszystkich workerów lsphp na serwerze." \
+      "Wysłanie sygnału SIGTERM (pkill) do wszystkich procesów lsphp na serwerze" \
+      "Przeładowanie OpenLiteSpeed (nowe workery wystartują przy kolejnym żądaniu)"; then
       return 0
     fi
     HM_SITE_DOMAIN="" HM_SITE_USER="" hm_php_restart_workers
   else
-    echo "${C_BOLD}php restart — ${HM_SITE_DOMAIN} (user: ${HM_SITE_USER:--})${C_RESET}"
     if [[ -z "${HM_SITE_USER}" ]]; then
       hm_warn "Brak HM_SITE_USER — restart globalny workerów niebezpieczny; użyj: php restart --global"
       return 1
     fi
-    if ! hm_confirm "Zabić lsphp użytkownika ${HM_SITE_USER}"; then
-      hm_info "Anulowano."
+    if ! hm_confirm_plan "php restart — ${HM_SITE_DOMAIN}" \
+      "User: ${HM_SITE_USER}." \
+      "Wysłanie sygnału SIGTERM (pkill) do workerów lsphp użytkownika ${HM_SITE_USER}" \
+      "Przeładowanie OpenLiteSpeed (nowe workery wystartują przy kolejnym żądaniu)"; then
       return 0
     fi
     hm_php_restart_workers

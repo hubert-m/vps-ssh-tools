@@ -273,9 +273,11 @@ hm_ols_htaccess_enable() {
   fi
   [[ -n "${vhost}" && -f "${vhost}" ]] || { hm_err "Brak vhconf dla ${domain}."; return 1; }
 
-  echo "  Vhost: ${vhost}"
-  if ! hm_confirm "Włączyć autoLoadHtaccess 1 + rewrite enable 1 i przeładować OLS"; then
-    hm_info "Anulowano."
+  if ! hm_confirm_plan "htaccess enable — ${domain}" \
+    "Zmiana konfiguracji vhost OpenLiteSpeed." \
+    "Utworzenie kopii zapasowej ${vhost}.hmtools.bak" \
+    "Zapisanie autoLoadHtaccess 1 oraz rewrite { enable 1 } w ${vhost}" \
+    "Przeładowanie konfiguracji OpenLiteSpeed (ols reload)"; then
     return 0
   fi
 
@@ -438,16 +440,16 @@ hm_ols_cache_flush() {
     return 0
   fi
 
-  echo "${C_BOLD}LSCache flush — podgląd${C_RESET}"
   local bytes total=0
+  local -a plan_steps=()
   for t in "${uniq[@]}"; do
     bytes="$(hm_dir_size_bytes "${t}" 2>/dev/null || echo 0)"
     total=$((total + bytes))
-    echo "  ${t}  ($(hm_human_size "${bytes}"))"
+    plan_steps+=("Usunięcie zawartości ${t} ($(hm_human_size "${bytes}")) z zachowaniem pustego katalogu")
   done
-  echo "  Razem: $(hm_human_size "${total}")"
-  if ! hm_confirm "Wyczyścić zawartość powyższych katalogów LSCache"; then
-    hm_info "Anulowano."
+  if ! hm_confirm_plan "ols cache flush — ${scope:-${domain:-all}}" \
+    "Razem do usunięcia: $(hm_human_size "${total}")." \
+    "${plan_steps[@]}"; then
     return 0
   fi
   local ent
@@ -592,10 +594,11 @@ hm_ols_proxy_set_port() {
     name_filter="$(printf '%s\n' "${blocks}" | head -1 | cut -d'|' -f1)"
   fi
 
-  echo "  Vhost : ${conf}"
-  echo "  Proxy : ${name_filter} → port ${newport}"
-  if ! hm_confirm "Zmienić address w extprocessor i przeładować OLS"; then
-    hm_info "Anulowano."
+  if ! hm_confirm_plan "proxy set-port — ${domain}" \
+    "Zmiana adresu reverse proxy w vhost." \
+    "Kopia zapasowa ${conf}.hmtools.bak" \
+    "Zmiana adresu extprocessor '${name_filter}' na 127.0.0.1:${newport} w ${conf}" \
+    "Przeładowanie OpenLiteSpeed (ols reload)"; then
     return 0
   fi
 
