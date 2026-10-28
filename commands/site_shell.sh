@@ -79,7 +79,7 @@ cmd_site_php() {
   echo "${C_BOLD}PHP strony: ${HM_SITE_PHP:--}${C_RESET}  (${HM_SITE_DOMAIN})"
   echo "  set / ext / ini / restart / ps — zobacz: php help"
   echo
-  echo "${C_BOLD}Dostępne LSPHP${C_RESET} ${C_DIM}(+ porównanie z php.net)${C_RESET}"
+  echo "${C_BOLD}Dostępne LSPHP${C_RESET} ${C_DIM}(+ porównanie z repozytorium)${C_RESET}"
   echo
   hm_list_available_php
 }

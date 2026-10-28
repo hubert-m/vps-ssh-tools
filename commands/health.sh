@@ -124,6 +124,18 @@ cmd_php() {
       shift || true
       hm_php_ps "$@"
       ;;
+    --refresh|-r|check-update)
+      hm_php_pkg_refresh || return $?
+      echo
+      echo "${C_BOLD}Dostępne LSPHP${C_RESET} ${C_DIM}(+ porównanie z repozytorium)${C_RESET}"
+      echo
+      hm_list_available_php
+      ;;
+    --phpnet)
+      echo "${C_BOLD}Dostępne LSPHP${C_RESET} ${C_DIM}(+ porównanie z php.net)${C_RESET}"
+      echo
+      hm_list_available_php --phpnet
+      ;;
     help|-h|--help)
       hm_help_topic php
       ;;
@@ -131,7 +143,7 @@ cmd_php() {
       if [[ -n "${HM_SITE_DOMAIN}" ]]; then
         cmd_site_php
       else
-        echo "${C_BOLD}Dostępne LSPHP${C_RESET} ${C_DIM}(+ porównanie z php.net)${C_RESET}"
+        echo "${C_BOLD}Dostępne LSPHP${C_RESET} ${C_DIM}(+ porównanie z repozytorium)${C_RESET}"
         echo
         hm_list_available_php
       fi
@@ -152,7 +164,8 @@ cmd_update_php() {
     return 1
   }
 
-  local branch suffix root path cur="?" latest=""
+  local branch suffix root path cur="?"
+  local inst_pkg cand_pkg cand_clean upg_count
   if ! branch="$(hm_php_normalize_branch "${arg}")"; then
     hm_err "Nieprawidłowa wersja: ${arg} (oczekiwane np. 8.4, 84, lsphp84)"
     return 1
@@ -166,13 +179,14 @@ cmd_update_php() {
   else
     cur="(brak ${path})"
   fi
-  latest="$(hm_php_latest_remote "${branch}" 2>/dev/null || true)"
+  IFS=$'\t' read -r inst_pkg cand_pkg cand_clean upg_count < <(hm_php_repo_info_for_suffix "${suffix}")
+  [[ -n "${upg_count}" ]] || upg_count=0
 
   echo "${C_BOLD}Aktualizacja LSPHP ${branch}${C_RESET}"
-  echo "  Katalog      : ${path}"
-  echo "  Zainstalowana: ${cur}"
-  echo "  php.net      : ${latest:-niedostępne}"
-  echo "  Pakiety      : lsphp${suffix}*"
+  echo "  Katalog         : ${path}"
+  echo "  Zainstalowana   : ${cur} (pakiet: ${inst_pkg:-—})"
+  echo "  Dostępna w repo : ${cand_clean:-—} (pakiet: ${cand_pkg:-—})"
+  echo "  Pakiety         : lsphp${suffix}*"
   echo
 
   local -a pkgs=()
@@ -195,9 +209,34 @@ cmd_update_php() {
     echo
   fi
 
-  if [[ -n "${latest}" && "${cur}" == "${latest}" ]]; then
-    hm_ok "Wersja lokalna już równa php.net (${cur})."
-    if ! hm_confirm "Mimo to odświeżyć pakiety lsphp${suffix}*?"; then
+  local already_current=0
+  if [[ "${inst_pkg}" != "-" && "${inst_pkg}" != "(none)" && "${cand_pkg}" != "-" && "${cand_pkg}" != "(none)" && "${inst_pkg}" == "${cand_pkg}" && "${upg_count}" -eq 0 ]]; then
+    already_current=1
+  fi
+
+  if [[ "${already_current}" -eq 1 ]]; then
+    hm_ok "W lokalnym indeksie pakiet lsphp${suffix} jest już w najnowszej wersji (${cur})."
+    if hm_confirm "Odświeżyć indeks repozytoriów i sprawdzić ponownie?"; then
+      hm_php_pkg_refresh || return $?
+      IFS=$'\t' read -r inst_pkg cand_pkg cand_clean upg_count < <(hm_php_repo_info_for_suffix "${suffix}")
+      [[ -n "${upg_count}" ]] || upg_count=0
+      echo
+      echo "  Zainstalowana   : ${cur} (pakiet: ${inst_pkg:-—})"
+      echo "  Dostępna w repo : ${cand_clean:-—} (pakiet: ${cand_pkg:-—})"
+      echo
+      if [[ "${inst_pkg}" == "${cand_pkg}" && "${upg_count}" -eq 0 ]]; then
+        hm_ok "Po odświeżeniu nadal brak nowszej wersji w repo (${cur})."
+        if ! hm_confirm "Mimo to spróbować odświeżyć pakiety lsphp${suffix}*?"; then
+          hm_info "Anulowano."
+          return 0
+        fi
+      else
+        if ! hm_confirm "Na pewno zaktualizować PHP ${branch} (lsphp${suffix}*)?"; then
+          hm_info "Anulowano."
+          return 0
+        fi
+      fi
+    else
       hm_info "Anulowano."
       return 0
     fi
@@ -280,21 +319,17 @@ cmd_update_php() {
   fi
 
   local newv="?"
+  local new_inst new_cand new_clean new_upg
   if [[ -x "${path}/bin/php" ]]; then
     newv="$("${path}/bin/php" -r 'echo PHP_VERSION;' 2>/dev/null || echo "?")"
   fi
+  IFS=$'\t' read -r new_inst new_cand new_clean new_upg < <(hm_php_repo_info_for_suffix "${suffix}")
   echo
-  echo "  Było : ${cur}"
-  echo "  Jest : ${newv}"
-  if [[ -n "${latest}" ]]; then
-    echo "  php.net: ${latest}"
-    if [[ "${newv}" == "${latest}" ]]; then
-      hm_ok "PHP ${branch} jest aktualne względem php.net."
-    elif hm_version_is_newer "${newv}" "${latest}" 2>/dev/null; then
-      hm_warn "Pakiety LiteSpeed mogą jeszcze nie mieć ${latest} (repo LS ≠ php.net day-0)."
-    else
-      hm_ok "Aktualizacja zakończona."
-    fi
+  echo "  Było : ${cur} (${inst_pkg:-—})"
+  echo "  Jest : ${newv} (${new_inst:-—})"
+  echo "  Repo : ${new_clean:-—} (${new_cand:-—})"
+  if [[ -n "${new_cand}" && "${new_cand}" != "-" && "${new_inst}" == "${new_cand}" ]]; then
+    hm_ok "PHP ${branch} jest aktualne względem repozytorium."
   else
     hm_ok "Aktualizacja zakończona."
   fi

@@ -177,7 +177,10 @@ EOF
     php)
       cat <<'EOF'
 Użycie:
-  php                      Lista LSPHP + porównanie z php.net
+  php                      Lista LSPHP + Candidate z repo (apt-cache/dnf)
+  php --refresh | -r       Odśwież indeks pakietów, potem lista
+  php check-update         Alias: php --refresh
+  php --phpnet             Opcjonalnie: porównanie z php.net (HTTP)
   php update <ver>         Alias: update-php <ver>
   php set <ver>            W kontekście: przełącz LSPHP strony (vhost/CyberPanel)
   php ext [list] [ver]     Moduły php -m + status kluczowych rozszerzeń
@@ -202,12 +205,13 @@ Przykłady:
   php update lsphp83
 
 Działanie:
-  1) pokazuje wersję lokalną vs php.net
-  2) pyta o potwierdzenie [t/N]
-  3) aktualizuje pakiety lsphpXX* (apt/dnf/yum)
-  4) przeładowuje OpenLiteSpeed
+  1) pokazuje wersję lokalną vs Candidate z repozytorium
+  2) przy braku nowszej wersji proponuje odświeżenie indeksu
+  3) pyta o potwierdzenie [t/N]
+  4) aktualizuje pakiety lsphpXX* (apt/dnf/yum)
+  5) przeładowuje OpenLiteSpeed
 
-Uwaga: repozytorium LiteSpeed czasem dogania php.net z opóźnieniem.
+Źródło: to samo repo LiteSpeed, z którego instaluje update-php (nie php.net).
 EOF
       ;;
     health)

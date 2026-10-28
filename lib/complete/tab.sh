@@ -230,7 +230,7 @@ hm_tab_complete() {
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         else
-          for m in update upgrade set ext ini restart ps help; do
+          for m in update upgrade set ext ini restart ps help --refresh -r check-update --phpnet; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi

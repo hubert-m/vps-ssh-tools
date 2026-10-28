@@ -20,6 +20,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - UX: `hm_progress_bar` / `hm_status_line` na TTY (fd 3 przy tee logów) — bez śmieci w logach
 - UX: `hm_run` — spinner + czas + ostatnia linia podczas apt/acme/certbot/…
 - UX: postęp w `webs`/`php`/`info`/`size`/`clean`/`perms`/`disk`/`ssl`/`health`/`mysql`/`backup`/`security`/`logs`/`pm2`
+- `php`: Candidate z `apt-cache`/`dnf` (nie php.net); flagi `--refresh` / `--phpnet`; `update-php` spójny z repo
 
 ## [v0.1.5]
 

@@ -126,7 +126,7 @@ hmtools> exit
 | `mysql` / `dbs` | Lista baz; `dump`/`dump-local`/`import`/`cli`/`top`/`optimize`/`create` |
 | `cron` / `crons` | Crony systemowe / users / strony; `cron edit` |
 | `pm2` / `node` / `apps` | PM2: lista, proxy, `restart`/`reload`/`logs`/`save` |
-| `php` | LSPHP: lista, `set`/`ext`/`ini`/`restart`/`ps` (+ porównanie z php.net) |
+| `php` | LSPHP: lista vs repo (`--refresh` / `--phpnet`), `set`/`ext`/`ini`/`restart`/`ps` |
 | `update-php <ver>` | Aktualizacja LSPHP (np. `8.4`) z potwierdzeniem |
 | `health` | Load, RAM, dysk, OLS/MySQL, certy &lt;14 dni, wrażliwe porty |
 | `security …` | Audyt: `ports`, `ssh`, Fail2Ban `ban`/`unban`, `scan` docroot |
