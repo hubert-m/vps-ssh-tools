@@ -1,1 +1,3 @@
 # hmtools v0.1.7
+
+- webs: pod listą — suma rozmiarów wszystkich serwisów (kolumna SIZE)

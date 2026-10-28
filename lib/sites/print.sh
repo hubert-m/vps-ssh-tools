@@ -12,6 +12,7 @@ hm_list_sites() {
 
   local total="${#HM_SITES_LIST[@]}"
   local i=0 domain row root docroot logs vhost php rest status size ssl
+  local size_bytes=0 total_bytes=0
   local -a table_rows=()
 
   for domain in "${HM_SITES_LIST[@]}"; do
@@ -25,12 +26,19 @@ hm_list_sites() {
     IFS=$'\t' read -r _ root docroot logs vhost php rest <<<"${row}"
     status="${rest##*|}"
     ssl="$(hm_ssl_has "${domain}")"
+    size_bytes=0
     if [[ "${quick}" == "1" ]]; then
       size="-"
     elif [[ -n "${root}" && -d "${root}" ]]; then
-      size="$(hm_format_size_from_path "${root}")"
+      size_bytes="$(hm_dir_size_bytes "${root}" 2>/dev/null || echo 0)"
+      [[ "${size_bytes}" =~ ^[0-9]+$ ]] || size_bytes=0
+      size="$(hm_human_size "${size_bytes}")"
+      total_bytes=$((total_bytes + size_bytes))
     elif [[ -n "${docroot}" && -d "${docroot}" ]]; then
-      size="$(hm_format_size_from_path "${docroot}")"
+      size_bytes="$(hm_dir_size_bytes "${docroot}" 2>/dev/null || echo 0)"
+      [[ "${size_bytes}" =~ ^[0-9]+$ ]] || size_bytes=0
+      size="$(hm_human_size "${size_bytes}")"
+      total_bytes=$((total_bytes + size_bytes))
     else
       size="?"
     fi
@@ -43,6 +51,10 @@ hm_list_sites() {
   printf '%-4s %-36s %-8s %-5s %-12s %s\n' "---" "------" "---" "---" "----" "------"
   printf '%s\n' "${table_rows[@]}"
   echo
+  if [[ "${quick}" != "1" ]]; then
+    echo "  ${C_BOLD}Suma SIZE:${C_RESET} $(hm_human_size "${total_bytes}")  ${C_DIM}(${total} serwisów)${C_RESET}"
+    echo
+  fi
   hm_info "Użyj: use <numer|domena>  aby wejść w kontekst."
 }
 

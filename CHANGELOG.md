@@ -16,6 +16,8 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [v0.1.7]
 
+- `webs`: pod listą — suma rozmiarów wszystkich serwisów (kolumna SIZE)
+
 ## [v0.1.6]
 
 - Docs: README — mapa komend (`ols`/`mysql`/`pm2`/`security`/`backup`/`perms`), restore, troubleshooting
