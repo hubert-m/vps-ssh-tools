@@ -23,7 +23,9 @@ HM_LOG_TTY_FDS="${HM_LOG_TTY_FDS:-0}"
 
 hm_log_init() {
   [[ "${LOG_ENABLED}" == "1" ]] || return 0
-  mkdir -p "${LOG_DIR}" 2>/dev/null || true
+  # 0700 — logi sesji (stdout/stderr) tylko dla root
+  mkdir -m 0700 -p "${LOG_DIR}" 2>/dev/null || mkdir -p "${LOG_DIR}" 2>/dev/null || true
+  chmod 0700 "${LOG_DIR}" 2>/dev/null || true
   if [[ -d "${LOG_DIR}" ]] && [[ "${LOG_RETENTION_DAYS}" =~ ^[0-9]+$ ]] && [[ "${LOG_RETENTION_DAYS}" -gt 0 ]]; then
     find "${LOG_DIR}" -type f -name 'hmtools-*.log' -mtime "+${LOG_RETENTION_DAYS}" -delete 2>/dev/null || true
   fi
@@ -64,14 +66,20 @@ hm_file_log() {
   [[ "${LOG_ENABLED}" == "1" ]] || return 0
   hm_log_should_write "${level}" || return 0
 
-  mkdir -p "${LOG_DIR}" 2>/dev/null || true
-  local ts ctx=""
+  mkdir -m 0700 -p "${LOG_DIR}" 2>/dev/null || true
+  local ts ctx="" logf
   ts="$(date '+%Y-%m-%d %H:%M:%S')"
   if [[ -n "${HM_SITE_DOMAIN:-}" ]]; then
     ctx=" site=${HM_SITE_DOMAIN}"
   fi
-  printf '%s [%s]%s %s\n' "${ts}" "$(echo "${level}" | tr '[:lower:]' '[:upper:]')" "${ctx}" "${msg}" \
-    >> "$(hm_log_file_path)" 2>/dev/null || true
+  logf="$(hm_log_file_path)"
+  # umask 077 → pliki 0600
+  (
+    umask 077
+    printf '%s [%s]%s %s\n' "${ts}" "$(echo "${level}" | tr '[:lower:]' '[:upper:]')" "${ctx}" "${msg}" \
+      >> "${logf}" 2>/dev/null || true
+  )
+  chmod 0600 "${logf}" 2>/dev/null || true
 }
 
 # Czy hm_info/ok/warn/err mają dublować do pliku?
@@ -92,8 +100,14 @@ hm_log_stream_to_file() {
     ts="$(date '+%Y-%m-%d %H:%M:%S')"
     ctx=""
     [[ -n "${HM_SITE_DOMAIN:-}" ]] && ctx=" site=${HM_SITE_DOMAIN}"
-    printf '%s [%s]%s %s %s\n' "${ts}" "${level}" "${ctx}" "${tag}" "${line}" \
-      >> "$(hm_log_file_path)" 2>/dev/null || true
+    local logf
+    logf="$(hm_log_file_path)"
+    (
+      umask 077
+      printf '%s [%s]%s %s %s\n' "${ts}" "${level}" "${ctx}" "${tag}" "${line}" \
+        >> "${logf}" 2>/dev/null || true
+    )
+    chmod 0600 "${logf}" 2>/dev/null || true
   done
 }
 

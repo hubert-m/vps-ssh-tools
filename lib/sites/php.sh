@@ -12,7 +12,8 @@ hm_php_latest_remote() {
   local branch="$1"
   [[ -n "${branch}" ]] || return 1
   local cache_dir="${TMP_DIR:-/tmp}/hmtools-php-cache"
-  mkdir -p "${cache_dir}" 2>/dev/null || true
+  mkdir -m 0700 -p "${cache_dir}" 2>/dev/null || mkdir -p "${cache_dir}" 2>/dev/null || true
+  chmod 0700 "${cache_dir}" 2>/dev/null || true
   local cache="${cache_dir}/latest-${branch}.txt"
   local max_age=3600
   if [[ -f "${cache}" ]]; then

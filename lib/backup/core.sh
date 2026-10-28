@@ -32,14 +32,19 @@ hm_stream_mysqldump() {
   local dbname="$1"
   local dest="$2"
   local dumpcli
+  if ! hm_is_valid_db_name "${dbname}"; then
+    hm_err "Nieprawidłowa nazwa bazy (odrzucam dump): ${dbname}"
+    return 1
+  fi
   dumpcli="$(hm_mysqldump_cli)" || { hm_err "Brak mysqldump/mariadb-dump."; return 1; }
 
   hm_info "Dump DB ${dbname} → ${dest}"
   local sock_args=()
   [[ -n "${MYSQL_SOCKET}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
 
+  # -- przed nazwą: nie traktuj dbname zaczynającego się od - jako flagi
   if ! "${dumpcli}" "${sock_args[@]}" --single-transaction --quick --routines --triggers \
-      "${dbname}" 2>/dev/null | gzip -c | hm_rclone_rcat "${dest}"; then
+      -- "${dbname}" 2>/dev/null | gzip -c | hm_rclone_rcat "${dest}"; then
     hm_err "Nie udało się zrzucić/wgrać DB ${dbname}."
     return 1
   fi

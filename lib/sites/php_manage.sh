@@ -143,13 +143,20 @@ hm_php_set_cyberpanel() {
     fi
     hm_warn "cyberpanel changePHP nie powiódł się — próbuję SQL."
   fi
+  if ! hm_is_valid_domain "${domain}"; then
+    hm_err "Nieprawidłowa domena: ${domain}"
+    return 1
+  fi
+  local q sel
+  q="$(hm_sql_quote "${domain}")"
+  sel="$(hm_sql_quote "PHP ${branch}")"
   if hm_mysql_exec cyberpanel -e \
-    "UPDATE websiteFunctions_websites SET phpSelection='PHP ${branch}' WHERE domain='${domain}' LIMIT 1;" >/dev/null 2>&1; then
+    "UPDATE websiteFunctions_websites SET phpSelection=${sel} WHERE domain=${q} LIMIT 1;" >/dev/null 2>&1; then
     hm_ok "Zaktualizowano phpSelection w CyberPanel DB."
     return 0
   fi
   hm_mysql_exec cyberpanel -e \
-    "UPDATE websites_website SET phpSelection='PHP ${branch}' WHERE domainName='${domain}' LIMIT 1;" >/dev/null 2>&1 || true
+    "UPDATE websites_website SET phpSelection=${sel} WHERE domainName=${q} LIMIT 1;" >/dev/null 2>&1 || true
 }
 
 hm_php_set_site() {

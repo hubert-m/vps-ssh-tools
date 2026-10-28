@@ -54,6 +54,11 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `renew-ssl` poza `use` — webroot z `hm_resolve_site_paths`
 - Fix: Tab w kontekście strony podpowiada `info` / `size` / `logs` / `clean` / `back`
 - CI: job lint tymczasowo wyłączony (`if: false`), workflow zostaje w repo
+- Security: walidacja nazw DB / domen przed SQL i `mysqldump`
+- Security: walidacja `RCLONE_REMOTE` przed zapisem do `hmtools.conf`
+- Security: `pm2` tylko systemowy bin + `runuser` na właścicielu `PM2_HOME`
+- Security: `clean` — bez symlinków poza katalogiem strony
+- Security: `LOG_DIR` / `TMP_DIR` `0700`, pliki logów `0600`
 
 ---
 

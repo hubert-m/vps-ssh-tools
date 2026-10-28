@@ -28,6 +28,33 @@ hm_require_root() {
   fi
 }
 
+# --- walidacja niezaufanych danych (pliki strony / input użytkownika) ----------
+
+hm_is_valid_db_name() {
+  # MySQL identifier — biała lista (bez apostrofów, spacji, średników)
+  [[ "${1:-}" =~ ^[a-zA-Z0-9_\$\-]{1,64}$ ]]
+}
+
+hm_is_valid_domain() {
+  [[ "${1:-}" =~ ^[a-zA-Z0-9._-]{1,253}$ ]]
+}
+
+hm_is_valid_unix_user() {
+  [[ "${1:-}" =~ ^[a-zA-Z0-9_-]{1,32}$ ]]
+}
+
+hm_is_valid_rclone_remote() {
+  # remote:path — bez $() ` | ; " ' itd.
+  [[ "${1:-}" =~ ^[a-zA-Z0-9_.:/-]+$ ]]
+}
+
+hm_sql_quote() {
+  # escapowanie literału SQL (apostrof → '')
+  local s="${1:-}"
+  s="${s//\'/\'\'}"
+  printf "'%s'" "${s}"
+}
+
 hm_confirm() {
   local prompt="${1:-Kontynuować?}"
   local reply

@@ -34,4 +34,10 @@ hm_load_config() {
   if [[ "${LOG_DIR}" != /* ]]; then
     LOG_DIR="${HMTOOLS_ROOT}/${LOG_DIR}"
   fi
+
+  # katalogi robocze — tylko root (0700)
+  mkdir -m 0700 -p "${TMP_DIR}" 2>/dev/null || mkdir -p "${TMP_DIR}" 2>/dev/null || true
+  chmod 0700 "${TMP_DIR}" 2>/dev/null || true
+  mkdir -m 0700 -p "${LOG_DIR}" 2>/dev/null || true
+  chmod 0700 "${LOG_DIR}" 2>/dev/null || true
 }

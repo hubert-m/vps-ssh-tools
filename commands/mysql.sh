@@ -19,6 +19,10 @@ cmd_mysql() {
     dump)
       local db="${1:-}"
       [[ -n "${db}" ]] || { hm_err "Użycie: mysql dump <nazwa_bazy>"; return 1; }
+      if ! hm_is_valid_db_name "${db}"; then
+        hm_err "Nieprawidłowa nazwa bazy: ${db}"
+        return 1
+      fi
       hm_load_config
       hm_rclone_check || return 1
       hm_backup_check_space || return 1

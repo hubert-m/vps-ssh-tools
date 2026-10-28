@@ -73,40 +73,40 @@ hm_pm2_bin_system() {
 }
 
 hm_pm2_bin() {
-  local c h
-  # 1) kontekst strony — preferuj nvm/pm2 z home tej strony
-  if [[ -n "${HM_SITE_DOMAIN:-}" ]]; then
-    while IFS= read -r h; do
-      [[ -n "${h}" ]] || continue
-      c="$(hm_pm2_bin_in_home "${h}" || true)"
-      if [[ -n "${c}" ]]; then
-        printf '%s' "${c}"
-        return 0
-      fi
-    done < <(hm_pm2_site_homes)
-    # brak lokalnego nvm — systemowy pm2 (PM2_HOME i tak ze strony)
-    if c="$(hm_pm2_bin_system)"; then
-      printf '%s' "${c}"
-      return 0
-    fi
-    return 1
+  # SECURITY: nigdy nie uruchamiaj jako root binarek z ${home}/node_modules/.bin/pm2
+  # ani z nvm użytkownika strony — tylko zaufane ścieżki systemowe / root.
+  hm_pm2_bin_system
+}
+
+hm_pm2_owner_of_home() {
+  local pm2_home="$1"
+  local owner
+  owner="$(stat -c '%U' "${pm2_home}" 2>/dev/null || true)"
+  [[ -n "${owner}" ]] || owner="root"
+  printf '%s' "${owner}"
+}
+
+hm_pm2_run_as_owner() {
+  # uruchom systemowy pm2 na koncie właściciela PM2_HOME (nie jako root z cudzym bin)
+  local pm2_home="$1"
+  shift
+  local bin owner
+  bin="$(hm_pm2_bin_system)" || return 1
+  owner="$(hm_pm2_owner_of_home "${pm2_home}")"
+  if [[ "${owner}" == "root" ]] || [[ "$(id -u)" -ne 0 ]]; then
+    PM2_HOME="${pm2_home}" "${bin}" "$@"
+    return $?
   fi
-  # 2) globalnie
-  if c="$(hm_pm2_bin_system)"; then
-    printf '%s' "${c}"
-    return 0
+  if hm_have_cmd runuser; then
+    runuser -u "${owner}" -- env PM2_HOME="${pm2_home}" PATH="/usr/local/bin:/usr/bin:/bin" "${bin}" "$@"
+    return $?
   fi
-  # 3) ostatnia deska: nvm z /home (tylko poza use)
-  local oldnull best=""
-  oldnull="$(shopt -p nullglob || true)"
-  shopt -s nullglob
-  local candidates=(/home/*/.nvm/versions/node/*/bin/pm2)
-  eval "${oldnull}" 2>/dev/null || shopt -u nullglob
-  while IFS= read -r c; do
-    [[ -x "${c}" ]] && best="${c}"
-  done < <(printf '%s\n' "${candidates[@]}" | sort -V)
-  [[ -n "${best}" ]] && { printf '%s' "${best}"; return 0; }
-  return 1
+  if hm_have_cmd sudo; then
+    sudo -u "${owner}" -- env PM2_HOME="${pm2_home}" PATH="/usr/local/bin:/usr/bin:/bin" "${bin}" "$@"
+    return $?
+  fi
+  # ostatni fallback: systemowy bin jako root (bez skryptu użytkownika)
+  PM2_HOME="${pm2_home}" "${bin}" "$@"
 }
 
 hm_pm2_home_dirs() {
@@ -133,23 +133,27 @@ hm_pm2_home_dirs() {
 }
 
 hm_pm2_jlist() {
-  local bin json home
+  local json home
   local -a parts=()
-  bin="$(hm_pm2_bin)" || return 1
+  hm_pm2_bin >/dev/null || return 1
 
   while IFS= read -r home; do
     [[ -n "${home}" && -d "${home}" ]] || continue
-    json="$(PM2_HOME="${home}" "${bin}" jlist 2>/dev/null || true)"
+    json="$(hm_pm2_run_as_owner "${home}" jlist 2>/dev/null || true)"
     if [[ -n "${json}" && "${json}" != "[]" ]]; then
       parts+=("${json}")
     fi
   done < <(hm_pm2_home_dirs)
 
-  # poza kontekstem / gdy pusto: spróbuj jeszcze domyślnego env binarki
+  # poza kontekstem / gdy pusto: spróbuj jeszcze domyślnego env binarki (system)
   if [[ "${#parts[@]}" -eq 0 && -z "${HM_SITE_DOMAIN:-}" ]]; then
-    json="$("${bin}" jlist 2>/dev/null || true)"
-    if [[ -n "${json}" && "${json}" != "[]" ]]; then
-      parts+=("${json}")
+    local bin
+    bin="$(hm_pm2_bin_system)" || true
+    if [[ -n "${bin}" ]]; then
+      json="$("${bin}" jlist 2>/dev/null || true)"
+      if [[ -n "${json}" && "${json}" != "[]" ]]; then
+        parts+=("${json}")
+      fi
     fi
   fi
 
@@ -162,7 +166,7 @@ hm_pm2_jlist() {
     eval "${oldnull}" 2>/dev/null || shopt -u nullglob
     for home in "${homes[@]}"; do
       [[ -d "${home}" ]] || continue
-      json="$(PM2_HOME="${home}" "${bin}" jlist 2>/dev/null || true)"
+      json="$(hm_pm2_run_as_owner "${home}" jlist 2>/dev/null || true)"
       if [[ -n "${json}" && "${json}" != "[]" ]]; then
         parts+=("${json}")
       fi
@@ -292,10 +296,15 @@ hm_pm2_parse_apps() {
     return 0
   fi
 
-  # Uproszczony fallback bez jq — użyj pm2 pretty list + ss
-  local bin
-  bin="$(hm_pm2_bin)" || return 1
-  "${bin}" prettylist 2>/dev/null | awk '
+  # Uproszczony fallback bez jq — systemowy pm2 (bez binarek użytkownika)
+  local bin home
+  bin="$(hm_pm2_bin_system)" || return 1
+  home="$(hm_pm2_home_dirs 2>/dev/null | head -1 || true)"
+  if [[ -n "${home}" ]]; then
+    hm_pm2_run_as_owner "${home}" prettylist 2>/dev/null
+  else
+    "${bin}" prettylist 2>/dev/null
+  fi | awk '
     /^[[:space:]]*name:/ { name=$2; gsub(/[",]/,"",name) }
     /^[[:space:]]*pid:/ { pid=$2; gsub(/[",]/,"",pid) }
     /^[[:space:]]*status:/ { status=$2; gsub(/[",]/,"",status) }
@@ -528,9 +537,14 @@ cmd_pm2() {
       echo
       ;;
     raw)
-      local bin
-      bin="$(hm_pm2_bin)" || { hm_err "Brak pm2."; return 1; }
-      "${bin}" list
+      local home
+      hm_pm2_bin >/dev/null || { hm_err "Brak systemowego pm2."; return 1; }
+      home="$(hm_pm2_home_dirs 2>/dev/null | head -1 || true)"
+      if [[ -n "${home}" ]]; then
+        hm_pm2_run_as_owner "${home}" list
+      else
+        "$(hm_pm2_bin_system)" list
+      fi
       ;;
     help|-h|--help)
       hm_help_topic pm2

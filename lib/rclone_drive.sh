@@ -72,6 +72,11 @@ hm_rclone_save_remote_conf() {
   local value="$1"
   local conf="${HMTOOLS_CONF:-${HMTOOLS_ROOT}/config/hmtools.conf}"
   local tmp
+  if ! hm_is_valid_rclone_remote "${value}"; then
+    hm_err "Nieprawidłowy format RCLONE_REMOTE: ${value}"
+    hm_err "Dozwolone: litery, cyfry, _ . : / - (np. gdrive:vps-backups)"
+    return 1
+  fi
   mkdir -p "$(dirname "${conf}")"
   if [[ -f "${conf}" ]] && grep -q '^RCLONE_REMOTE=' "${conf}" 2>/dev/null; then
     tmp="$(mktemp "${conf}.XXXXXX")"

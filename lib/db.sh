@@ -23,10 +23,14 @@ hm_mysql_exec() {
 
 hm_db_size_bytes() {
   local dbname="$1"
+  if ! hm_is_valid_db_name "${dbname}"; then
+    echo 0
+    return 0
+  fi
   hm_mysql_exec -e "
     SELECT COALESCE(SUM(data_length + index_length),0)
     FROM information_schema.tables
-    WHERE table_schema='${dbname}';
+    WHERE table_schema=$(hm_sql_quote "${dbname}");
   " 2>/dev/null || echo 0
 }
 
@@ -38,20 +42,22 @@ hm_list_all_databases() {
 # (stary/legacy: websites_website.domainName)
 hm_cyberpanel_dbs_for_domain() {
   local domain="$1"
-  local out=""
+  local out="" q
+  hm_is_valid_domain "${domain}" || return 0
+  q="$(hm_sql_quote "${domain}")"
 
   # 1) aktualny schemat + child domains
   out="$(hm_mysql_exec cyberpanel -e "
 SELECT d.dbName, COALESCE(d.dbUser,''), 'localhost'
 FROM databases_databases d
 INNER JOIN websiteFunctions_websites w ON d.website_id = w.id
-WHERE w.domain = '${domain}'
+WHERE w.domain = ${q}
 UNION
 SELECT d.dbName, COALESCE(d.dbUser,''), 'localhost'
 FROM databases_databases d
 INNER JOIN websiteFunctions_websites w ON d.website_id = w.id
 INNER JOIN websiteFunctions_childdomains c ON c.master_id = w.id
-WHERE c.domain = '${domain}';
+WHERE c.domain = ${q};
 " 2>/dev/null || true)"
 
   if [[ -n "${out}" ]]; then
@@ -64,7 +70,7 @@ WHERE c.domain = '${domain}';
 SELECT d.dbName, COALESCE(d.dbUser,''), COALESCE(d.dbHost,'localhost')
 FROM databases_databases d
 JOIN websites_website w ON d.website_id = w.id
-WHERE w.domainName = '${domain}';
+WHERE w.domainName = ${q};
 " 2>/dev/null || true
 }
 
@@ -72,15 +78,16 @@ hm_cyberpanel_dbs_for_user() {
   # bazy po dbUser / prefiksie externalApp (CyberPanel często: user_xxxxx)
   local user="$1"
   [[ -n "${user}" && "${user}" != "root" ]] || return 0
-  local esc
-  esc="$(printf '%s' "${user}" | sed "s/'/\\\\'/g")"
+  hm_is_valid_unix_user "${user}" || return 0
+  local q
+  q="$(hm_sql_quote "${user}")"
   hm_mysql_exec cyberpanel -e "
 SELECT dbName, COALESCE(dbUser,''), 'localhost'
 FROM databases_databases
-WHERE dbUser = '${esc}'
-   OR dbUser LIKE '${esc}\\_%'
-   OR dbName LIKE '${esc}\\_%'
-   OR dbName = '${esc}';
+WHERE dbUser = ${q}
+   OR dbUser LIKE CONCAT(${q}, '\\_%')
+   OR dbName LIKE CONCAT(${q}, '\\_%')
+   OR dbName = ${q};
 " 2>/dev/null || true
 }
 
@@ -178,6 +185,10 @@ hm_dbs_for_site() {
   _hm_dbs_emit() {
     local name="$1" user="$2" origin="$3" size
     [[ -n "${name}" ]] || return 0
+    if ! hm_is_valid_db_name "${name}"; then
+      hm_warn "Pominięto niebezpieczną/nieprawidłową nazwę bazy: ${name}"
+      return 0
+    fi
     [[ "${seen}" == *"|${name}|"* ]] && return 0
     seen="${seen}${name}|"
     size="$(hm_db_size_bytes "${name}")"

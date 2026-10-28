@@ -144,11 +144,22 @@ cmd_site_clean() {
   fi
 
   local -a targets=()
-  local c
+  local c real_c real_root
+  real_root="$(realpath -m "${root}" 2>/dev/null || readlink -f "${root}" 2>/dev/null || echo "${root}")"
   for c in "${candidates[@]}"; do
     [[ -d "${c}" ]] || continue
+    # SECURITY: nie podążaj za symlinkami poza katalog strony
+    if [[ -L "${c}" ]]; then
+      hm_warn "Pominięto symlink: ${c}"
+      continue
+    fi
+    real_c="$(realpath -m "${c}" 2>/dev/null || readlink -f "${c}" 2>/dev/null || echo "")"
+    if [[ -z "${real_c}" || ( "${real_c}" != "${real_root}" && "${real_c}" != "${real_root}"/* ) ]]; then
+      hm_warn "Pominięto ścieżkę poza katalogiem strony: ${c}"
+      continue
+    fi
     # pomiń puste
-    if [[ -z "$(find "${c}" -mindepth 1 -maxdepth 1 2>/dev/null | head -1)" ]]; then
+    if [[ -z "$(find -P "${c}" -mindepth 1 -maxdepth 1 2>/dev/null | head -1)" ]]; then
       continue
     fi
     targets+=("${c}")
@@ -189,9 +200,13 @@ cmd_site_clean() {
   fi
 
   echo
-  local i=0
+  local i=0 ent
   for t in "${targets[@]}"; do
-    find "${t}" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+    # -P: nie podążaj za symlinkami; pomiń same linki na 1. poziomie
+    while IFS= read -r -d '' ent; do
+      [[ -L "${ent}" ]] && continue
+      rm -rf -- "${ent}" 2>/dev/null || true
+    done < <(find -P "${t}" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
     hm_ok "Wyczyszczono: ${t}  (było $(hm_human_size "${sizes[$i]}"))"
     i=$((i + 1))
   done

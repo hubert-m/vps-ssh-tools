@@ -26,11 +26,13 @@ hm_cyberpanel_list_domains() {
 
 hm_cyberpanel_site_meta() {
   local domain="$1"
-  local out
+  local out q
+  hm_is_valid_domain "${domain}" || return 0
+  q="$(hm_sql_quote "${domain}")"
   # php, externalApp, state — aktualny schemat
   out="$(hm_mysql_exec cyberpanel -e "
     SELECT COALESCE(phpSelection,''), COALESCE(externalApp,''), COALESCE(state,1)
-    FROM websiteFunctions_websites WHERE domain='${domain}' LIMIT 1;
+    FROM websiteFunctions_websites WHERE domain=${q} LIMIT 1;
   " 2>/dev/null || true)"
   if [[ -n "${out}" ]]; then
     printf '%s\n' "${out}"
@@ -39,7 +41,7 @@ hm_cyberpanel_site_meta() {
   # legacy
   hm_mysql_exec cyberpanel -e "
     SELECT COALESCE(phpSelection,''), COALESCE(externalApp,''), COALESCE(state,1)
-    FROM websites_website WHERE domainName='${domain}' LIMIT 1;
+    FROM websites_website WHERE domainName=${q} LIMIT 1;
   " 2>/dev/null || true
 }
 
