@@ -252,18 +252,25 @@ hm_print_all_dbs() {
   printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..52})" "${C_RESET}"
 
   local db size any=0
-  local -a rows=()
+  local -a rows=() dbs=()
   while IFS= read -r db; do
-    [[ -n "${db}" ]] || continue
-    size="$(hm_db_size_bytes "${db}")"
-    rows+=("${size}"$'\t'"${db}")
-    any=1
+    [[ -n "${db}" ]] && dbs+=("${db}")
   done < <(hm_list_all_databases)
 
-  if [[ "${any}" -eq 0 ]]; then
+  if [[ "${#dbs[@]}" -eq 0 ]]; then
     hm_warn "Brak baz danych (lub brak dostępu MySQL)."
     return 0
   fi
+
+  local i=0 total="${#dbs[@]}"
+  for db in "${dbs[@]}"; do
+    i=$((i + 1))
+    hm_progress_bar "${i}" "${total}" "Rozmiar bazy: ${db}"
+    size="$(hm_db_size_bytes "${db}")"
+    rows+=("${size}"$'\t'"${db}")
+    any=1
+  done
+  hm_progress_done
 
   while IFS=$'\t' read -r size db; do
     [[ -n "${db}" ]] || continue
@@ -374,6 +381,7 @@ hm_mysql_dump_local() {
   [[ -n "${MYSQL_SOCKET:-}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
 
   hm_info "Lokalny dump ${dbname} → ${outpath}"
+  hm_status_line "mysqldump ${dbname}..."
   set +e
   set +o pipefail
   "${dumpcli}" "${sock_args[@]}" --single-transaction --quick --routines --triggers \
@@ -381,6 +389,7 @@ hm_mysql_dump_local() {
   local dump_rc=${PIPESTATUS[0]} gzip_rc=${PIPESTATUS[1]}
   set -o pipefail
   set -e
+  hm_status_clear
   if [[ "${dump_rc}" -ne 0 || "${gzip_rc}" -ne 0 || ! -s "${outpath}" ]]; then
     rm -f "${outpath}"
     hm_err "Dump lokalny nieudany (mysqldump rc=${dump_rc})."
@@ -422,17 +431,21 @@ hm_mysql_import() {
     return 0
   fi
 
+  hm_status_line "Import do ${dbname}..."
   if [[ "${file}" == *.sql.gz ]]; then
     if ! gunzip -c -- "${file}" | "${cli}" "${sock_args[@]}" -- "${dbname}"; then
+      hm_status_clear
       hm_err "Import .sql.gz nieudany."
       return 1
     fi
   else
     if ! "${cli}" "${sock_args[@]}" -- "${dbname}" < "${file}"; then
+      hm_status_clear
       hm_err "Import .sql nieudany."
       return 1
     fi
   fi
+  hm_status_clear
   hm_ok "Import do ${dbname} zakończony."
 }
 
@@ -518,9 +531,11 @@ ORDER BY data_free DESC LIMIT 10;
 
   local sock_args=()
   [[ -n "${MYSQL_SOCKET:-}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
+  hm_status_line "mysqlcheck --optimize ${dbname}..."
   "${checkcli}" "${sock_args[@]}" --optimize --databases "${dbname}" || {
     hm_warn "mysqlcheck zakończył się z ostrzeżeniem/błędem."
   }
+  hm_status_clear
 
   after="$(hm_db_size_bytes "${dbname}")"
   freed=$(( before - after ))

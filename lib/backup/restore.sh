@@ -18,17 +18,24 @@ hm_backup_restore_files() {
     chunks)
       hm_info "Odtwarzanie plików (chunks → stream) → ${target_dir}"
       local part
+      local -a chunk_parts=()
+      while IFS= read -r part; do
+        [[ -n "${part}" ]] && chunk_parts+=("${part}")
+      done < <(rclone lsf "${remote_base}/files.chunks/" 2>/dev/null | grep 'files\.tar\.gz\.part_' | sort)
+      local ctotal="${#chunk_parts[@]}"
+      [[ "${ctotal}" -gt 0 ]] || { hm_err "Brak plików part_* w files.chunks."; return 1; }
+      hm_status_line "Stream ${ctotal} chunków → tar (może potrwać)..."
       # łączenie part_* w kolejności bez lokalnego pełnego archiwum
       if ! (
-        while IFS= read -r part; do
-          [[ -n "${part}" ]] || continue
-          hm_info "  chunk: ${part}"
+        for part in "${chunk_parts[@]}"; do
           rclone cat "${remote_base}/files.chunks/${part}" || exit 1
-        done < <(rclone lsf "${remote_base}/files.chunks/" 2>/dev/null | grep 'files\.tar\.gz\.part_' | sort)
+        done
       ) | gunzip -c | tar -xzf - -C "${target_dir}"; then
+        hm_status_clear
         hm_err "Rozpakowanie files.chunks nieudane."
         return 1
       fi
+      hm_status_clear
       ;;
     *)
       hm_warn "Brak archiwum plików w snapshocie (ani files.tar.gz, ani files.chunks/)."
@@ -71,9 +78,15 @@ hm_backup_restore_dbs() {
   fi
 
   IFS=',' read -r -a _dbs <<< "${db_raw}"
-  local db
+  local db di=0 dtotal=0
+  for db in "${_dbs[@]}"; do
+    [[ -n "${db}" ]] && dtotal=$((dtotal + 1))
+  done
   for db in "${_dbs[@]}"; do
     [[ -n "${db}" ]] || continue
+    di=$((di + 1))
+    hm_progress_bar "${di}" "${dtotal}" "Import DB: ${db}"
+    hm_status_clear
     hm_info "Import DB ${db} ← ${remote_base}/db/${db}.sql.gz"
     "${cli}" "${sock_args[@]}" -e "CREATE DATABASE IF NOT EXISTS \`${db}\`;" 2>/dev/null || true
     if ! rclone cat "${remote_base}/db/${db}.sql.gz" | gunzip -c | "${cli}" "${sock_args[@]}" "${db}"; then
@@ -82,6 +95,7 @@ hm_backup_restore_dbs() {
     fi
     hm_ok "DB ${db} OK."
   done
+  hm_progress_done
 }
 
 hm_backup_ols_reload() {

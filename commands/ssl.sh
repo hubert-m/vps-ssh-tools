@@ -24,12 +24,16 @@ cmd_ssl() {
     "${C_DIM}" "DOMAIN" "STATUS" "DNI" "EXPIRY" "${C_RESET}"
   printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..78})" "${C_RESET}"
 
-  local domain cert expiry days status label
+  local domain cert expiry days status
+  local total="${#HM_SITES_LIST[@]}" i=0
+  local -a rows=()
   for domain in "${HM_SITES_LIST[@]}"; do
+    i=$((i + 1))
+    hm_progress_bar "${i}" "${total}" "Sprawdzanie certyfikatu SSL: ${domain}"
     cert="$(hm_ssl_paths_for_domain "${domain}" 2>/dev/null || true)"
     if [[ -z "${cert}" ]]; then
-      printf '  %-36s %s%-8s%s %6s  %s\n' \
-        "${domain}" "${C_RED}" "BRAK" "${C_RESET}" "-" "-"
+      rows+=("$(printf '  %-36s %s%-8s%s %6s  %s' \
+        "${domain}" "${C_RED}" "BRAK" "${C_RESET}" "-" "-")")
       continue
     fi
     status="$(hm_ssl_status "${cert}")"
@@ -37,22 +41,24 @@ cmd_ssl() {
     expiry="$(hm_ssl_expiry "${cert}")"
     case "${status}" in
       expired)
-        printf '  %-36s %s%-8s%s %6s  %s\n' \
-          "${domain}" "${C_RED}" "WYGASŁ" "${C_RESET}" "${days}" "${expiry}"
+        rows+=("$(printf '  %-36s %s%-8s%s %6s  %s' \
+          "${domain}" "${C_RED}" "WYGASŁ" "${C_RESET}" "${days}" "${expiry}")")
         ;;
       soon)
-        printf '  %-36s %s%-8s%s %6s  %s\n' \
-          "${domain}" "${C_YELLOW}" "WKRÓTCE" "${C_RESET}" "${days}" "${expiry}"
+        rows+=("$(printf '  %-36s %s%-8s%s %6s  %s' \
+          "${domain}" "${C_YELLOW}" "WKRÓTCE" "${C_RESET}" "${days}" "${expiry}")")
         ;;
       ok)
-        printf '  %-36s %s%-8s%s %6s  %s\n' \
-          "${domain}" "${C_GREEN}" "OK" "${C_RESET}" "${days}" "${expiry}"
+        rows+=("$(printf '  %-36s %s%-8s%s %6s  %s' \
+          "${domain}" "${C_GREEN}" "OK" "${C_RESET}" "${days}" "${expiry}")")
         ;;
       *)
-        printf '  %-36s %-8s %6s  %s\n' "${domain}" "?" "${days}" "${expiry}"
+        rows+=("$(printf '  %-36s %-8s %6s  %s' "${domain}" "?" "${days}" "${expiry}")")
         ;;
     esac
   done
+  hm_progress_done
+  printf '%s\n' "${rows[@]}"
   echo
   echo "  ${C_DIM}Odnawianie: renew-ssl [domena]   |   ssl renew [domena]${C_RESET}"
 }

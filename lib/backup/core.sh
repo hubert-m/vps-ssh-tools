@@ -52,6 +52,7 @@ hm_stream_mysqldump() {
   errf="$(mktemp "${TMP_DIR}/mysqldump-XXXXXX.err")"
 
   # najpierw lokalny plik — unikamy pustego 20 B .sql.gz na Drive przy błędzie mysqldump
+  hm_status_line "mysqldump ${dbname}..."
   set +e
   set +o pipefail
   "${dumpcli}" "${sock_args[@]}" --single-transaction --quick --routines --triggers \
@@ -60,6 +61,7 @@ hm_stream_mysqldump() {
   gzip_rc=${PIPESTATUS[1]}
   set -o pipefail
   set -e
+  hm_status_clear
 
   if [[ "${dump_rc}" -ne 0 || "${gzip_rc}" -ne 0 || ! -s "${tmp}" ]]; then
     hm_err "Nie udało się zrzucić DB ${dbname} (mysqldump rc=${dump_rc})."
@@ -103,6 +105,7 @@ hm_stream_tar_rcat() {
   tar_err="$(mktemp "${TMP_DIR:-/tmp}/hmtools-tar.XXXXXX.err")"
 
   hm_info "Archiwum (stream) ${src_dir} → ${dest}"
+  hm_status_line "tar|gzip|rclone ${src_dir}..."
   set +e
   set +o pipefail
   # shellcheck disable=SC2086
@@ -114,9 +117,10 @@ hm_stream_tar_rcat() {
   rcat_rc=${PIPESTATUS[2]}
   set -o pipefail
   set -e
+  hm_status_clear
 
   if [[ -s "${tar_err}" ]]; then
-    hm_warn "tar: $(head -c 300 "${tar_err}" | tr '\n' ' ')"
+    hm_warn "tar: $(head -c 300 "${tar_err}" | tr -d '\n' | tr '\r' ' ' | head -c 300)"
   fi
   rm -f "${tar_err}"
 
@@ -171,30 +175,36 @@ hm_chunked_tar_upload() {
     fi
   fi
 
-  local part dest_file n=0
+  local -a parts=()
+  local part dest_file n=0 total_parts=0 part_sz
   for part in "${work}"/part_*; do
-    [[ -f "${part}" ]] || continue
+    [[ -f "${part}" ]] && parts+=("${part}")
+  done
+  total_parts="${#parts[@]}"
+  if [[ "${total_parts}" -eq 0 ]]; then
+    hm_err "Brak chunków do wysłania."
+    rm -rf "${work}"
+    return 1
+  fi
+
+  for part in "${parts[@]}"; do
     n=$((n + 1))
+    part_sz="$(hm_human_size "$(stat -c%s "${part}" 2>/dev/null || echo 0)")"
     dest_file="${remote_dir}/files.tar.gz.$(basename "${part}")"
-    hm_info "Upload chunk ${n}: $(basename "${part}") ($(hm_human_size "$(stat -c%s "${part}" 2>/dev/null || echo 0)"))"
+    hm_progress_bar "${n}" "${total_parts}" "Upload $(basename "${part}") (${part_sz})"
     if ! hm_rclone_copyto "${part}" "${dest_file}"; then
+      hm_progress_done
       hm_err "Upload chunka nieudany: ${part}"
       rm -rf "${work}"
       return 1
     fi
     rm -f "${part}"
   done
-
-  if [[ "${n}" -eq 0 ]]; then
-    hm_err "Brak chunków do wysłania."
-    rm -rf "${work}"
-    return 1
-  fi
+  hm_progress_done "Chunki wysłane (${total_parts}/${total_parts})."
 
   # marker
-  echo "chunks=${n}" | hm_rclone_rcat "${remote_dir}/files.tar.gz.chunks.txt" || true
+  echo "chunks=${total_parts}" | hm_rclone_rcat "${remote_dir}/files.tar.gz.chunks.txt" || true
   rm -rf "${work}"
-  hm_ok "Chunki wysłane (${n})."
 }
 
 hm_upload_files_smart() {
@@ -344,10 +354,19 @@ hm_backup_system_configs() {
 hm_backup_all_databases() {
   local remote_base="$1"
   local db
+  local -a dbs=()
   while IFS= read -r db; do
-    [[ -n "${db}" ]] || continue
-    hm_stream_mysqldump "${db}" "${remote_base}/databases/${db}.sql.gz" || hm_warn "DB ${db} pominięta."
+    [[ -n "${db}" ]] && dbs+=("${db}")
   done < <(hm_list_all_databases)
+  local i=0 total="${#dbs[@]}"
+  [[ "${total}" -gt 0 ]] || return 0
+  for db in "${dbs[@]}"; do
+    i=$((i + 1))
+    hm_progress_bar "${i}" "${total}" "Dump DB: ${db}"
+    hm_status_clear
+    hm_stream_mysqldump "${db}" "${remote_base}/databases/${db}.sql.gz" || hm_warn "DB ${db} pominięta."
+  done
+  hm_progress_done
 }
 
 hm_backup_full() {
@@ -372,8 +391,12 @@ hm_backup_full() {
 
   hm_discover_sites
   local domain
+  local si=0 stotal="${#HM_SITES_LIST[@]}"
   for domain in "${HM_SITES_LIST[@]}"; do
-    hm_info "--- Strona: ${domain} ---"
+    si=$((si + 1))
+    hm_progress_bar "${si}" "${stotal}" "Backup strony: ${domain}"
+    hm_status_clear
+    hm_info "--- Strona: ${domain} (${si}/${stotal}) ---"
     hm_set_site_context "${domain}"
     local site_remote="${remote_base}/sites/${domain}"
     hm_rclone_mkdir "${site_remote}"
@@ -387,6 +410,7 @@ hm_backup_full() {
       hm_warn "Brak plików dla ${domain}."
     fi
   done
+  hm_progress_done
 
   local manifest="${TMP_DIR}/manifest-full-${stamp}.json"
   mkdir -p "${TMP_DIR}"

@@ -124,17 +124,25 @@ hm_backup_list() {
   printf '  %-18s %-6s %10s  %-14s  %s\n' "-----" "---" "-------" "--------" "----"
 
   local stamp remote_base count=0
+  local -a stamps=()
   while IFS= read -r stamp; do
-    [[ -n "${stamp}" ]] || continue
-    remote_base="$(hm_rclone_dest "${target}/${stamp}")"
-    hm_backup_print_snapshot_row "${stamp}" "${remote_base}"
-    count=$((count + 1))
+    [[ -n "${stamp}" ]] && stamps+=("${stamp}")
   done < <(hm_backup_list_stamps "${target}")
 
-  if [[ "${count}" -eq 0 ]]; then
+  local total="${#stamps[@]}"
+  if [[ "${total}" -eq 0 ]]; then
     hm_warn "Brak snapshotów w ${remote_parent}"
     return 0
   fi
+
+  for stamp in "${stamps[@]}"; do
+    count=$((count + 1))
+    hm_progress_bar "${count}" "${total}" "Pobieranie danych snapshotu ${stamp} z Drive..."
+    remote_base="$(hm_rclone_dest "${target}/${stamp}")"
+    hm_status_clear
+    hm_backup_print_snapshot_row "${stamp}" "${remote_base}"
+  done
+  hm_progress_done
   echo
   hm_ok "Znaleziono ${count} snapshot(ów)."
 }

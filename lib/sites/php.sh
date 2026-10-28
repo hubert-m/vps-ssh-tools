@@ -69,8 +69,13 @@ hm_list_available_php() {
   local oldnull
   oldnull="$(shopt -p nullglob || true)"
   shopt -s nullglob
-  for p in "${root}"/lsphp*; do
+  local -a lsphp_dirs=("${root}"/lsphp*)
+  eval "${oldnull}" 2>/dev/null || shopt -u nullglob
+  local di=0 dtotal="${#lsphp_dirs[@]}"
+  for p in "${lsphp_dirs[@]}"; do
     [[ -d "${p}" ]] || continue
+    di=$((di + 1))
+    hm_progress_bar "${di}" "${dtotal}" "Sprawdzanie $(basename "${p}")..."
     if [[ -x "${p}/bin/php" ]]; then
       ver="$(${p}/bin/php -r 'echo PHP_VERSION;' 2>/dev/null || true)"
       [[ -n "${ver}" ]] || ver="?"
@@ -79,9 +84,9 @@ hm_list_available_php() {
       [[ -n "${branch}" ]] && branches+=("${branch}")
     fi
   done
-  eval "${oldnull}" 2>/dev/null || shopt -u nullglob
 
   if [[ "${#rows[@]}" -eq 0 ]]; then
+    hm_progress_done
     echo "  (brak lsphp* w ${root})"
     return 0
   fi
@@ -97,8 +102,10 @@ hm_list_available_php() {
     uniq+=("${b}")
   done
   if [[ "${#uniq[@]}" -gt 0 ]]; then
+    hm_status_line "Pobieranie wersji z php.net..."
     hm_php_prefetch_latests "${uniq[@]}"
   fi
+  hm_progress_done
 
   printf '  %s%-28s %-14s %-14s %s%s\n' \
     "${C_DIM}" "LSPHP" "ZAINSTALOWANA" "NAJNOWSZA" "STATUS" "${C_RESET}"

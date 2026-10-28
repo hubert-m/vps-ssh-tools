@@ -39,7 +39,11 @@ cmd_health() {
   echo "${C_BOLD}Certyfikaty wygasające < 14 dni${C_RESET}"
   hm_discover_sites
   local domain cert status days expiry found=0
+  local total="${#HM_SITES_LIST[@]}" i=0
+  local -a alerts=()
   for domain in "${HM_SITES_LIST[@]}"; do
+    i=$((i + 1))
+    hm_progress_bar "${i}" "${total}" "Sprawdzanie certyfikatu SSL: ${domain}"
     cert="$(hm_ssl_paths_for_domain "${domain}" 2>/dev/null || true)"
     [[ -n "${cert}" ]] || continue
     status="$(hm_ssl_status "${cert}" 14)"
@@ -49,12 +53,22 @@ cmd_health() {
         days="$(hm_ssl_days_left "${cert}" 2>/dev/null || echo "?")"
         expiry="$(hm_ssl_expiry "${cert}")"
         if [[ "${status}" == "expired" ]]; then
-          hm_err "  EXPIRED  ${domain}  (${expiry}, ${days} dni)"
+          alerts+=("EXPIRED|${domain}|${expiry}|${days}")
         else
-          hm_warn "  SOON     ${domain}  (${expiry}, ${days} dni)"
+          alerts+=("SOON|${domain}|${expiry}|${days}")
         fi
         ;;
     esac
+  done
+  hm_progress_done
+  local a
+  for a in "${alerts[@]}"; do
+    IFS='|' read -r status domain expiry days <<<"${a}"
+    if [[ "${status}" == "EXPIRED" ]]; then
+      hm_err "  EXPIRED  ${domain}  (${expiry}, ${days} dni)"
+    else
+      hm_warn "  SOON     ${domain}  (${expiry}, ${days} dni)"
+    fi
   done
   if [[ "${found}" -eq 0 ]]; then
     hm_ok "Brak certyfikatów wygasających w ciągu 14 dni."

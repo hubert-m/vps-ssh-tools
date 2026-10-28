@@ -323,6 +323,7 @@ cmd_security_scan() {
   echo
   local issues=0
 
+  hm_progress_bar 1 3 "Skan uploads (.php/.phar)"
   echo "${C_BOLD}.php w katalogach upload${C_RESET}"
   local -a updirs=()
   [[ -d "${doc}/wp-content/uploads" ]] && updirs+=("${doc}/wp-content/uploads")
@@ -333,6 +334,7 @@ cmd_security_scan() {
     uphit+=$'\n'"$(find -P "${ud}" -xdev \( -name '*.php' -o -name '*.phtml' -o -name '*.phar' \) 2>/dev/null | head -30)"
   done
   uphit="$(printf '%s\n' "${uphit}" | awk 'NF && !seen[$0]++')"
+  hm_status_clear
   if [[ -n "${uphit}" ]]; then
     hm_warn "Znaleziono skrypty PHP w uploads:"
     printf '%s\n' "${uphit}" | sed 's/^/    /'
@@ -342,9 +344,11 @@ cmd_security_scan() {
   fi
 
   echo
+  hm_progress_bar 2 3 "Skan uprawnień (777)"
   echo "${C_BOLD}World-writable (777 / +o+w)${C_RESET}"
   local ww
   ww="$(find -P "${doc}" -xdev -perm -0002 2>/dev/null | head -25)"
+  hm_status_clear
   if [[ -n "${ww}" ]]; then
     hm_warn "World-writable (max 25):"
     printf '%s\n' "${ww}" | sed 's/^/    /'
@@ -354,6 +358,7 @@ cmd_security_scan() {
   fi
 
   echo
+  hm_progress_bar 3 3 "Skan wrażliwych plików (.env/.sql/.git)"
   echo "${C_BOLD}Podejrzane pliki publiczne${C_RESET}"
   local -a suspects=()
   local s
@@ -371,6 +376,7 @@ cmd_security_scan() {
   done < <(find -P "${doc}" -xdev -maxdepth 3 \( \
       -name '*.sql' -o -name '*.sql.gz' -o -name '*.tar.gz' -o -name '*.zip' -o -name '*.bak' \
     \) 2>/dev/null | head -40)
+  hm_progress_done
 
   if [[ "${#suspects[@]}" -gt 0 ]]; then
     hm_warn "Publicznie dostępne wrażliwe/artefakty:"

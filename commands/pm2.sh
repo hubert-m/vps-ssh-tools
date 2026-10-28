@@ -137,13 +137,22 @@ hm_pm2_jlist() {
   local -a parts=()
   hm_pm2_bin >/dev/null || return 1
 
+  local -a homes=()
   while IFS= read -r home; do
-    [[ -n "${home}" && -d "${home}" ]] || continue
-    json="$(hm_pm2_run_as_owner "${home}" jlist 2>/dev/null || true)"
-    if [[ -n "${json}" && "${json}" != "[]" ]]; then
-      parts+=("${json}")
-    fi
+    [[ -n "${home}" && -d "${home}" ]] && homes+=("${home}")
   done < <(hm_pm2_home_dirs)
+  local hi=0 htotal="${#homes[@]}"
+  if [[ "${htotal}" -gt 0 ]]; then
+    for home in "${homes[@]}"; do
+      hi=$((hi + 1))
+      hm_progress_bar "${hi}" "${htotal}" "Odpytywanie instancji PM2: ${home}"
+      json="$(hm_pm2_run_as_owner "${home}" jlist 2>/dev/null || true)"
+      if [[ -n "${json}" && "${json}" != "[]" ]]; then
+        parts+=("${json}")
+      fi
+    done
+    hm_progress_done
+  fi
 
   # poza kontekstem / gdy pusto: spróbuj jeszcze domyślnego env binarki (system)
   if [[ "${#parts[@]}" -eq 0 && -z "${HM_SITE_DOMAIN:-}" ]]; then

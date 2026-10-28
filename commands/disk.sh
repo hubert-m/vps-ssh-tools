@@ -10,7 +10,9 @@ cmd_disk() {
   echo
   if [[ -d /home ]]; then
     echo "${C_BOLD}Top katalogi w /home${C_RESET}"
+    hm_status_line "Obliczanie rozmiaru katalogów w /home..."
     du -h --max-depth=1 /home 2>/dev/null | sort -hr | head -25
+    hm_status_clear
   fi
   echo
   hm_info "Wolne: $(hm_disk_free_percent /)%  |  Zajęte: $(hm_disk_used_percent /)%"

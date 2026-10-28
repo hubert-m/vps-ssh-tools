@@ -118,8 +118,11 @@ hm_backup_prune() {
     fi
   fi
 
-  local rc=0
+  local rc=0 i=0 total="${#to_purge[@]}"
   for path in "${to_purge[@]}"; do
+    i=$((i + 1))
+    hm_progress_bar "${i}" "${total}" "Usuwanie: ${path}"
+    hm_status_clear
     hm_info "rclone purge ${path}"
     if rclone purge "${path}"; then
       hm_ok "Usunięto: ${path}"
@@ -128,5 +131,6 @@ hm_backup_prune() {
       rc=1
     fi
   done
+  hm_progress_done
   return "${rc}"
 }

@@ -128,3 +128,72 @@ hm_mysqldump_cli() {
     return 1
   fi
 }
+
+# --- postęp / status na prawdziwym TTY (bez śmieci w logach sesji) ------------
+
+hm_ui_tty_fd() {
+  # fd 3 przy aktywnym tee logów; inaczej 1 gdy stdout to TTY
+  if [[ "${HM_LOG_TTY_FDS:-0}" == "1" ]]; then
+    if { true >&3; } 2>/dev/null; then
+      echo 3
+      return 0
+    fi
+  fi
+  if [[ -t 1 ]]; then
+    echo 1
+    return 0
+  fi
+  return 1
+}
+
+hm_status_clear() {
+  local fd
+  fd="$(hm_ui_tty_fd)" || return 0
+  # shellcheck disable=SC2086
+  printf '\r\033[K' >&"${fd}"
+}
+
+hm_status_line() {
+  # tymczasowa linia statusu (operacje bez znanej liczby kroków)
+  local msg="$*"
+  local fd
+  fd="$(hm_ui_tty_fd)" || return 0
+  if [[ ${#msg} -gt 72 ]]; then
+    msg="${msg:0:69}..."
+  fi
+  # shellcheck disable=SC2086
+  printf '\r\033[K  %s… %s%s' "${C_CYAN}" "${msg}" "${C_RESET}" >&"${fd}"
+}
+
+hm_progress_bar() {
+  # hm_progress_bar <current> <total> [opis]
+  local cur="${1:-0}" total="${2:-1}" label="${3:-}"
+  local fd pct width filled empty bar i
+  fd="$(hm_ui_tty_fd)" || return 0
+  [[ "${total}" =~ ^[0-9]+$ && "${total}" -gt 0 ]] || total=1
+  [[ "${cur}" =~ ^[0-9]+$ ]] || cur=0
+  [[ "${cur}" -gt "${total}" ]] && cur="${total}"
+
+  pct=$((cur * 100 / total))
+  width=20
+  filled=$((pct * width / 100))
+  empty=$((width - filled))
+  bar=""
+  for ((i = 0; i < filled; i++)); do bar+=$'\u2588'; done
+  for ((i = 0; i < empty; i++)); do bar+=$'\u2591'; done
+
+  if [[ ${#label} -gt 48 ]]; then
+    label="${label:0:45}..."
+  fi
+
+  # shellcheck disable=SC2086
+  printf '\r\033[K  %s[%s] %3d%% (%d/%d)%s %s' \
+    "${C_CYAN}" "${bar}" "${pct}" "${cur}" "${total}" "${C_RESET}" "${label}" >&"${fd}"
+}
+
+hm_progress_done() {
+  hm_status_clear
+  if [[ $# -gt 0 && -n "$*" ]]; then
+    hm_info "$*"
+  fi
+}

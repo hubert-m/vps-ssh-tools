@@ -19,9 +19,11 @@ cmd_site_size() {
   fi
 
   echo "${C_BOLD}Rozmiary — ${HM_SITE_DOMAIN}${C_RESET}"
+  hm_status_line "Liczenie rozmiaru środowiska..."
   echo "  Środowisko : ${root}"
   echo "  Całość     : $(hm_format_size_from_path "${root}")"
   if [[ -n "${doc}" ]]; then
+    hm_status_line "Liczenie rozmiaru docroot..."
     echo "  Docroot    : ${doc}  ($(hm_format_size_from_path "${doc}"))"
   fi
   if [[ -d "${root}/logs" ]]; then
@@ -30,16 +32,21 @@ cmd_site_size() {
   if [[ -d "${root}/mail" ]]; then
     echo "  mail       : $(hm_format_size_from_path "${root}/mail")"
   fi
+  hm_status_clear
 
   echo
   echo "${C_BOLD}Top katalogi (środowisko)${C_RESET} ${C_DIM}— max-depth 1${C_RESET}"
+  hm_status_line "Analiza top katalogów w root..."
   du -h --max-depth=1 "${root}" 2>/dev/null | sort -hr | head -20 | sed 's/^/  /'
+  hm_status_clear
 
   # drugi poziom: wnętrze docroot / public_html
   if [[ -n "${doc}" && -d "${doc}" ]]; then
     echo
     echo "${C_BOLD}Top w $(basename "${doc}")${C_RESET} ${C_DIM}— ${doc}${C_RESET}"
+    hm_status_line "Analiza top w docroot..."
     du -h --max-depth=1 "${doc}" 2>/dev/null | sort -hr | head -25 | sed 's/^/  /'
+    hm_status_clear
   fi
 
   # jeśli największe katalogi poza docroot zasługują na 2. poziom (.npm, .nvm, .cache…)
@@ -228,12 +235,16 @@ cmd_site_clean() {
 
   local t bytes total_bytes=0 count entries
   local -a sizes=()
+  local ci=0 ctotal="${#targets[@]}"
   for t in "${targets[@]}"; do
+    ci=$((ci + 1))
+    hm_progress_bar "${ci}" "${ctotal}" "Skan cache: ${t}"
     bytes="$(hm_dir_size_bytes "${t}" 2>/dev/null || echo 0)"
     [[ "${bytes}" =~ ^[0-9]+$ ]] || bytes=0
     total_bytes=$((total_bytes + bytes))
     sizes+=("${bytes}")
     entries="$(hm_clean_count_entries "${t}")"
+    hm_status_clear
     echo "  ${C_YELLOW}${t}${C_RESET}"
     echo "    rozmiar : $(hm_human_size "${bytes}")"
     echo "    wpisy   : ${entries} (pliki/katalogi łącznie)"
@@ -241,6 +252,7 @@ cmd_site_clean() {
     hm_clean_preview_top "${t}"
     echo
   done
+  hm_progress_done
 
   echo "  ${C_BOLD}Razem do usunięcia: $(hm_human_size "${total_bytes}") w ${#targets[@]} katalogach${C_RESET}"
   echo
@@ -254,15 +266,17 @@ cmd_site_clean() {
   echo
   local i=0 ent
   for t in "${targets[@]}"; do
+    i=$((i + 1))
+    hm_progress_bar "${i}" "${#targets[@]}" "Czyszczenie: ${t}"
     # -P: nie podążaj za symlinkami; pomiń same linki na 1. poziomie
     while IFS= read -r -d '' ent; do
       [[ -L "${ent}" ]] && continue
       rm -rf -- "${ent}" 2>/dev/null || true
     done < <(find -P "${t}" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
-    hm_ok "Wyczyszczono: ${t}  (było $(hm_human_size "${sizes[$i]}"))"
-    i=$((i + 1))
+    hm_status_clear
+    hm_ok "Wyczyszczono: ${t}  (było $(hm_human_size "${sizes[$((i - 1))]}"))"
   done
-  hm_ok "Czyszczenie zakończone."
+  hm_progress_done "Czyszczenie zakończone."
 }
 
 hm_ols_web_group() {
@@ -430,7 +444,7 @@ cmd_site_perms_fix() {
     return 0
   fi
 
-  # zawartość docroot
+  hm_progress_bar 1 4 "Właściciel plików (chown)"
   find -P "${doc}" -xdev -mindepth 1 -maxdepth 1 -print0 2>/dev/null \
     | while IFS= read -r -d '' ent; do
         [[ -L "${ent}" ]] && continue
@@ -440,15 +454,19 @@ cmd_site_perms_fix() {
   chown "${user}:${webgrp}" -- "${doc}" 2>/dev/null || chown "${user}:${user}" -- "${doc}"
   chmod 750 -- "${doc}" 2>/dev/null || true
 
+  hm_progress_bar 2 4 "Katalogi (chmod 755)"
   find -P "${doc}" -xdev -type d -exec chmod 755 {} + 2>/dev/null || true
+  hm_progress_bar 3 4 "Pliki (chmod 644)"
   find -P "${doc}" -xdev -type f -exec chmod 644 {} + 2>/dev/null || true
 
+  hm_progress_bar 4 4 "Pliki wrażliwe (chmod 600)"
   local sens
   for sens in "${doc}/wp-config.php" "${doc}/.env" "${root}/.env" "${root}/wp-config.php"; do
     [[ -f "${sens}" ]] || continue
     chown "${user}:${user}" -- "${sens}" 2>/dev/null || true
     chmod 600 -- "${sens}" 2>/dev/null || true
   done
+  hm_progress_done
 
   if [[ -n "${root}" && -d "${root}" && "${root}" != "${doc}" ]]; then
     # nie ruszaj całego /home/domena agresywnie — tylko jeśli user jest właścicielem katalogu

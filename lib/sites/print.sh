@@ -10,30 +10,38 @@ hm_list_sites() {
     return 0
   fi
 
-  printf '%-4s %-36s %-8s %-5s %-12s %s\n' "#" "DOMAIN" "PHP" "SSL" "SIZE" "STATUS"
-  printf '%-4s %-36s %-8s %-5s %-12s %s\n' "---" "------" "---" "---" "----" "------"
+  local total="${#HM_SITES_LIST[@]}"
+  local i=0 domain row root docroot logs vhost php rest status size ssl
+  local -a table_rows=()
 
-  local i=0 domain row root docroot logs vhost php rest user status size ssl
   for domain in "${HM_SITES_LIST[@]}"; do
     i=$((i + 1))
+    if [[ "${quick}" == "1" ]]; then
+      hm_progress_bar "${i}" "${total}" "Wczytywanie strony: ${domain}"
+    else
+      hm_progress_bar "${i}" "${total}" "Obliczanie rozmiaru: ${domain}"
+    fi
     row="$(hm_resolve_site_paths "${domain}")"
     IFS=$'\t' read -r _ root docroot logs vhost php rest <<<"${row}"
     status="${rest##*|}"
     ssl="$(hm_ssl_has "${domain}")"
     if [[ "${quick}" == "1" ]]; then
       size="-"
+    elif [[ -n "${root}" && -d "${root}" ]]; then
+      size="$(hm_format_size_from_path "${root}")"
+    elif [[ -n "${docroot}" && -d "${docroot}" ]]; then
+      size="$(hm_format_size_from_path "${docroot}")"
     else
-      if [[ -n "${root}" && -d "${root}" ]]; then
-        size="$(hm_format_size_from_path "${root}")"
-      elif [[ -n "${docroot}" && -d "${docroot}" ]]; then
-        size="$(hm_format_size_from_path "${docroot}")"
-      else
-        size="?"
-      fi
+      size="?"
     fi
-    printf '%-4s %-36s %-8s %-5s %-12s %s\n' \
-      "${i}" "${domain}" "${php:-?}" "${ssl}" "${size}" "${status}"
+    table_rows+=("$(printf '%-4s %-36s %-8s %-5s %-12s %s' \
+      "${i}" "${domain}" "${php:-?}" "${ssl}" "${size}" "${status}")")
   done
+  hm_progress_done
+
+  printf '%-4s %-36s %-8s %-5s %-12s %s\n' "#" "DOMAIN" "PHP" "SSL" "SIZE" "STATUS"
+  printf '%-4s %-36s %-8s %-5s %-12s %s\n' "---" "------" "---" "---" "----" "------"
+  printf '%s\n' "${table_rows[@]}"
   echo
   hm_info "Użyj: use <numer|domena>  aby wejść w kontekst."
 }
@@ -45,13 +53,17 @@ hm_print_site_info() {
   hm_set_site_context "${domain}"
 
   local size_root=0 size_doc=0
+  hm_progress_bar 1 3 "Rozmiar środowiska"
   [[ -n "${HM_SITE_ROOT}" && -d "${HM_SITE_ROOT}" ]] && size_root="$(hm_dir_size_bytes "${HM_SITE_ROOT}")"
   [[ -n "${HM_SITE_DOCROOT}" && -d "${HM_SITE_DOCROOT}" ]] && size_doc="$(hm_dir_size_bytes "${HM_SITE_DOCROOT}")"
+  hm_progress_bar 2 3 "Certyfikat SSL / ścieżki"
 
   local cert expiry
   cert="$(hm_ssl_paths_for_domain "${domain}" 2>/dev/null || true)"
   expiry="-"
   [[ -n "${cert}" ]] && expiry="$(hm_ssl_expiry "${cert}")"
+  hm_progress_bar 3 3 "Bazy danych"
+  hm_progress_done
 
   cat <<EOF
 ${C_BOLD}Szczegóły: ${domain}${C_RESET}
@@ -179,14 +191,22 @@ hm_site_logs_errors() {
 
   echo "${C_BOLD}Logi błędów — ${domain}${C_RESET} ${C_DIM}(ostatnie ~${lines} trafień)${C_RESET}"
   local f any=0
+  local -a errfiles=()
   while IFS= read -r f; do
-    [[ -n "${f}" ]] || continue
+    [[ -n "${f}" ]] && errfiles+=("${f}")
+  done < <(hm_site_log_candidates "${domain}" error)
+  local ei=0 etotal="${#errfiles[@]}"
+  for f in "${errfiles[@]}"; do
+    ei=$((ei + 1))
+    hm_progress_bar "${ei}" "${etotal}" "Skan błędów: $(basename "${f}")"
     any=1
+    hm_status_clear
     echo "---- ${f} ----"
     grep -Eih "${pattern}" "${f}" 2>/dev/null | tail -n "${lines}" || echo "  (brak dopasowań)"
     echo
     grep -Eih "${pattern}" "${f}" 2>/dev/null >> "${tmp}" || true
-  done < <(hm_site_log_candidates "${domain}" error)
+  done
+  hm_progress_done
 
   # też access ze statusami 5xx
   while IFS= read -r f; do
@@ -232,12 +252,14 @@ hm_site_logs_stats() {
 
   echo "${C_BOLD}Access stats — ${domain}${C_RESET}"
   echo "  Plik: ${access}"
+  hm_progress_bar 1 4 "Liczenie linii"
   local total
   total="$(wc -l < "${access}" 2>/dev/null | tr -d ' ')"
   echo "  Linie: ${total}"
   echo
 
   # Combined / OLS: IP ... "METHOD URL PROTO" STATUS
+  hm_progress_bar 2 4 "Kody HTTP"
   echo "${C_BOLD}Kody HTTP${C_RESET}"
   awk -F'"' '
     NF >= 3 {
@@ -266,15 +288,18 @@ hm_site_logs_stats() {
   ' "${access}" | sort -nr | head -12 | awk '{printf "    %s  %s\n", $2, $1}'
 
   echo
+  hm_progress_bar 3 4 "Top 15 IP"
   echo "${C_BOLD}Top 15 IP${C_RESET}"
   awk '{print $1}' "${access}" | grep -E '^[0-9a-fA-F.:]+$' | sort | uniq -c | sort -nr | head -15 \
     | awk '{printf "  %6s  %s\n", $1, $2}'
 
   echo
+  hm_progress_bar 4 4 "Top 15 URL"
   echo "${C_BOLD}Top 15 URL${C_RESET}"
   awk -F'"' 'NF>=2 { split($2,a," "); if (a[2]!="") print a[2] }' "${access}" \
     | sort | uniq -c | sort -nr | head -15 \
     | awk '{printf "  %6s  %s\n", $1, substr($0, index($0,$2))}'
+  hm_progress_done
 }
 
 hm_site_logs_follow() {

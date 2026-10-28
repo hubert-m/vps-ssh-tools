@@ -237,8 +237,34 @@ hm_run() {
 
   hm_file_log INFO "RUN: ${cmd[*]}"
 
+  local cmd_pid fd start_ts elapsed last_line spin_idx=0
+  local -a frames=('|' '/' '-' '\\')
+  start_ts="$(date +%s)"
+
   set +e
-  "${cmd[@]}" >"${tmp_out}" 2>"${tmp_err}"
+  "${cmd[@]}" >"${tmp_out}" 2>"${tmp_err}" &
+  cmd_pid=$!
+
+  if fd="$(hm_ui_tty_fd 2>/dev/null)"; then
+    while kill -0 "${cmd_pid}" 2>/dev/null; do
+      elapsed=$(( $(date +%s) - start_ts ))
+      last_line="$(
+        { tail -n 3 "${tmp_out}" 2>/dev/null; tail -n 3 "${tmp_err}" 2>/dev/null; } \
+          | grep -v '^==>' | awk 'NF { line=$0 } END { print line }' | tr -d '\r'
+      )"
+      [[ ${#last_line} -gt 42 ]] && last_line="${last_line:0:39}..."
+      # shellcheck disable=SC2086
+      printf '\r\033[K  %s%s [%02ds] %s%s%s' \
+        "${C_CYAN}" "${frames[$spin_idx]}" "${elapsed}" \
+        "${cmd[0]}${cmd[1]:+ ${cmd[1]}}" \
+        "${C_DIM}${last_line:+ — ${last_line}}" "${C_RESET}" >&"${fd}"
+      spin_idx=$(( (spin_idx + 1) % ${#frames[@]} ))
+      sleep 0.25 2>/dev/null || sleep 1
+    done
+    # shellcheck disable=SC2086
+    printf '\r\033[K' >&"${fd}"
+  fi
+  wait "${cmd_pid}"
   rc=$?
   set -e
 
