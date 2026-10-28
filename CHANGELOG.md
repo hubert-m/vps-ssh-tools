@@ -30,6 +30,10 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Logi: pełny capture stdout/stderr sesji, `CMD_END`, `hm_run`, `CONFIRM`
 - Fix: crash `local` poza funkcją w `bin/hmtools` (oneshot + REPL)
 - Fix: unbound `$1` przy `use` / `mysql dump` / `cron user` bez argumentu (`set -u`)
+- `backup list [domena|full]` — snapshoty + manifest z Drive
+- `backup restore` — odtwarzanie `files.tar.gz` / `files.chunks` + baz (+ vhost/chown/ols)
+- `backup prune [--days N] [--dry-run] [--yes]` + `BACKUP_KEEP_DAYS` / `BACKUP_KEEP_MIN`
+- `backup schedule [enable|disable|status]` → `/etc/cron.d/hmtools-backup`
 
 ---
 

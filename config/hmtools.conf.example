@@ -31,6 +31,16 @@ BACKUP_EXCLUDES="cache node_modules .git *.log tmp temp wp-content/cache wp-cont
 # Etykieta hosta w manifestach JSON (domyślnie: hostname -f)
 # BACKUP_HOST_LABEL=""
 
+# Retencja kopii na Google Drive (backup prune)
+# Usuwaj snapshoty starsze niż N dni (zawsze zostaw BACKUP_KEEP_MIN najnowszych na katalog)
+BACKUP_KEEP_DAYS=14
+BACKUP_KEEP_MIN=3
+
+# Harmonogram (backup schedule enable) → /etc/cron.d/hmtools-backup
+# Godzina codziennego backup full (0–23); prune godzinę później gdy =1
+BACKUP_SCHEDULE_HOUR=3
+BACKUP_SCHEDULE_PRUNE=1
+
 # --- Logi pracy hmtools ---
 # 1 = włączone, 0 = wyłączone
 LOG_ENABLED=1

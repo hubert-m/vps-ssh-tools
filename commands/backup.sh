@@ -22,6 +22,7 @@ cmd_backup() {
       hm_load_config
       echo "${C_BOLD}Backup — Google Drive${C_RESET}"
       echo "  RCLONE_REMOTE : ${RCLONE_REMOTE:-brak}"
+      echo "  BACKUP_KEEP_DAYS=${BACKUP_KEEP_DAYS:-14}  BACKUP_KEEP_MIN=${BACKUP_KEEP_MIN:-3}"
       echo "  Struktura:"
       echo "    ${RCLONE_REMOTE}/full/<stamp>/     — pełne kopie"
       echo "    ${RCLONE_REMOTE}/<domena>/<stamp>/ — kopie stron"
@@ -31,6 +32,18 @@ cmd_backup() {
         hm_info "Zawartość root:"
         rclone lsd "${RCLONE_REMOTE}" 2>/dev/null | sed 's/^/  /' || hm_warn "Brak listingu (sprawdź połączenie)."
       fi
+      ;;
+    list|ls)
+      hm_backup_list "${1:-}"
+      ;;
+    restore)
+      hm_backup_restore "$@"
+      ;;
+    prune|cleanup|rotate)
+      hm_backup_prune "$@"
+      ;;
+    schedule|cron)
+      hm_backup_schedule "${1:-status}"
       ;;
     full|server)
       hm_load_config

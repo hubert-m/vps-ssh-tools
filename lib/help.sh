@@ -67,6 +67,13 @@ Użycie:
   backup show               Pokaż aktualny root i strukturę
   backup full               Pełna kopia serwera → Drive/full/<stamp>/
   backup site <domena>      Kopia strony → Drive/<domena>/<stamp>/
+  backup list [domena|full] Snapshoty + manifest (w kontekście: bieżąca domena)
+  backup restore <domena> [stamp] [--files-only|--db-only]
+                            Odtwórz pliki (tar lub chunks) + bazy; bez stamp = najnowszy
+  backup prune [--days N] [--dry-run] [--yes]
+                            Usuń stare snapshoty (BACKUP_KEEP_DAYS / BACKUP_KEEP_MIN)
+  backup schedule [enable|disable|status]
+                            Cron: /etc/cron.d/hmtools-backup + log backup-cron.log
   backup test               Test połączenia rclone
 
 Struktura na Google Drive (root = RCLONE_REMOTE):

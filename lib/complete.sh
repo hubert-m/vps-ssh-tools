@@ -132,7 +132,7 @@ hm_tab_complete() {
   local -a matches=()
   local m
   local re_empty='^[[:space:]]*$'
-  local re_backup_site='backup[[:space:]]+site[[:space:]]'
+  local re_backup_site='backup[[:space:]]+(site|restore|list)[[:space:]]'
   local re_cron_site='cron[[:space:]]+(site|edit)[[:space:]]'
   local re_pm2_site='(pm2|node|apps)[[:space:]]+site[[:space:]]'
 
@@ -162,8 +162,11 @@ hm_tab_complete() {
           while IFS= read -r m; do
             [[ -n "${m}" ]] && matches+=("${m}")
           done < <(hm_complete_filter_sites "${partial}")
+          for m in full; do
+            [[ "${prefix}" == *list* && "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
         else
-          for m in setup config path root show status full site test help; do
+          for m in setup config path root show status full site list restore prune schedule test help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi
