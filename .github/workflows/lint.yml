@@ -1,12 +1,14 @@
 name: lint
 
+# Wyłączone: brak automatycznych uruchomień przy push / PR.
+# Włączenie: dodaj push/pull_request pod on: i usuń „if: false” z joba.
 on:
-  # push:
-  # pull_request:
+  workflow_dispatch:
 
 jobs:
   bash:
     name: bash -n + shellcheck
+    if: false
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

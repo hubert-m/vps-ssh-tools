@@ -237,6 +237,208 @@ cmd_site_clean() {
   hm_ok "Czyszczenie zakończone."
 }
 
+hm_ols_web_group() {
+  # grupa procesu lshttpd (CyberPanel/OLS: zwykle nogroup lub nobody)
+  local g
+  g="$(ps -o group= -C lshttpd 2>/dev/null | head -1 | tr -d ' ')"
+  if [[ -z "${g}" ]]; then
+    g="$(ps -o group= -C openlitespeed 2>/dev/null | head -1 | tr -d ' ')"
+  fi
+  if [[ -n "${g}" && "${g}" != "root" ]]; then
+    printf '%s' "${g}"
+    return 0
+  fi
+  if getent group nogroup >/dev/null 2>&1; then
+    echo nogroup
+    return 0
+  fi
+  if getent group nobody >/dev/null 2>&1; then
+    echo nobody
+    return 0
+  fi
+  echo nogroup
+}
+
+cmd_site_perms() {
+  local sub="${1:-check}"
+  case "${sub}" in
+    check|status|"") cmd_site_perms_check ;;
+    fix|repair) cmd_site_perms_fix ;;
+    help|-h|--help)
+      echo "Użycie: perms [check|fix]"
+      echo "  check  diagnostyka właściciela/uprawnień (OLS)"
+      echo "  fix    chown/chmod pod CyberPanel/OLS (z potwierdzeniem)"
+      ;;
+    *)
+      hm_err "Nieznane: perms ${sub}. perms help"
+      return 1
+      ;;
+  esac
+}
+
+cmd_site_perms_check() {
+  [[ -n "${HM_SITE_DOMAIN}" ]] || { hm_err "Brak kontekstu."; return 1; }
+  local root="${HM_SITE_ROOT:-}"
+  local doc="${HM_SITE_DOCROOT:-}"
+  local user="${HM_SITE_USER:-}"
+  local webgrp
+  webgrp="$(hm_ols_web_group)"
+
+  echo "${C_BOLD}Uprawnienia — ${HM_SITE_DOMAIN}${C_RESET}"
+  echo "  User strony : ${user:--}"
+  echo "  Grupa OLS   : ${webgrp}"
+  echo "  Root        : ${root:--}"
+  echo "  Docroot     : ${doc:--}"
+  echo
+
+  local issues=0
+  _hm_perms_stat_line() {
+    local path="$1" label="$2"
+    [[ -e "${path}" ]] || { echo "  ${label}: ${C_YELLOW}brak${C_RESET} (${path})"; return 0; }
+    local ow og mode
+    ow="$(stat -c '%U' "${path}" 2>/dev/null || echo '?')"
+    og="$(stat -c '%G' "${path}" 2>/dev/null || echo '?')"
+    mode="$(stat -c '%a' "${path}" 2>/dev/null || echo '?')"
+    echo "  ${label}: ${ow}:${og} mode=${mode}  ${path}"
+  }
+
+  _hm_perms_stat_line "${root}" "site root"
+  _hm_perms_stat_line "${doc}" "docroot"
+
+  if [[ -n "${doc}" && -d "${doc}" ]]; then
+    local dg
+    dg="$(stat -c '%G' "${doc}" 2>/dev/null || true)"
+    if [[ -n "${webgrp}" && "${dg}" != "${webgrp}" ]]; then
+      hm_warn "Docroot ma grupę ${dg} — OLS zwykle wymaga ${webgrp} (ryzyko 403)."
+      issues=$((issues + 1))
+    fi
+    local dm
+    dm="$(stat -c '%a' "${doc}" 2>/dev/null || true)"
+    if [[ "${dm}" == "755" || "${dm}" == "775" || "${dm}" == "777" ]]; then
+      hm_warn "Docroot mode=${dm} (zalecane 750 dla OLS)."
+      issues=$((issues + 1))
+    fi
+  fi
+
+  if [[ -n "${user}" && -n "${doc}" && -d "${doc}" ]]; then
+    local root_owned
+    root_owned="$(find -P "${doc}" -xdev \( -user root -o -group root \) 2>/dev/null | head -20)"
+    if [[ -n "${root_owned}" ]]; then
+      hm_warn "Pliki/katalogi należące do root w docroot (max 20):"
+      printf '%s\n' "${root_owned}" | sed 's/^/    /'
+      local cnt
+      cnt="$(find -P "${doc}" -xdev \( -user root -o -group root \) 2>/dev/null | wc -l | tr -d ' ')"
+      echo "    … łącznie ≈ ${cnt}"
+      issues=$((issues + 1))
+    fi
+    local wide
+    wide="$(find -P "${doc}" -xdev -perm -0002 2>/dev/null | head -15)"
+    if [[ -n "${wide}" ]]; then
+      hm_warn "Zbyt otwarte (world-writable) — max 15:"
+      printf '%s\n' "${wide}" | sed 's/^/    /'
+      issues=$((issues + 1))
+    fi
+  fi
+
+  local sens
+  for sens in "${doc}/wp-config.php" "${doc}/.env" "${root}/.env" "${root}/wp-config.php"; do
+    [[ -f "${sens}" ]] || continue
+    local sm so
+    sm="$(stat -c '%a' "${sens}" 2>/dev/null || echo '?')"
+    so="$(stat -c '%U:%G' "${sens}" 2>/dev/null || echo '?')"
+    if [[ "${sm}" != "600" && "${sm}" != "640" ]]; then
+      hm_warn "Wrażliwy plik ${sens}: mode=${sm} owner=${so} (zalecane 600)."
+      issues=$((issues + 1))
+    else
+      echo "  OK wrażliwy: ${sens} mode=${sm} ${so}"
+    fi
+  done
+
+  if [[ "${issues}" -eq 0 ]]; then
+    hm_ok "Brak oczywistych problemów z uprawnieniami."
+  else
+    hm_warn "Znaleziono ${issues} obszar(ów) do poprawy — rozważ: perms fix"
+  fi
+}
+
+cmd_site_perms_fix() {
+  [[ -n "${HM_SITE_DOMAIN}" ]] || { hm_err "Brak kontekstu."; return 1; }
+  local root="${HM_SITE_ROOT:-}"
+  local doc="${HM_SITE_DOCROOT:-}"
+  local user="${HM_SITE_USER:-}"
+  local webgrp
+  webgrp="$(hm_ols_web_group)"
+
+  [[ -n "${user}" ]] || { hm_err "Brak HM_SITE_USER — nie mogę ustawić właściciela."; return 1; }
+  hm_is_valid_unix_user "${user}" || { hm_err "Nieprawidłowy user: ${user}"; return 1; }
+  [[ -n "${doc}" && -d "${doc}" ]] || { hm_err "Brak docroot."; return 1; }
+
+  # bezpieczeństwo: docroot musi być pod /home lub site root
+  local real_doc real_root
+  real_doc="$(realpath -m "${doc}" 2>/dev/null || echo "${doc}")"
+  real_root="$(realpath -m "${root:-/home/${HM_SITE_DOMAIN}}" 2>/dev/null || echo "${root}")"
+  case "${real_doc}" in
+    /home/*) ;;
+    *)
+      if [[ -n "${real_root}" && "${real_doc}" != "${real_root}" && "${real_doc}" != "${real_root}"/* ]]; then
+        hm_err "Docroot poza /home — odmawiam automatycznego perms fix."
+        return 1
+      fi
+      ;;
+  esac
+
+  echo "${C_BOLD}perms fix — plan${C_RESET}"
+  echo "  1) chown -R ${user}:${user}  zawartość ${doc}"
+  echo "  2) chown ${user}:${webgrp} ${doc} && chmod 750 ${doc}"
+  echo "  3) find: katalogi 755, pliki 644"
+  echo "  4) chmod 600: .env / wp-config.php (jeśli są)"
+  if [[ -n "${root}" && -d "${root}" && "${root}" != "${doc}" ]]; then
+    echo "  (+ opcjonalnie root strony ${root} → ${user}:${user})"
+  fi
+  hm_warn "Operacja masowa na plikach — zrób backup przy wątpliwościach."
+
+  if ! hm_confirm "Naprawić uprawnienia dla ${HM_SITE_DOMAIN}"; then
+    hm_info "Anulowano."
+    return 0
+  fi
+
+  # zawartość docroot
+  find -P "${doc}" -xdev -mindepth 1 -maxdepth 1 -print0 2>/dev/null \
+    | while IFS= read -r -d '' ent; do
+        [[ -L "${ent}" ]] && continue
+        chown -R "${user}:${user}" -- "${ent}" 2>/dev/null || true
+      done
+
+  chown "${user}:${webgrp}" -- "${doc}" 2>/dev/null || chown "${user}:${user}" -- "${doc}"
+  chmod 750 -- "${doc}" 2>/dev/null || true
+
+  find -P "${doc}" -xdev -type d -exec chmod 755 {} + 2>/dev/null || true
+  find -P "${doc}" -xdev -type f -exec chmod 644 {} + 2>/dev/null || true
+
+  local sens
+  for sens in "${doc}/wp-config.php" "${doc}/.env" "${root}/.env" "${root}/wp-config.php"; do
+    [[ -f "${sens}" ]] || continue
+    chown "${user}:${user}" -- "${sens}" 2>/dev/null || true
+    chmod 600 -- "${sens}" 2>/dev/null || true
+  done
+
+  if [[ -n "${root}" && -d "${root}" && "${root}" != "${doc}" ]]; then
+    # nie ruszaj całego /home/domena agresywnie — tylko jeśli user jest właścicielem katalogu
+    local ru
+    ru="$(stat -c '%U' "${root}" 2>/dev/null || true)"
+    if [[ "${ru}" == "root" || "${ru}" == "${user}" ]]; then
+      chown "${user}:${user}" -- "${root}" 2>/dev/null || true
+    fi
+  fi
+
+  # przywróć 750 na samym docroot (find 755 nadpisał)
+  chmod 750 -- "${doc}" 2>/dev/null || true
+  chown "${user}:${webgrp}" -- "${doc}" 2>/dev/null || true
+
+  hm_ok "perms fix zakończony."
+  cmd_site_perms_check
+}
+
 cmd_site_help() {
   cat <<'EOF'
 Komendy w kontekście strony:
@@ -248,11 +450,12 @@ Komendy w kontekście strony:
   php       PHP strony; set/ext/ini/restart/ps — php help
   logs [N]  Ostatnie N linii logów (domyślnie 40)
   cron      Crony użytkownika strony (+ heurystyka w /etc)
-  pm2       Procesy PM2/Node powiązane ze stroną + porty proxy
+  pm2       Procesy PM2/Node + restart/reload/logs (jako user strony)
   backup    Pełna kopia (pliki + DB) → Google Drive
   clean [--lscache]  Podgląd cache/tmp (+ LSCache) → potwierdzenie
   htaccess [enable]  Diagnostyka .htaccess / autoLoadHtaccess
   proxy [set-port N] Reverse proxy OLS — zdrowie portów / zmiana portu
+  perms [check|fix] Uprawnienia plików pod OLS / CyberPanel
   help [cmd] Pomoc (lista lub help <polecenie>)
   exit      Wyjście z kontekstu strony
 EOF

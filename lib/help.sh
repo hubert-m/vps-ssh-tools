@@ -151,10 +151,26 @@ EOF
     mysql)
       cat <<'EOF'
 Użycie:
-  mysql | dbs           Lista baz (globalnie lub w kontekście — powiązane ze stroną)
-  mysql dump <nazwa_db> Zrzut jednej bazy streamem na Google Drive
+  mysql | dbs                 Lista baz (globalnie / w kontekście strony)
+  mysql dump <db>             Zrzut → Google Drive
+  mysql dump <db> --local [p] Lokalny .sql.gz (domyślnie ~/backups/)
+  mysql dump-local [db] [p]   Alias lokalnego dumpa
+  mysql import <db> <plik>    Import .sql / .sql.gz (z potwierdzeniem)
+  mysql cli [db]              Interaktywna konsola (dbs cli w kontekście)
+  mysql top | processlist     Threads / Slow_queries / PROCESSLIST
+  mysql optimize [db]         mysqlcheck --optimize + Data_free
+  mysql create <db> [user]    Nowa baza + user@localhost + hasło
 
-Status powiązania DB: confirmed (panel) / detected (wp-config, .env) / prefix-match.
+W kontekście bez [db] — pierwsza wykryta baza strony.
+EOF
+      ;;
+    perms)
+      cat <<'EOF'
+Użycie (kontekst strony): perms [check|fix]
+
+check  właściciel/grupa docroot, pliki root, 777, wp-config/.env
+fix    chown user:user wewnątrz public_html; docroot user:nogroup 750;
+       katalogi 755 / pliki 644; wrażliwe 600 (z potwierdzeniem)
 EOF
       ;;
     php)
@@ -238,19 +254,17 @@ EOF
     pm2)
       cat <<'EOF'
 Użycie:
-  pm2 | node | apps         Lista procesów PM2 + porty + mapa proxy OLS
-  pm2 all                   Wszystkie procesy PM2 (bez filtra kontekstu)
-  pm2 proxy                 Same mapowania extprocessor proxy → port
-  pm2 site <domena>         Procesy powiązane ze stroną
-  pm2 ports                 Nasłuchujące porty (node/pm2/next)
-  pm2 raw                   Surowy output: pm2 list
+  pm2 | node | apps              Lista + porty + mapa proxy OLS
+  pm2 all                        Wszystkie procesy (bez filtra kontekstu)
+  pm2 proxy | site | ports | raw Jak wcześniej
+  pm2 restart|reload|stop|start <nazwa|id|all>
+  pm2 logs [nazwa] [N]           Ostatnie linie (--nostream)
+  pm2 save                       Zapisz listę procesów
 
-W kontekście strony filtruje po:
-  - cwd procesu pod site root
-  - nazwie PM2 zawierającej domenę
-  - porcie zgodnym z proxy w vhost OLS
+Akcje uruchamiane jako właściciel PM2_HOME (runuser/sudo -u),
+nie jako root z binarką z NVM użytkownika.
 
-Wykrywa też stack z package.json (next, react, nuxt, vite, …).
+W kontekście strony: filtr listy + PM2_HOME użytkownika strony.
 EOF
       ;;
     version)

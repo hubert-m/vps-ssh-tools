@@ -37,7 +37,7 @@
 - Fix: `hm_ssl_paths_for_domain` — certFile + `$VH_ROOT`/`$SERVER_ROOT`
 - Fix: `renew-ssl` poza `use` — webroot z `hm_resolve_site_paths`
 - Fix: Tab w kontekście strony podpowiada info/size/logs/clean/back
-- CI: job lint tymczasowo wyłączony (`if: false`), workflow zostaje w repo
+- CI: lint — tylko `workflow_dispatch` + `if: false` (zero uruchomień przy push/PR)
 - Security: walidacja nazw DB / domen przed SQL i mysqldump
 - Security: walidacja RCLONE_REMOTE przed zapisem do hmtools.conf
 - Security: pm2 tylko systemowy bin + runuser na właścicielu PM2_HOME
@@ -51,3 +51,6 @@
 - ols cache status|flush + clean --lscache
 - ols proxy / proxy set-port — zdrowie backendów reverse proxy
 - ols admin status|pass — port WebAdmin, tunel SSH, admpass.sh
+- mysql: dump --local / dump-local, import, cli, top, optimize, create
+- pm2: restart/reload/stop/start/logs/save jako właściciel PM2_HOME
+- perms [check|fix] — uprawnienia OLS/CyberPanel (docroot nogroup 750)

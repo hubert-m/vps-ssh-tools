@@ -52,7 +52,7 @@ hm_tab_complete() {
         while IFS= read -r m; do
           [[ -n "${m}" ]] && matches+=("${m}")
         done < <(hm_complete_commands "${partial}")
-        for m in info size logs clean htaccess proxy; do
+        for m in info size logs clean htaccess proxy perms; do
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
         done
         ;;
@@ -143,7 +143,19 @@ hm_tab_complete() {
         done < <(hm_complete_filter_sites "${partial}")
         ;;
       mysql|dbs|db)
-        for m in list ls dump help; do
+        local re_mysql_dump='(mysql|dbs|db)[[:space:]]+dump[[:space:]]'
+        if [[ "${prefix}" =~ $re_mysql_dump ]]; then
+          for m in --local help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in list ls dump dump-local import cli top processlist optimize create help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
+      perms|perm)
+        for m in check fix help; do
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
         done
         ;;
@@ -166,7 +178,7 @@ hm_tab_complete() {
             [[ -n "${m}" ]] && matches+=("${m}")
           done < <(hm_complete_filter_sites "${partial}")
         else
-          for m in list ls status all proxy site ports raw help; do
+          for m in list ls status all proxy site ports raw restart reload stop start logs save help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi

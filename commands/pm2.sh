@@ -546,6 +546,15 @@ cmd_pm2() {
         "$(hm_pm2_bin_system)" list
       fi
       ;;
+    restart|reload|stop|start|delete|del)
+      hm_pm2_ctl "${sub}" "$@"
+      ;;
+    logs|log)
+      hm_pm2_logs "$@"
+      ;;
+    save)
+      hm_pm2_ctl save
+      ;;
     help|-h|--help)
       hm_help_topic pm2
       ;;
@@ -554,6 +563,110 @@ cmd_pm2() {
       return 1
       ;;
   esac
+}
+
+hm_pm2_is_safe_name() {
+  # nazwa procesu PM2 lub all / id numeryczne
+  local n="${1:-}"
+  [[ "${n}" == "all" ]] && return 0
+  [[ "${n}" =~ ^[0-9]+$ ]] && return 0
+  [[ "${n}" =~ ^[a-zA-Z0-9._:@-]{1,128}$ ]]
+}
+
+hm_pm2_action_home() {
+  # PM2_HOME do akcji: preferuj kontekst strony
+  local home
+  home="$(hm_pm2_home_dirs 2>/dev/null | head -1 || true)"
+  if [[ -n "${home}" ]]; then
+    printf '%s' "${home}"
+    return 0
+  fi
+  if [[ -n "${HM_SITE_USER:-}" ]]; then
+    local uh
+    uh="$(hm_pm2_unix_home "${HM_SITE_USER}" || true)"
+    if [[ -n "${uh}" ]]; then
+      mkdir -p "${uh}/.pm2" 2>/dev/null || true
+      if [[ -d "${uh}/.pm2" ]]; then
+        printf '%s' "${uh}/.pm2"
+        return 0
+      fi
+    fi
+  fi
+  return 1
+}
+
+hm_pm2_ctl() {
+  local action="$1"
+  shift || true
+  local target="${1:-}"
+  local home owner
+
+  hm_pm2_bin >/dev/null || { hm_err "Brak systemowego pm2 w PATH."; return 1; }
+  home="$(hm_pm2_action_home)" || {
+    hm_err "Brak PM2_HOME (wejdź w use <domena> lub uruchom pm2 jako użytkownik aplikacji)."
+    return 1
+  }
+
+  case "${action}" in
+    save)
+      owner="$(hm_pm2_owner_of_home "${home}")"
+      hm_info "pm2 save  (user=${owner} PM2_HOME=${home})"
+      hm_pm2_run_as_owner "${home}" save
+      return $?
+      ;;
+  esac
+
+  [[ -n "${target}" ]] || { hm_err "Użycie: pm2 ${action} <nazwa|id|all>"; return 1; }
+  hm_pm2_is_safe_name "${target}" || { hm_err "Nieprawidłowa nazwa procesu: ${target}"; return 1; }
+
+  # w kontekście strony: all = tylko procesy strony — ostrzeż
+  if [[ "${target}" == "all" && -n "${HM_SITE_DOMAIN:-}" ]]; then
+    hm_warn "all w kontekście ${HM_SITE_DOMAIN} — dotyczy procesów w PM2_HOME=${home}"
+  fi
+
+  owner="$(hm_pm2_owner_of_home "${home}")"
+  if [[ -n "${HM_SITE_USER:-}" && "${owner}" != "${HM_SITE_USER}" && "${owner}" != "root" ]]; then
+    hm_warn "Właściciel PM2_HOME (${owner}) ≠ HM_SITE_USER (${HM_SITE_USER})"
+  fi
+
+  hm_info "pm2 ${action} ${target}  (user=${owner} PM2_HOME=${home})"
+  case "${action}" in
+    delete|del) action=delete ;;
+  esac
+  hm_pm2_run_as_owner "${home}" "${action}" "${target}"
+}
+
+hm_pm2_logs() {
+  # pm2 logs [nazwa|id] [N]
+  local a1="${1:-}" a2="${2:-}" target="" lines=100
+  local home owner
+  hm_pm2_bin >/dev/null || { hm_err "Brak systemowego pm2."; return 1; }
+  home="$(hm_pm2_action_home)" || { hm_err "Brak PM2_HOME."; return 1; }
+
+  if [[ -n "${a1}" && -n "${a2}" ]]; then
+    target="${a1}"
+    lines="${a2}"
+  elif [[ -n "${a1}" ]]; then
+    if [[ "${a1}" =~ ^[0-9]+$ ]]; then
+      # sam numer → linie (nie id procesu); id wymaga nazwy lub: pm2 logs <id> <N>
+      lines="${a1}"
+    else
+      target="${a1}"
+    fi
+  fi
+  if [[ -n "${target}" ]] && ! hm_pm2_is_safe_name "${target}"; then
+    hm_err "Nieprawidłowa nazwa: ${target}"
+    return 1
+  fi
+  [[ "${lines}" =~ ^[0-9]+$ ]] || lines=100
+
+  owner="$(hm_pm2_owner_of_home "${home}")"
+  hm_info "pm2 logs ${target:-(wszystkie)} --lines ${lines}  (user=${owner})"
+  if [[ -n "${target}" ]]; then
+    hm_pm2_run_as_owner "${home}" logs "${target}" --lines "${lines}" --nostream
+  else
+    hm_pm2_run_as_owner "${home}" logs --lines "${lines}" --nostream
+  fi
 }
 
 cmd_node() { cmd_pm2 "$@"; }

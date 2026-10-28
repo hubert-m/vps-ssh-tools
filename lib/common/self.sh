@@ -28,7 +28,7 @@ Komendy globalne:
   exit / quit        Wyjście z hmtools
 
 W kontekście strony (po 'use'):
-  info, size, dbs, ssl, renew-ssl, php, logs, cron, pm2, backup, clean, htaccess, proxy, exit
+  info, size, dbs, ssl, renew-ssl, php, logs, cron, pm2, backup, clean, htaccess, proxy, perms, exit
 
 Szczegóły: help <polecenie>
 EOF

@@ -102,6 +102,7 @@ hm_dispatch() {
       clean)  cmd_site_clean "$@"; return ;;
       htaccess|hta) cmd_site_htaccess "$@"; return ;;
       proxy) cmd_site_proxy "$@"; return ;;
+      perms|perm) cmd_site_perms "$@"; return ;;
       cron|crons) cmd_cron "$@"; return ;;
       pm2|node|apps) cmd_pm2 "$@"; return ;;
       help|?) hm_cmd_help "$@"; return ;;

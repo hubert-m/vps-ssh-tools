@@ -28,13 +28,6 @@ hm_backup_stamp() {
   date +%Y%m%d-%H%M%S
 }
 
-hm_mysql_db_exists() {
-  local dbname="$1"
-  local n
-  n="$(hm_mysql_exec -e "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=$(hm_sql_quote "${dbname}");" 2>/dev/null | tr -d '[:space:]')"
-  [[ "${n}" == "1" ]]
-}
-
 hm_stream_mysqldump() {
   local dbname="$1"
   local dest="$2"
