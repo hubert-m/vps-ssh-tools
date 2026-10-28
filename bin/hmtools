@@ -29,6 +29,8 @@ source "${HMTOOLS_ROOT}/lib/db.sh"
 # shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/sites.sh"
 # shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/ols.sh"
+# shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/rclone_drive.sh"
 # shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/backup.sh"
@@ -97,7 +99,9 @@ hm_dispatch() {
         fi
         return
         ;;
-      clean)  cmd_site_clean; return ;;
+      clean)  cmd_site_clean "$@"; return ;;
+      htaccess|hta) cmd_site_htaccess "$@"; return ;;
+      proxy) cmd_site_proxy "$@"; return ;;
       cron|crons) cmd_cron "$@"; return ;;
       pm2|node|apps) cmd_pm2 "$@"; return ;;
       help|?) hm_cmd_help "$@"; return ;;

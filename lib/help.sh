@@ -93,13 +93,46 @@ EOF
       ;;
     ols)
       cat <<'EOF'
-Użycie: ols [status|reload|restart|log]
+Użycie: ols [status|reload|restart|log|stats|top|htaccess|cache|proxy|admin]
 
 Zarządzanie OpenLiteSpeed:
-  status    Stan / wersja / proces (domyślne)
-  reload    Przeładowanie konfiguracji
-  restart   Restart (z potwierdzeniem)
-  log [N]   Ostatnie N linii error.log (domyślnie 50)
+  status              Stan / wersja / proces (domyślne)
+  reload              Przeładowanie konfiguracji
+  restart             Restart (z potwierdzeniem)
+  log [N]             Ostatnie N linii error.log (domyślnie 50)
+  stats | top         Live /tmp/lshttpd/.rtreport* (RPS, vhosty, WAITQUE LSAPI)
+  htaccess [enable]   .htaccess / autoLoadHtaccess (+ reload)
+  cache status|flush  LSCache (vhost / global all)
+  proxy [set-port N]  Zdrowie backendów reverse proxy (503)
+  admin [status|pass] WebAdmin (port, tunel SSH, admpass.sh)
+
+W kontekście strony: htaccess, proxy, clean --lscache
+EOF
+      ;;
+    htaccess)
+      cat <<'EOF'
+Użycie (kontekst strony): htaccess [enable]
+       ols htaccess [check|enable] [domena]
+
+Sprawdza .htaccess, autoLoadHtaccess, rewrite enable oraz mtime vs start OLS.
+htaccess enable — dopisuje dyrektywy i robi ols reload.
+EOF
+      ;;
+    proxy)
+      cat <<'EOF'
+Użycie (kontekst strony): proxy [status|set-port <port> [nazwa]]
+       ols proxy [status] [domena]
+       ols proxy set-port <port> [nazwa]
+
+Weryfikuje extprocessor type proxy (ss + curl). Martwy port → ryzyko 503.
+EOF
+      ;;
+    cache|lscache)
+      cat <<'EOF'
+Użycie: ols cache [status|flush [domena|all]]
+        clean --lscache   (w kontekście strony)
+
+Status module cache + katalogi lscache; flush czyści zawartość (z potwierdzeniem).
 EOF
       ;;
     ssl|renew-ssl|ssl-renew)
@@ -292,11 +325,13 @@ EOF
       ;;
     clean)
       cat <<'EOF'
-Użycie: clean   (w kontekście strony)
+Użycie: clean [--lscache]   (w kontekście strony)
 
 1) Pokazuje podgląd: ścieżki, rozmiary, liczbę wpisów, próbkę zawartości
 2) Pyta o potwierdzenie [yes/no]
-3) Usuwa tylko zawartość typowych cache/tmp (foldery zostają)
+3) Usuwa tylko zawartość typowych cache/tmp (+ LSCache) — foldery zostają
+
+--lscache  tylko katalogi LSCache (jak ols cache flush)
 
 Nie rusza m.in. uploads, mediów ani całego node_modules.
 EOF

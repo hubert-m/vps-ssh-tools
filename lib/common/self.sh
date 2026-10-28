@@ -11,7 +11,7 @@ Komendy globalne:
   backup full|site   Kopia → Drive; list / restore / prune / schedule
   applog [N]         Ostatnie N linii logu hmtools (domyślnie 50)
   disk               Zużycie dysku
-  ols [status|reload|restart|log]
+  ols […]            OLS: status/reload/stats/htaccess/cache/proxy/admin
   ssl                Certyfikaty SSL stron (status / dni)
   renew-ssl [domena] Odnów Let's Encrypt (z potwierdzeniem)
   mysql / dbs        Bazy danych (globalnie)
@@ -28,7 +28,7 @@ Komendy globalne:
   exit / quit        Wyjście z hmtools
 
 W kontekście strony (po 'use'):
-  info, size, dbs, ssl, renew-ssl, php, logs, cron, pm2, backup, clean, exit
+  info, size, dbs, ssl, renew-ssl, php, logs, cron, pm2, backup, clean, htaccess, proxy, exit
 
 Szczegóły: help <polecenie>
 EOF

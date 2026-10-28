@@ -52,7 +52,22 @@ hm_tab_complete() {
         while IFS= read -r m; do
           [[ -n "${m}" ]] && matches+=("${m}")
         done < <(hm_complete_commands "${partial}")
-        for m in info size logs clean; do
+        for m in info size logs clean htaccess proxy; do
+          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+        done
+        ;;
+      htaccess|hta)
+        for m in check enable help; do
+          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+        done
+        ;;
+      proxy)
+        for m in status set-port help; do
+          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+        done
+        ;;
+      clean)
+        for m in --lscache help; do
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
         done
         ;;
@@ -78,9 +93,35 @@ hm_tab_complete() {
         fi
         ;;
       ols|lsws)
-        for m in status reload restart log logs error help; do
-          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
-        done
+        local re_ols_sub='(ols|lsws)[[:space:]]+(htaccess|hta|cache|lscache|proxy|admin|webadmin)[[:space:]]'
+        if [[ "${prefix}" =~ $re_ols_sub ]]; then
+          case "${BASH_REMATCH[2]}" in
+            htaccess|hta)
+              for m in check enable help; do
+                [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+              done
+              ;;
+            cache|lscache)
+              for m in status flush all help; do
+                [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+              done
+              ;;
+            proxy)
+              for m in status set-port help; do
+                [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+              done
+              ;;
+            admin|webadmin)
+              for m in status pass help; do
+                [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+              done
+              ;;
+          esac
+        else
+          for m in status reload restart log logs error stats top htaccess cache proxy admin help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
         ;;
       ssl)
         local re_ssl_renew='ssl[[:space:]]+(renew|renewal|issue)[[:space:]]'

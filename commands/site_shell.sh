@@ -116,6 +116,24 @@ cmd_site_clean() {
   [[ -n "${HM_SITE_DOMAIN}" ]] || { hm_err "Brak kontekstu."; return 1; }
   local doc="${HM_SITE_DOCROOT}"
   local root="${HM_SITE_ROOT:-}"
+  local lscache_only=0
+  local arg
+  for arg in "$@"; do
+    case "${arg}" in
+      --lscache|lscache|--cache) lscache_only=1 ;;
+      help|-h|--help)
+        echo "Użycie: clean [--lscache]"
+        echo "  --lscache  tylko katalogi LSCache (jak ols cache flush)"
+        return 0
+        ;;
+    esac
+  done
+
+  if [[ "${lscache_only}" -eq 1 ]]; then
+    hm_ols_cache_flush "${HM_SITE_DOMAIN}"
+    return $?
+  fi
+
   [[ -n "${doc}" && -d "${doc}" ]] || { hm_err "Brak docroot."; return 1; }
 
   # tylko typowe cache/tmp — NIE ruszamy uploads/media/node_modules
@@ -136,12 +154,18 @@ cmd_site_clean() {
     candidates+=(
       "${root}/cache"
       "${root}/tmp"
+      "${root}/lscache"
       "${root}/.next/cache"
       "${root}/node_modules/.cache"
       "${root}/storage/framework/cache"
       "${root}/storage/framework/views"
     )
   fi
+  # LSCache vhost / OLS
+  local p
+  while IFS= read -r p; do
+    [[ -n "${p}" ]] && candidates+=("${p}")
+  done < <(hm_ols_cache_paths_for_domain "${HM_SITE_DOMAIN}" "${root}" 2>/dev/null || true)
 
   local -a targets=()
   local c real_c real_root
@@ -226,7 +250,9 @@ Komendy w kontekście strony:
   cron      Crony użytkownika strony (+ heurystyka w /etc)
   pm2       Procesy PM2/Node powiązane ze stroną + porty proxy
   backup    Pełna kopia (pliki + DB) → Google Drive
-  clean     Podgląd cache/tmp → potwierdzenie yes/no → czyszczenie
+  clean [--lscache]  Podgląd cache/tmp (+ LSCache) → potwierdzenie
+  htaccess [enable]  Diagnostyka .htaccess / autoLoadHtaccess
+  proxy [set-port N] Reverse proxy OLS — zdrowie portów / zmiana portu
   help [cmd] Pomoc (lista lub help <polecenie>)
   exit      Wyjście z kontekstu strony
 EOF

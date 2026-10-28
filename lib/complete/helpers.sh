@@ -84,7 +84,7 @@ hm_complete_commands() {
   )
   # w kontekście strony — komendy lokalne (info/size/…)
   if [[ -n "${HM_SITE_DOMAIN:-}" ]]; then
-    cmds+=(info size logs clean back dbs renew-ssl)
+    cmds+=(info size logs clean htaccess proxy back dbs renew-ssl)
   fi
   local c
   for c in "${cmds[@]}"; do

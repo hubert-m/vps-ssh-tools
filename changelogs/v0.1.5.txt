@@ -46,3 +46,8 @@
 - Fix: tar kod 1 (file changed) nie przerywa backup site/full; stderr widoczny
 - Fix: mysqldump → lokalny tmp, potem upload (bez pustych .sql.gz na Drive)
 - Fix: brak duplikatu /etc/crontab w backup system configs
+- ols stats/top — live .rtreport (RPS, vhosty, WAITQUE LSAPI)
+- ols htaccess / htaccess enable — autoLoadHtaccess + mtime vs OLS
+- ols cache status|flush + clean --lscache
+- ols proxy / proxy set-port — zdrowie backendów reverse proxy
+- ols admin status|pass — port WebAdmin, tunel SSH, admpass.sh
