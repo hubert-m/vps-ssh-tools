@@ -78,7 +78,7 @@ hm_complete_commands() {
     webs sites list use enter cd
     backup disk df ols lsws ssl renew-ssl ssl-renew mysql dbs db cron crons pm2 node apps php
     update-php php-update
-    health status applog selflog hmlog detect env
+    health status security sec applog selflog hmlog detect env
     update-hmtools version ver uninstall-hmtools
     help h exit quit q
   )

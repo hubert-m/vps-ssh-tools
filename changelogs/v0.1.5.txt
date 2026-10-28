@@ -54,3 +54,6 @@
 - mysql: dump --local / dump-local, import, cli, top, optimize, create
 - pm2: restart/reload/stop/start/logs/save jako właściciel PM2_HOME
 - perms [check|fix] — uprawnienia OLS/CyberPanel (docroot nogroup 750)
+- logs: stderr.log OLS, errors, stats/top (HTTP/IP/URL), follow
+- security: ports, status, ssh, fail2ban/ban/unban, scan docroot
+- health: skrócone ostrzeżenia o publicznych portach wrażliwych

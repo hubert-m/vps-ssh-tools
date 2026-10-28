@@ -55,6 +55,8 @@ source "${HMTOOLS_ROOT}/commands/health.sh"
 source "${HMTOOLS_ROOT}/commands/cron.sh"
 # shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/commands/pm2.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/commands/security.sh"
 
 hm_require_root
 hm_load_config
@@ -127,6 +129,7 @@ hm_dispatch() {
     php)             cmd_php "$@" ;;
     update-php|php-update) cmd_update_php "$@" ;;
     health|status)   cmd_health "$@" ;;
+    security|sec)    cmd_security "$@" ;;
     applog|selflog|hmlog) cmd_applog "$@" ;;
     cron|crons)      cmd_cron "$@" ;;
     pm2|node|apps)   cmd_pm2 "$@" ;;

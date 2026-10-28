@@ -78,8 +78,36 @@ cmd_site_php() {
 }
 
 cmd_site_logs() {
-  local n="${1:-40}"
-  hm_print_site_logs "${HM_SITE_DOMAIN}" "${n}"
+  [[ -n "${HM_SITE_DOMAIN}" ]] || { hm_err "Brak kontekstu."; return 1; }
+  local sub="${1:-}"
+  case "${sub}" in
+    errors|error|err)
+      shift || true
+      local n="${1:-80}"
+      [[ "${n}" =~ ^[0-9]+$ ]] || n=80
+      hm_site_logs_errors "${HM_SITE_DOMAIN}" "${n}"
+      ;;
+    stats|stat|top)
+      hm_site_logs_stats "${HM_SITE_DOMAIN}"
+      ;;
+    follow|live|tail|-f)
+      hm_site_logs_follow "${HM_SITE_DOMAIN}"
+      ;;
+    help|-h|--help)
+      echo "Użycie: logs [N] | errors [N] | stats|top | follow|live"
+      ;;
+    "")
+      hm_print_site_logs "${HM_SITE_DOMAIN}" 40
+      ;;
+    *)
+      if [[ "${sub}" =~ ^[0-9]+$ ]]; then
+        hm_print_site_logs "${HM_SITE_DOMAIN}" "${sub}"
+      else
+        hm_err "Nieznane: logs ${sub}. logs help"
+        return 1
+      fi
+      ;;
+  esac
 }
 
 cmd_site_backup() {
@@ -448,7 +476,7 @@ Komendy w kontekście strony:
   ssl       Certyfikat SSL (wygasły → czerwony alert)
   renew-ssl Odnów Let's Encrypt (z potwierdzeniem)
   php       PHP strony; set/ext/ini/restart/ps — php help
-  logs [N]  Ostatnie N linii logów (domyślnie 40)
+  logs [N|errors|stats|follow]  Logi vhosta (+ stderr OLS)
   cron      Crony użytkownika strony (+ heurystyka w /etc)
   pm2       Procesy PM2/Node + restart/reload/logs (jako user strony)
   backup    Pełna kopia (pliki + DB) → Google Drive

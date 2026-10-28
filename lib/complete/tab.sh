@@ -56,6 +56,16 @@ hm_tab_complete() {
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
         done
         ;;
+      logs|log)
+        for m in errors stats top follow live help; do
+          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+        done
+        ;;
+      security|sec)
+        for m in status ports ssh fail2ban ban unban scan help; do
+          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+        done
+        ;;
       htaccess|hta)
         for m in check enable help; do
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")

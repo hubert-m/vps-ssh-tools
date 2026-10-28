@@ -59,6 +59,28 @@ cmd_health() {
   if [[ "${found}" -eq 0 ]]; then
     hm_ok "Brak certyfikatów wygasających w ciągu 14 dni."
   fi
+
+  echo
+  # skrócony audyt portów (pełny: security ports)
+  if hm_have_cmd ss; then
+    echo "${C_BOLD}Publiczne porty wrażliwe${C_RESET} ${C_DIM}(security ports)${C_RESET}"
+    local hit=0
+    while IFS= read -r line; do
+      [[ -n "${line}" ]] || continue
+      hit=1
+      hm_warn "  ${line}"
+    done < <(ss -lntup 2>/dev/null | awk '
+      NR==1 { next }
+      $4 ~ /^0\.0\.0\.0:|^\[::\]:|^\*:/ {
+        n=split($4,a,":"); port=a[n]
+        if (port ~ /^(3306|5432|6379|7080|8090|3000|3001|3002|3003)$/)
+          print $4, $NF
+      }
+    ')
+    if [[ "${hit}" -eq 0 ]]; then
+      hm_ok "Brak typowych wrażliwych portów na 0.0.0.0."
+    fi
+  fi
 }
 
 cmd_php() {

@@ -20,6 +20,7 @@ Komendy globalne:
   php                LSPHP: lista / set / ext / ini / restart / ps
   update-php <ver>   Aktualizacja pakietów LSPHP (np. update-php 8.4)
   health             Szybki przegląd zdrowia serwera
+  security […]       Audyt: porty, SSH, Fail2Ban, skan docroot
   detect             Pokaż wykryty panel / webserver
   help [polecenie]   Lista komend lub pomoc do konkretnej (np. help use)
   version            Wersja + changelog zainstalowanej wersji

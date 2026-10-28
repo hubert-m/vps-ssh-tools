@@ -18,6 +18,7 @@ hm_help_topic() {
     db|databases) topic="mysql" ;;
     dbs) topic="mysql" ;;
     status) topic="health" ;;
+    sec) topic="security" ;;
     selflog|hmlog) topic="applog" ;;
     env) topic="detect" ;;
     ver) topic="version" ;;
@@ -332,9 +333,24 @@ EOF
       ;;
     logs)
       cat <<'EOF'
-Użycie: logs [N]   (w kontekście strony)
+Użycie (kontekst strony):
+  logs [N]           Ostatnie N linii (access/error + OLS stderr.log)
+  logs errors [N]    Tylko błędy PHP/5xx/ERROR + top powtarzających się
+  logs stats|top     Kody HTTP, top IP, top URL z access.log
+  logs follow|live   tail -F (Ctrl+C wraca do hmtools)
+EOF
+      ;;
+    security|sec)
+      cat <<'EOF'
+Użycie:
+  security status          Firewall + Fail2Ban + skrót portów
+  security ports           Publiczne 0.0.0.0/[::] + alerty (3306/6379/7080/3xxx)
+  security ssh             sshd_config, authorized_keys, lastb
+  security fail2ban        Status jaili i zbanowanych IP
+  security ban|unban <IP>  Blokada / odbanowanie
+  security scan [domena]   Skan docroot (php w uploads, 777, .sql/.env/.git)
 
-Ostatnie N linii logów access/error (domyślnie 40).
+W health: skrócone ostrzeżenia o wrażliwych portach publicznych.
 EOF
       ;;
     clean)
