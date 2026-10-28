@@ -17,7 +17,7 @@ cmd_mysql() {
       fi
       ;;
     dump)
-      local db="$1"
+      local db="${1:-}"
       [[ -n "${db}" ]] || { hm_err "Użycie: mysql dump <nazwa_bazy>"; return 1; }
       hm_load_config
       hm_rclone_check || return 1

@@ -28,6 +28,8 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - `size` (kontekst strony): dodatkowy poziom — top w `public_html` / dużych katalogach
 - `backup config`: katalog root na Drive; struktura `full/` + `<domena>/`
 - Logi: pełny capture stdout/stderr sesji, `CMD_END`, `hm_run`, `CONFIRM`
+- Fix: crash `local` poza funkcją w `bin/hmtools` (oneshot + REPL)
+- Fix: unbound `$1` przy `use` / `mysql dump` / `cron user` bez argumentu (`set -u`)
 
 ---
 

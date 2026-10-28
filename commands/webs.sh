@@ -18,7 +18,7 @@ cmd_webs() {
 }
 
 cmd_use() {
-  local arg="$1"
+  local arg="${1:-}"
   if [[ -z "${arg}" ]]; then
     hm_err "Użycie: use <numer|domena>"
     return 1

@@ -211,7 +211,7 @@ hm_cron_list_site() {
 }
 
 hm_cron_edit_user() {
-  local user="$1"
+  local user="${1:-}"
   [[ -n "${user}" ]] || { hm_err "Podaj użytkownika."; return 1; }
   if ! id "${user}" >/dev/null 2>&1; then
     hm_err "Użytkownik nie istnieje: ${user}"
@@ -265,7 +265,7 @@ cmd_cron() {
       hm_cron_list_site "${domain}"
       ;;
     user)
-      local user="$1"
+      local user="${1:-}"
       [[ -n "${user}" ]] || { hm_err "Użycie: cron user <username>"; return 1; }
       hm_cron_print_user "${user}"
       ;;

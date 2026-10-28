@@ -190,8 +190,9 @@ hm_dispatch() {
 if [[ "${1:-}" == "-c" ]]; then
   shift
   hm_log_session_start "oneshot"
-  local _t0 rc
+  # bez 'local' — jesteśmy poza funkcją (set -e + local = crash)
   _t0="$(date +%s)"
+  rc=0
   set +e
   # shellcheck disable=SC2068
   hm_dispatch $@
@@ -205,8 +206,9 @@ fi
 
 if [[ $# -gt 0 ]]; then
   hm_log_session_start "oneshot"
-  local _t0 rc
+  # bez 'local' — jesteśmy poza funkcją (set -e + local = crash)
   _t0="$(date +%s)"
+  rc=0
   set +e
   hm_dispatch "$@"
   rc=$?
@@ -242,8 +244,10 @@ while true; do
 
   history -s "${line}" 2>/dev/null || true
 
-  local _t0 _dur
+  # bez 'local' — pętla REPL jest na poziomie top-level skryptu
   _t0="$(date +%s)"
+  _dur=0
+  rc=0
   set +e
   # shellcheck disable=SC2086
   hm_dispatch ${line}
