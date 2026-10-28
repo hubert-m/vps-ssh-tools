@@ -22,3 +22,7 @@
 - Refactor: `lib/sites.sh` → `lib/sites/{vhost,ssl,discover,print,php}.sh`
 - Refactor: `lib/common.sh` → `lib/common/{ui,config,context,self}.sh`
 - Refactor: `lib/complete.sh` → `lib/complete/{helpers,tab}.sh`
+- php set <ver> — przełączanie LSPHP strony (vhost / CyberPanel + reload)
+- php ext / php ext install — moduły php -m + instalacja lsphpXX-*
+- php ini / php ini set — limity php.ini + nadpisania vhost / .user.ini
+- php restart / php ps — kill workerów Detached Mode + podgląd procesów

@@ -407,7 +407,7 @@ vps-ssh-tools/
 │   ├── common/    # ui, config, context, self
 │   ├── complete/  # helpers, tab
 │   ├── backup/    # core, list, restore, prune, schedule
-│   └── sites/     # vhost, ssl, discover, print, php
+│   └── sites/     # vhost, ssl, discover, print, php, php_manage
 ├── commands/      # webs, site_shell, backup, disk, ols, ssl, mysql, health
 ├── config/hmtools.conf.example
 └── scripts/setup-rclone.sh

@@ -62,88 +62,50 @@ cmd_health() {
 }
 
 cmd_php() {
-  case "${1:-}" in
+  local sub="${1:-}"
+  case "${sub}" in
     update|upgrade)
       shift || true
       cmd_update_php "$@"
-      return
+      ;;
+    set|use-version|switch)
+      shift || true
+      hm_php_set_site "$@"
+      ;;
+    ext|modules|module|extensions)
+      shift || true
+      hm_php_ext_cmd "$@"
+      ;;
+    ini|conf)
+      shift || true
+      hm_php_ini_cmd "$@"
+      ;;
+    restart|reload-workers|kill)
+      shift || true
+      hm_php_restart "$@"
+      ;;
+    ps|proc|procs|processes)
+      shift || true
+      hm_php_ps "$@"
       ;;
     help|-h|--help)
       hm_help_topic php
-      return
+      ;;
+    "")
+      if [[ -n "${HM_SITE_DOMAIN}" ]]; then
+        cmd_site_php
+      else
+        echo "${C_BOLD}Dostępne LSPHP${C_RESET} ${C_DIM}(+ porównanie z php.net)${C_RESET}"
+        echo
+        hm_list_available_php
+      fi
+      ;;
+    *)
+      # php 8.3 → traktuj jak listing dla wersji? nie — tylko znane sub
+      hm_err "Nieznana podkomenda: ${sub}. Zobacz: php help"
+      return 1
       ;;
   esac
-  if [[ -n "${HM_SITE_DOMAIN}" ]]; then
-    cmd_site_php
-  else
-    echo "${C_BOLD}Dostępne LSPHP${C_RESET} ${C_DIM}(+ porównanie z php.net)${C_RESET}"
-    echo
-    hm_list_available_php
-  fi
-}
-
-hm_php_normalize_branch() {
-  # 8.4 | 84 | lsphp84 | PHP8.4 → 8.4
-  local raw="$1"
-  raw="$(printf '%s' "${raw}" | tr '[:upper:]' '[:lower:]')"
-  raw="${raw#php}"
-  raw="${raw#lsphp}"
-  raw="$(printf '%s' "${raw}" | tr -cd '0-9.')"
-  if [[ "${raw}" =~ ^[0-9]+\.[0-9]+$ ]]; then
-    printf '%s' "${raw}"
-    return 0
-  fi
-  if [[ "${raw}" =~ ^[0-9][0-9]$ ]]; then
-    printf '%s.%s' "${raw:0:1}" "${raw:1:1}"
-    return 0
-  fi
-  return 1
-}
-
-hm_php_lsphp_suffix() {
-  # 8.4 → 84
-  local branch="$1"
-  local maj="${branch%%.*}"
-  local min="${branch#*.}"
-  printf '%s%s' "${maj}" "${min}"
-}
-
-hm_pkg_manager() {
-  if hm_have_cmd apt-get; then
-    echo apt
-  elif hm_have_cmd dnf; then
-    echo dnf
-  elif hm_have_cmd yum; then
-    echo yum
-  else
-    return 1
-  fi
-}
-
-hm_php_installed_packages() {
-  # lista zainstalowanych pakietów lsphpXX*
-  local suffix="$1"
-  if hm_have_cmd dpkg-query; then
-    dpkg-query -W -f='${Package}\n' "lsphp${suffix}*" 2>/dev/null | grep -E "^lsphp${suffix}" || true
-    return 0
-  fi
-  if hm_have_cmd rpm; then
-    rpm -qa --qf '%{NAME}\n' "lsphp${suffix}*" 2>/dev/null | grep -E "^lsphp${suffix}" || true
-    return 0
-  fi
-  return 1
-}
-
-hm_ols_reload_soft() {
-  if [[ -n "${OLS_CTRL:-}" && -x "${OLS_CTRL}" ]]; then
-    "${OLS_CTRL}" reload 2>/dev/null && return 0
-  fi
-  if hm_have_cmd systemctl; then
-    systemctl reload lsws 2>/dev/null && return 0
-    systemctl reload lshttpd 2>/dev/null && return 0
-  fi
-  service lsws reload 2>/dev/null && return 0
-  return 1
 }
 
 cmd_update_php() {

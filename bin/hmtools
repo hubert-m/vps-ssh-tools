@@ -84,12 +84,8 @@ hm_dispatch() {
         ;;
       renew-ssl|ssl-renew) cmd_renew_ssl "${1:-${HM_SITE_DOMAIN}}"; return ;;
       php)
-        if [[ "${1:-}" == "update" || "${1:-}" == "upgrade" ]]; then
-          shift || true
-          cmd_update_php "$@"
-          return
-        fi
-        cmd_site_php
+        # pełny dispatcher (set / ext / ini / restart / update / …)
+        cmd_php "$@"
         return
         ;;
       logs|log) cmd_site_logs "$@"; return ;;

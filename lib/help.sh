@@ -127,10 +127,17 @@ EOF
     php)
       cat <<'EOF'
 Użycie:
-  php                 Lista LSPHP + porównanie z php.net
-  php update <ver>    Alias: update-php <ver>
+  php                      Lista LSPHP + porównanie z php.net
+  php update <ver>         Alias: update-php <ver>
+  php set <ver>            W kontekście: przełącz LSPHP strony (vhost/CyberPanel)
+  php ext [list] [ver]     Moduły php -m + status kluczowych rozszerzeń
+  php ext install <n> [ver] Instalacja lsphpXX-<n> (apt/dnf/yum)
+  php ini [ver]            Limity php.ini + nadpisania vhost / .user.ini
+  php ini set <k> <v> [--vhost|--global]
+  php restart [--global]   Kill workerów lsphp (Detached Mode) + ols reload
+  php ps                   Procesy lsphp (CPU/RAM)
 
-Globalnie / w kontekście: lista zainstalowanych lsphp* vs najnowsze z php.net.
+W kontekście (use <domena>): php set / ext / ini / restart działają na tej stronie.
 EOF
       ;;
     update-php|php-update)

@@ -69,7 +69,8 @@ cmd_site_ssl() {
 
 cmd_site_php() {
   [[ -n "${HM_SITE_DOMAIN}" ]] || { hm_err "Brak kontekstu."; return 1; }
-  echo "PHP strony: ${HM_SITE_PHP:--}"
+  echo "${C_BOLD}PHP strony: ${HM_SITE_PHP:--}${C_RESET}  (${HM_SITE_DOMAIN})"
+  echo "  set / ext / ini / restart / ps — zobacz: php help"
   echo
   echo "${C_BOLD}Dostępne LSPHP${C_RESET} ${C_DIM}(+ porównanie z php.net)${C_RESET}"
   echo
@@ -217,7 +218,7 @@ Komendy w kontekście strony:
   dbs       Bazy danych przypisane / wykryte
   ssl       Certyfikat SSL (wygasły → czerwony alert)
   renew-ssl Odnów Let's Encrypt (z potwierdzeniem)
-  php       Wersja PHP + dostępne LSPHP
+  php       PHP strony; set/ext/ini/restart/ps — php help
   logs [N]  Ostatnie N linii logów (domyślnie 40)
   cron      Crony użytkownika strony (+ heurystyka w /etc)
   pm2       Procesy PM2/Node powiązane ze stroną + porty proxy

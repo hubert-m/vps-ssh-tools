@@ -131,8 +131,12 @@ hm_tab_complete() {
         fi
         ;;
       php)
-        local re_php_upd='php[[:space:]]+(update|upgrade)[[:space:]]'
-        if [[ "${prefix}" =~ $re_php_upd ]]; then
+        local re_php_ver='php[[:space:]]+(update|upgrade|set)[[:space:]]'
+        local re_php_ext_inst='php[[:space:]]+ext[[:space:]]+install[[:space:]]'
+        local re_php_ext='php[[:space:]]+ext[[:space:]]'
+        local re_php_ini_set='php[[:space:]]+ini[[:space:]]+set[[:space:]]'
+        local re_php_ini='php[[:space:]]+ini[[:space:]]'
+        if [[ "${prefix}" =~ $re_php_ver ]]; then
           local root="${OLS_ROOT:-/usr/local/lsws}" d base bn br oldnull
           oldnull="$(shopt -p nullglob || true)"
           shopt -s nullglob
@@ -146,8 +150,24 @@ hm_tab_complete() {
             fi
           done
           eval "${oldnull}" 2>/dev/null || shopt -u nullglob
+        elif [[ "${prefix}" =~ $re_php_ext_inst ]]; then
+          for m in imagick redis memcached intl zip soap gd mbstring bcmath opcache apcu; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ $re_php_ext ]]; then
+          for m in list ls install modules help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ $re_php_ini_set ]]; then
+          for m in memory_limit upload_max_filesize post_max_size max_execution_time max_input_vars opcache.enable; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ $re_php_ini ]]; then
+          for m in set show help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
         else
-          for m in update upgrade help; do
+          for m in update upgrade set ext ini restart ps help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi
