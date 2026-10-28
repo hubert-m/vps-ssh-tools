@@ -123,10 +123,16 @@ cmd_renew_ssl() {
         rc=$?
       else
         local webroot=""
-        if [[ -d "/home/${domain}/public_html" ]]; then
-          webroot="/home/${domain}/public_html"
-        elif [[ -n "${HM_SITE_DOCROOT:-}" && -d "${HM_SITE_DOCROOT}" && "${HM_SITE_DOMAIN}" == "${domain}" ]]; then
+        if [[ -n "${HM_SITE_DOCROOT:-}" && -d "${HM_SITE_DOCROOT}" && "${HM_SITE_DOMAIN:-}" == "${domain}" ]]; then
           webroot="${HM_SITE_DOCROOT}"
+        elif [[ -d "/home/${domain}/public_html" ]]; then
+          webroot="/home/${domain}/public_html"
+        else
+          # poza use — docRoot z OLS / CyberPanel (nie tylko /home/.../public_html)
+          local _row _docroot
+          _row="$(hm_resolve_site_paths "${domain}")"
+          IFS=$'\t' read -r _ _ _docroot _ <<<"${_row}"
+          [[ -n "${_docroot}" && -d "${_docroot}" ]] && webroot="${_docroot}"
         fi
         mkdir -p "/etc/letsencrypt/live/${domain}" 2>/dev/null || true
         if [[ -n "${webroot}" ]]; then

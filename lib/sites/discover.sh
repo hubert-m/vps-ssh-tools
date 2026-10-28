@@ -86,7 +86,8 @@ hm_discover_sites() {
     done < <(hm_cyberpanel_list_domains)
   fi
 
-  if [[ "${#HM_SITES_LIST[@]}" -eq 0 ]] && [[ -n "${OLS_VHOSTS}" ]]; then
+  # zawsze skanuj vhosty OLS (hm_sites_add deduplikuje) — także przy CyberPanelu
+  if [[ -n "${OLS_VHOSTS}" ]]; then
     while IFS= read -r domain; do
       hm_sites_add "${domain}"
     done < <(hm_ols_list_vhost_dirs)

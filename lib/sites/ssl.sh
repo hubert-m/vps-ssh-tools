@@ -16,17 +16,20 @@ hm_ssl_paths_for_domain() {
       return 0
     fi
   done
-  # cert/key w vhost
-  local conf
+  # certFile w vhost (OLS: keyFile / certFile; ścieżki często z $VH_ROOT / $SERVER_ROOT)
+  local conf cert
   conf="$(hm_vhost_conf_path "${domain}" 2>/dev/null || true)"
   if [[ -n "${conf}" ]]; then
-    local cert
-    cert="$(awk 'tolower($1)=="keyfile" || tolower($1)=="certfile" || tolower($1)=="certfile" {print $2; exit}' "${conf}" 2>/dev/null || true)"
-    # OLS uses keyFile / certFile
-    cert="$(awk 'tolower($1)=="certfile"{print $2; exit}' "${conf}" 2>/dev/null || true)"
-    if [[ -n "${cert}" && -f "${cert}" ]]; then
-      echo "${cert}"
-      return 0
+    cert="$(awk 'tolower($1)=="certfile"{gsub(/\r/,"",$2); print $2; exit}' "${conf}" 2>/dev/null || true)"
+    if [[ -n "${cert}" ]]; then
+      if [[ -n "${OLS_ROOT:-}" ]]; then
+        cert="${cert//\$SERVER_ROOT/${OLS_ROOT}}"
+      fi
+      cert="$(hm_expand_ols_vars "${cert}" "${domain}")"
+      if [[ -f "${cert}" ]]; then
+        echo "${cert}"
+        return 0
+      fi
     fi
   fi
   return 1

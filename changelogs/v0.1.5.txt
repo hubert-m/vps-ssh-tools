@@ -33,3 +33,8 @@
 - CI: `.github/workflows/lint.yml` (`bash -n` + shellcheck)
 - Fix: REPL/`-c` — bez rozwijania globów (`set -f`, `"$@"`) przy `?` / `*`
 - Fix: log capture — TTY fd 3/4, detach przy prompcie; `hm_run_on_tty` dla cron edit / rclone config
+- Fix: `hm_discover_sites` zawsze skanuje vhosty OLS (także przy CyberPanelu)
+- Fix: `hm_ssl_paths_for_domain` — certFile + `$VH_ROOT`/`$SERVER_ROOT`
+- Fix: `renew-ssl` poza `use` — webroot z `hm_resolve_site_paths`
+- Fix: Tab w kontekście strony podpowiada info/size/logs/clean/back
+- CI: job lint tymczasowo wyłączony (`if: false`), workflow zostaje w repo

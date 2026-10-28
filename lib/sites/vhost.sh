@@ -61,13 +61,16 @@ hm_ols_vhroot_for_domain() {
 }
 
 hm_expand_ols_vars() {
-  # $VH_ROOT / $VH_NAME / $DOC_ROOT → realne ścieżki
+  # $VH_ROOT / $VH_NAME / $DOC_ROOT / $SERVER_ROOT → realne ścieżki
   local path="$1"
   local domain="$2"
   local vhroot="${3:-}"
   [[ -n "${path}" ]] || { printf '%s' ""; return 0; }
   [[ -n "${vhroot}" ]] || vhroot="$(hm_ols_vhroot_for_domain "${domain}")"
   path="${path//\$VH_NAME/${domain}}"
+  if [[ -n "${OLS_ROOT:-}" ]]; then
+    path="${path//\$SERVER_ROOT/${OLS_ROOT}}"
+  fi
   if [[ -n "${vhroot}" ]]; then
     path="${path//\$VH_ROOT/${vhroot}}"
     path="${path//\$DOC_ROOT/${vhroot}/public_html}"

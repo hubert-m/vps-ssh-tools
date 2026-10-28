@@ -82,6 +82,10 @@ hm_complete_commands() {
     update-hmtools version ver uninstall-hmtools
     help h exit quit q
   )
+  # w kontekście strony — komendy lokalne (info/size/…)
+  if [[ -n "${HM_SITE_DOMAIN:-}" ]]; then
+    cmds+=(info size logs clean back dbs renew-ssl)
+  fi
   local c
   for c in "${cmds[@]}"; do
     if [[ "${c}" == "${partial}"* ]]; then
