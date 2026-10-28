@@ -140,10 +140,26 @@ hm_backup_restore() {
   hm_detect_all
   hm_rclone_check || return 1
 
-  if [[ -z "${HM_SITE_DOMAIN}" || "${HM_SITE_DOMAIN}" != "${domain}" ]]; then
-    domain="$(hm_find_site_by_arg "${domain}")" || return 1
+  local domain_arg="${domain}"
+  local resolved=""
+  if [[ -n "${HM_SITE_DOMAIN}" && "${HM_SITE_DOMAIN}" == "${domain_arg}" ]]; then
+    resolved="${domain_arg}"
+  else
+    resolved="$(hm_find_site_by_arg "${domain_arg}" 2>/dev/null || true)"
   fi
-  hm_set_site_context "${domain}"
+
+  if [[ -n "${resolved}" ]]; then
+    domain="${resolved}"
+    hm_set_site_context "${domain}"
+  else
+    # zarchiwizowana / usunięta z VPS — przywróć z Drive po nazwie domeny
+    domain="${domain_arg}"
+    hm_info "Domena ${domain} nie jest na lokalnej liście VPS — szukam snapshotów na Drive…"
+    if [[ -z "$(hm_backup_list_stamps "${domain}" | head -1)" ]]; then
+      hm_err "Brak snapshotów na Drive dla ${domain} i brak lokalnej strony."
+      return 1
+    fi
+  fi
 
   if [[ -z "${stamp}" ]]; then
     echo "${C_BOLD}Dostępne snapshoty — ${domain}${C_RESET}"
@@ -161,18 +177,31 @@ hm_backup_restore() {
   local remote_base target_dir
   remote_base="$(hm_backup_dest_site "${domain}" "${stamp}")"
   if ! rclone lsd "${remote_base}" >/dev/null 2>&1 && ! rclone ls "${remote_base}" >/dev/null 2>&1; then
-    # rclone ls na katalogu zwraca pliki; sprawdź istnienie przez lsf
     if [[ -z "$(rclone lsf "${remote_base}" 2>/dev/null | head -1)" ]]; then
       hm_err "Snapshot nie istnieje: ${remote_base}"
       return 1
     fi
   fi
 
-  target_dir="${HM_SITE_ROOT}"
+  target_dir="${HM_SITE_ROOT:-}"
   if [[ -z "${target_dir}" || ! -d "${target_dir}" ]]; then
-    target_dir="${HM_SITE_DOCROOT}"
+    target_dir="${HM_SITE_DOCROOT:-}"
   fi
-  [[ -n "${target_dir}" ]] || { hm_err "Brak katalogu docelowego strony."; return 1; }
+  if [[ -z "${target_dir}" || ! -d "${target_dir}" ]]; then
+    local json
+    json="$(hm_backup_cat_manifest "${remote_base}")"
+    target_dir="$(hm_backup_json_str "${json}" "site_root")"
+    [[ -z "${target_dir}" ]] && target_dir="$(hm_backup_json_str "${json}" "docroot")"
+    [[ -z "${HM_SITE_USER:-}" ]] && HM_SITE_USER="$(hm_backup_json_str "${json}" "site_user")"
+    [[ -z "${HM_SITE_PHP:-}" ]] && HM_SITE_PHP="$(hm_backup_json_str "${json}" "php")"
+    [[ -z "${HM_SITE_DOCROOT:-}" ]] && HM_SITE_DOCROOT="$(hm_backup_json_str "${json}" "docroot")"
+    [[ -z "${HM_SITE_ROOT:-}" ]] && HM_SITE_ROOT="$(hm_backup_json_str "${json}" "site_root")"
+    HM_SITE_DOMAIN="${domain}"
+  fi
+  [[ -n "${target_dir}" ]] || { hm_err "Brak katalogu docelowego strony (manifest bez site_root/docroot)."; return 1; }
+  if [[ ! -d "${target_dir}" ]]; then
+    mkdir -p "${target_dir}" || { hm_err "Nie można utworzyć ${target_dir}"; return 1; }
+  fi
 
   hm_backup_check_space || return 1
 

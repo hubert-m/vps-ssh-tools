@@ -9,6 +9,11 @@ cmd_webs() {
       hm_site_delete "$@"
       return $?
       ;;
+    archive)
+      shift || true
+      hm_backup_archive_site "${1:-${HM_SITE_DOMAIN}}"
+      return $?
+      ;;
     --help|-h|help)
       hm_help_topic webs
       return 0

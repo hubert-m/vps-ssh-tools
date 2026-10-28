@@ -7,3 +7,4 @@
 - php: Candidate z apt-cache/dnf (nie php.net); --refresh / --phpnet; update-php spójny z repo
 - UX: hm_confirm_plan / hm_confirm_plan_critical — plan kroków + wpisanie yes (ciężkie operacje)
 - webs delete / delete-site — całkowite usunięcie serwisu (inwentaryzacja + plan critical)
+- webs archive / backup archive — Drive + Atomic Guard + usunięcie; prune chroni type=archive

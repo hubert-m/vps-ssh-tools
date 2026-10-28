@@ -75,7 +75,7 @@ hm_complete_filter_sites() {
 hm_complete_commands() {
   local partial="$1"
   local cmds=(
-    webs sites list use enter cd delete-site
+    webs sites list use enter cd delete-site archive-site
     backup disk df ols lsws ssl renew-ssl ssl-renew mysql dbs db cron crons pm2 node apps php
     update-php php-update
     health status security sec applog selflog hmlog detect env
@@ -84,7 +84,7 @@ hm_complete_commands() {
   )
   # w kontekście strony — komendy lokalne (info/size/…)
   if [[ -n "${HM_SITE_DOMAIN:-}" ]]; then
-    cmds+=(info size logs clean htaccess proxy perms back dbs renew-ssl delete-site)
+    cmds+=(info size logs clean htaccess proxy perms back dbs renew-ssl delete-site archive)
   fi
   local c
   for c in "${cmds[@]}"; do

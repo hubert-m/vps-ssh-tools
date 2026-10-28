@@ -31,3 +31,5 @@ source "${_BACKUP_DIR}/restore.sh"
 source "${_BACKUP_DIR}/prune.sh"
 # shellcheck source=backup/schedule.sh
 source "${_BACKUP_DIR}/schedule.sh"
+# shellcheck source=backup/archive.sh
+source "${_BACKUP_DIR}/archive.sh"

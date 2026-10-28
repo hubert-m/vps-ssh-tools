@@ -106,6 +106,7 @@ hmtools> exit
 |---------|------|
 | `webs [--quick]` | Lista usług webowych |
 | `webs delete <d>` / `delete-site` | Całkowite usunięcie serwisu (`yes` + nazwa domeny) |
+| `webs archive <d>` / `backup archive` | Archiwum Drive → verify → usunięcie z VPS |
 | `use <n\|domena>` | Wejście w kontekst (Tab uzupełnia domenę z listy) |
 | `backup setup` | Instalacja/konfiguracja rclone + Google Drive |
 | `backup config` | Ustaw katalog root backupów na Drive (jednorazowo) |
@@ -154,6 +155,7 @@ hmtools> exit
 | `proxy [set-port N]` | Zdrowie reverse proxy OLS / zmiana portu |
 | `perms [check\|fix]` | Uprawnienia pod OLS/CyberPanel (`nogroup` 750) |
 | `delete-site […]` | Usuń bieżącą stronę (inwentaryzacja + plan critical) |
+| `archive` | Archiwum Drive → verify → usunięcie tej strony |
 | `exit` | Wyjście z kontekstu |
 
 ### PM2 / Node / Next

@@ -69,6 +69,14 @@ cmd_backup() {
       echo "Cel:       ${RCLONE_REMOTE}/${domain}/<stamp>/"
       hm_backup_site "${domain}"
       ;;
+    archive)
+      local domain="${1:-${HM_SITE_DOMAIN}}"
+      if [[ -z "${domain}" ]]; then
+        hm_err "Użycie: backup archive <domena>  (lub wejdź w kontekst: archive)"
+        return 1
+      fi
+      hm_backup_archive_site "${domain}"
+      ;;
     test)
       hm_load_config
       hm_rclone_test

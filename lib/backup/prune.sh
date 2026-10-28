@@ -38,6 +38,15 @@ hm_backup_prune_scope() {
     epoch="$(hm_backup_stamp_epoch "${s}")"
     if [[ "${epoch}" -gt 0 && "${epoch}" -lt "${cutoff}" ]]; then
       remote_base="$(hm_rclone_dest "${rel}/${s}")"
+      # chronione snapshoty archive (webs archive) — nigdy nie prune
+      local json type archived
+      json="$(hm_backup_cat_manifest "${remote_base}")"
+      type="$(hm_backup_json_str "${json}" "type")"
+      archived="$(hm_backup_json_str "${json}" "archived")"
+      if [[ "${type}" == "archive" || "${archived}" == "true" ]]; then
+        hm_warn "Pomijam chroniony snapshot archive: ${rel}/${s}"
+        continue
+      fi
       printf '%s\n' "${remote_base}"
     fi
   done

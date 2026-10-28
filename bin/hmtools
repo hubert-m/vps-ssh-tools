@@ -94,7 +94,9 @@ hm_dispatch() {
         ;;
       logs|log) cmd_site_logs "$@"; return ;;
       backup)
-        if [[ "${1:-}" == "" ]]; then
+        if [[ "${1:-}" == "archive" ]]; then
+          hm_backup_archive_site "${HM_SITE_DOMAIN}"
+        elif [[ "${1:-}" == "" ]]; then
           cmd_site_backup
         else
           cmd_backup "$@"
@@ -111,11 +113,18 @@ hm_dispatch() {
         cmd_delete_site "$@"
         return
         ;;
+      archive|archive-site)
+        hm_backup_archive_site "${HM_SITE_DOMAIN}"
+        return
+        ;;
       webs|sites)
-        # webs delete w kontekście
         if [[ "${1:-}" == "delete" || "${1:-}" == "remove" || "${1:-}" == "destroy" || "${1:-}" == "rm" ]]; then
           shift || true
           cmd_delete_site "${HM_SITE_DOMAIN}" "$@"
+          return
+        fi
+        if [[ "${1:-}" == "archive" ]]; then
+          hm_backup_archive_site "${HM_SITE_DOMAIN}"
           return
         fi
         ;;
@@ -132,6 +141,7 @@ hm_dispatch() {
     "" ) return 0 ;;
     webs|sites|list) cmd_webs "$@" ;;
     delete-site|deletesite|destroy-site) cmd_delete_site "$@" ;;
+    archive-site) hm_backup_archive_site "$@" ;;
     use|enter|cd)    cmd_use "$@" ;;
     backup)          cmd_backup "$@" ;;
     disk|df)         cmd_disk "$@" ;;

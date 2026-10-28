@@ -40,6 +40,7 @@ hm_help_topic() {
 Użycie:
   webs [--quick|-q]              Lista usług webowych
   webs delete <n|domena> […]     Całkowite usunięcie serwisu (aliasy: remove/destroy/rm)
+  webs archive <n|domena>        Archiwum na Drive → weryfikacja → usunięcie z VPS
 
 Opcje listy:
   --quick, -q   Pomiń liczenie rozmiaru (szybciej)
@@ -49,9 +50,9 @@ Opcje delete:
   --keep-ssl    Nie usuwaj certyfikatów Let's Encrypt / acme.sh
   --keep-user   Nie usuwaj użytkownika Unix strony
 
-Wymaga wpisania yes oraz dokładnej nazwy domeny (hm_confirm_plan_critical).
+delete/archive wymagają wpisania yes oraz dokładnej nazwy domeny.
 Następnie: use <numer|domena>
-Tab uzupełnia domenę po 'use ' / 'webs delete ' / 'delete-site '.
+Tab: use / webs delete / webs archive / delete-site / archive-site
 EOF
       ;;
     delete-site|deletesite|destroy-site|webs-delete)
@@ -65,7 +66,23 @@ Całkowite, nieodwracalne usunięcie serwisu: PM2, LSPHP, cron, MySQL,
 CyberPanel, vhost OLS, SSL, katalog /home/…, opcjonalnie user Unix.
 
 Przed usunięciem: pełna inwentaryzacja + plan kroków + wpisanie yes i nazwy domeny.
-Zalecane: backup site <domena> przed delete.
+Zalecane: webs archive <domena> (backup+verify+delete) lub backup site przed delete.
+EOF
+      ;;
+    archive|archive-site|webs-archive)
+      cat <<'EOF'
+Użycie:
+  webs archive <numer|domena>
+  backup archive <numer|domena>
+  archive-site <numer|domena>
+  (w kontekście) archive
+
+1) Pełna kopia archiwalna na Google Drive (DB + pliki + OLS + SSL + cron + PM2)
+2) Twarda weryfikacja plików na Drive (Atomic Guard)
+3) Dopiero potem całkowite usunięcie serwisu z VPS (jak delete-site)
+
+Snapshot ma type=archive (chroniony przed backup prune).
+Przywrócenie: backup restore <domena> [stamp]
 EOF
       ;;
     use)
@@ -89,11 +106,14 @@ Użycie:
   backup show               Pokaż aktualny root i strukturę
   backup full               Pełna kopia serwera → Drive/full/<stamp>/
   backup site <domena>      Kopia strony → Drive/<domena>/<stamp>/
+  backup archive <domena>   Archiwum (type=archive) → weryfikacja Drive → usunięcie z VPS
   backup list [domena|full] Snapshoty + manifest (w kontekście: bieżąca domena)
   backup restore <domena> [stamp] [--files-only|--db-only]
                             Odtwórz pliki (tar lub chunks) + bazy; bez stamp = najnowszy
+                            (działa też dla domen tylko na Drive po webs archive)
   backup prune [--days N] [--dry-run] [--yes]
                             Usuń stare snapshoty (BACKUP_KEEP_DAYS / BACKUP_KEEP_MIN)
+                            Snapshoty type=archive są chronione przed prune
   backup schedule [enable|disable|status]
                             Cron: /etc/cron.d/hmtools-backup + log backup-cron.log
   backup test               Test połączenia rclone

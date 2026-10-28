@@ -102,6 +102,7 @@ hm_tab_complete() {
         ;;
       webs|sites|list)
         local re_webs_del='(webs|sites)[[:space:]]+(delete|remove|destroy|rm)[[:space:]]'
+        local re_webs_arch='(webs|sites)[[:space:]]+archive[[:space:]]'
         if [[ "${prefix}" =~ $re_webs_del ]]; then
           if [[ "${partial}" == --* ]]; then
             for m in --keep-db --keep-ssl --keep-user; do
@@ -113,14 +114,31 @@ hm_tab_complete() {
               [[ -n "${m}" ]] && matches+=("${m}")
             done < <(hm_complete_filter_sites "${partial}")
           fi
+        elif [[ "${prefix}" =~ $re_webs_arch ]]; then
+          hm_ensure_sites_cached
+          while IFS= read -r m; do
+            [[ -n "${m}" ]] && matches+=("${m}")
+          done < <(hm_complete_filter_sites "${partial}")
         else
-          for m in delete remove destroy rm --quick -q; do
+          for m in delete remove destroy rm archive --quick -q; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi
         ;;
+      archive-site)
+        hm_ensure_sites_cached
+        while IFS= read -r m; do
+          [[ -n "${m}" ]] && matches+=("${m}")
+        done < <(hm_complete_filter_sites "${partial}")
+        ;;
       backup)
-        if [[ "${prefix}" =~ $re_backup_site ]]; then
+        local re_backup_arch='backup[[:space:]]+archive[[:space:]]'
+        if [[ "${prefix}" =~ $re_backup_arch ]]; then
+          hm_ensure_sites_cached
+          while IFS= read -r m; do
+            [[ -n "${m}" ]] && matches+=("${m}")
+          done < <(hm_complete_filter_sites "${partial}")
+        elif [[ "${prefix}" =~ $re_backup_site ]]; then
           hm_ensure_sites_cached
           while IFS= read -r m; do
             [[ -n "${m}" ]] && matches+=("${m}")
@@ -129,7 +147,7 @@ hm_tab_complete() {
             [[ "${prefix}" == *list* && "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         else
-          for m in setup config path root show status full site list restore prune schedule test help; do
+          for m in setup config path root show status full site archive list restore prune schedule test help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi
