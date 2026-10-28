@@ -1,0 +1,3 @@
+# hmtools v0.1.6
+
+- Docs: README — mapa komend (ols/mysql/pm2/security/backup/perms), restore, troubleshooting

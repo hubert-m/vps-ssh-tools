@@ -14,7 +14,11 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ---
 
-## [Unreleased] / [v0.1.5]
+## [Unreleased] / [v0.1.6]
+
+- Docs: README — mapa komend (`ols`/`mysql`/`pm2`/`security`/`backup`/`perms`), restore, troubleshooting
+
+## [v0.1.5]
 
 - Fix: `pm2` w kontekście `use` — bin/PM2_HOME ze strony (nie cudzy nvm z `/home/*`)
 - Fix: Tab przy wielu dopasowaniach nie wywala hmtools (`set -e` + `bind -x`)
