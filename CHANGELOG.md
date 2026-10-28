@@ -14,7 +14,9 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ---
 
-## [Unreleased] / [v0.1.6]
+## [Unreleased] / [v0.1.7]
+
+## [v0.1.6]
 
 - Docs: README — mapa komend (`ols`/`mysql`/`pm2`/`security`/`backup`/`perms`), restore, troubleshooting
 - UX: `hm_progress_bar` / `hm_status_line` na TTY (fd 3 przy tee logów) — bez śmieci w logach
