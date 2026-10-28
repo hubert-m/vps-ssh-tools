@@ -32,3 +32,5 @@ source "${_SITES_DIR}/print.sh"
 source "${_SITES_DIR}/php.sh"
 # shellcheck source=sites/php_manage.sh
 source "${_SITES_DIR}/php_manage.sh"
+# shellcheck source=sites/site_delete.sh
+source "${_SITES_DIR}/site_delete.sh"

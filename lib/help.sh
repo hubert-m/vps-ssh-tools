@@ -23,6 +23,7 @@ hm_help_topic() {
     env) topic="detect" ;;
     ver) topic="version" ;;
     remove) topic="uninstall-hmtools" ;;
+    destroy-site|deletesite) topic="delete-site" ;;
     upgrade) topic="update-hmtools" ;;
     log) topic="logs" ;;
     crons) topic="cron" ;;
@@ -36,15 +37,35 @@ hm_help_topic() {
   case "${topic}" in
     webs)
       cat <<'EOF'
-Użycie: webs [--quick|-q]
+Użycie:
+  webs [--quick|-q]              Lista usług webowych
+  webs delete <n|domena> […]     Całkowite usunięcie serwisu (aliasy: remove/destroy/rm)
 
-Lista usług webowych na serwerze (domena, PHP, SSL, rozmiar, status).
-
-Opcje:
+Opcje listy:
   --quick, -q   Pomiń liczenie rozmiaru (szybciej)
 
+Opcje delete:
+  --keep-db     Nie usuwaj baz MySQL
+  --keep-ssl    Nie usuwaj certyfikatów Let's Encrypt / acme.sh
+  --keep-user   Nie usuwaj użytkownika Unix strony
+
+Wymaga wpisania yes oraz dokładnej nazwy domeny (hm_confirm_plan_critical).
 Następnie: use <numer|domena>
-Tab uzupełnia domenę po 'use '.
+Tab uzupełnia domenę po 'use ' / 'webs delete ' / 'delete-site '.
+EOF
+      ;;
+    delete-site|deletesite|destroy-site|webs-delete)
+      cat <<'EOF'
+Użycie:
+  delete-site <numer|domena> [--keep-db] [--keep-ssl] [--keep-user]
+  webs delete <numer|domena> […]
+  (w kontekście use <domena>) delete-site […]
+
+Całkowite, nieodwracalne usunięcie serwisu: PM2, LSPHP, cron, MySQL,
+CyberPanel, vhost OLS, SSL, katalog /home/…, opcjonalnie user Unix.
+
+Przed usunięciem: pełna inwentaryzacja + plan kroków + wpisanie yes i nazwy domeny.
+Zalecane: backup site <domena> przed delete.
 EOF
       ;;
     use)

@@ -87,6 +87,38 @@ hm_tab_complete() {
           [[ -n "${m}" ]] && matches+=("${m}")
         done < <(hm_complete_filter_sites "${partial}")
         ;;
+      delete-site|deletesite|destroy-site)
+        local re_del_flags='delete-site[[:space:]]+[^[:space:]]+[[:space:]]'
+        if [[ "${prefix}" =~ $re_del_flags || "${partial}" == --* ]]; then
+          for m in --keep-db --keep-ssl --keep-user; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          hm_ensure_sites_cached
+          while IFS= read -r m; do
+            [[ -n "${m}" ]] && matches+=("${m}")
+          done < <(hm_complete_filter_sites "${partial}")
+        fi
+        ;;
+      webs|sites|list)
+        local re_webs_del='(webs|sites)[[:space:]]+(delete|remove|destroy|rm)[[:space:]]'
+        if [[ "${prefix}" =~ $re_webs_del ]]; then
+          if [[ "${partial}" == --* ]]; then
+            for m in --keep-db --keep-ssl --keep-user; do
+              [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+            done
+          else
+            hm_ensure_sites_cached
+            while IFS= read -r m; do
+              [[ -n "${m}" ]] && matches+=("${m}")
+            done < <(hm_complete_filter_sites "${partial}")
+          fi
+        else
+          for m in delete remove destroy rm --quick -q; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
       backup)
         if [[ "${prefix}" =~ $re_backup_site ]]; then
           hm_ensure_sites_cached

@@ -22,6 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - UX: postęp w `webs`/`php`/`info`/`size`/`clean`/`perms`/`disk`/`ssl`/`health`/`mysql`/`backup`/`security`/`logs`/`pm2`
 - `php`: Candidate z `apt-cache`/`dnf` (nie php.net); flagi `--refresh` / `--phpnet`; `update-php` spójny z repo
 - UX: `hm_confirm_plan` / `hm_confirm_plan_critical` — plan kroków + wpisanie `yes` przed ciężkimi operacjami
+- `webs delete` / `delete-site` — całkowite usunięcie serwisu (inwentaryzacja + plan critical)
 
 ## [v0.1.5]
 

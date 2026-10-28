@@ -107,6 +107,18 @@ hm_dispatch() {
       perms|perm) cmd_site_perms "$@"; return ;;
       cron|crons) cmd_cron "$@"; return ;;
       pm2|node|apps) cmd_pm2 "$@"; return ;;
+      delete-site|deletesite|destroy-site)
+        cmd_delete_site "$@"
+        return
+        ;;
+      webs|sites)
+        # webs delete w kontekście
+        if [[ "${1:-}" == "delete" || "${1:-}" == "remove" || "${1:-}" == "destroy" || "${1:-}" == "rm" ]]; then
+          shift || true
+          cmd_delete_site "${HM_SITE_DOMAIN}" "$@"
+          return
+        fi
+        ;;
       help|?) hm_cmd_help "$@"; return ;;
       exit|quit|back|.. )
         hm_ok "Wyjście z kontekstu ${HM_SITE_DOMAIN}."
@@ -119,6 +131,7 @@ hm_dispatch() {
   case "${cmd}" in
     "" ) return 0 ;;
     webs|sites|list) cmd_webs "$@" ;;
+    delete-site|deletesite|destroy-site) cmd_delete_site "$@" ;;
     use|enter|cd)    cmd_use "$@" ;;
     backup)          cmd_backup "$@" ;;
     disk|df)         cmd_disk "$@" ;;

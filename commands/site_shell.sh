@@ -506,6 +506,7 @@ Komendy w kontekście strony:
   htaccess [enable]  Diagnostyka .htaccess / autoLoadHtaccess
   proxy [set-port N] Reverse proxy OLS — zdrowie portów / zmiana portu
   perms [check|fix] Uprawnienia plików pod OLS / CyberPanel
+  delete-site […]  Całkowite usunięcie tej strony (yes + nazwa domeny)
   help [cmd] Pomoc (lista lub help <polecenie>)
   exit      Wyjście z kontekstu strony
 EOF

@@ -5,7 +5,9 @@ hm_help_global() {
   cat <<'EOF'
 Komendy globalne:
   webs [--quick]     Lista usług webowych
+  webs delete <d>    Całkowite usunięcie serwisu (delete-site)
   use <n|domena>     Wejście w kontekst strony (Tab = podpowiedź domen)
+  delete-site <d>    Alias: webs delete
   backup setup       Konfiguracja rclone / Google Drive
   backup config      Ustaw katalog root backupów na Drive
   backup full|site   Kopia → Drive; list / restore / prune / schedule

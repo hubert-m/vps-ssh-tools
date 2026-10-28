@@ -105,6 +105,7 @@ hmtools> exit
 | Komenda | Opis |
 |---------|------|
 | `webs [--quick]` | Lista usług webowych |
+| `webs delete <d>` / `delete-site` | Całkowite usunięcie serwisu (`yes` + nazwa domeny) |
 | `use <n\|domena>` | Wejście w kontekst (Tab uzupełnia domenę z listy) |
 | `backup setup` | Instalacja/konfiguracja rclone + Google Drive |
 | `backup config` | Ustaw katalog root backupów na Drive (jednorazowo) |
@@ -152,6 +153,7 @@ hmtools> exit
 | `htaccess [enable]` | Diagnostyka `.htaccess` / `autoLoadHtaccess` |
 | `proxy [set-port N]` | Zdrowie reverse proxy OLS / zmiana portu |
 | `perms [check\|fix]` | Uprawnienia pod OLS/CyberPanel (`nogroup` 750) |
+| `delete-site […]` | Usuń bieżącą stronę (inwentaryzacja + plan critical) |
 | `exit` | Wyjście z kontekstu |
 
 ### PM2 / Node / Next
