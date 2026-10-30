@@ -36,6 +36,6 @@ Bypass (świadomie): `ALLOW_UNSUPPORTED_OS=1` w `hmtools.conf`.
 
 ## Testy
 
-Weryfikacja ręczna na czystych VPS: Ubuntu LTS, Debian, AlmaLinux, Rocky, CentOS Stream — `detect`, `health`, instalacja pakietu przez właściwy PM, reload WWW.
+Checklisty ręcznych testów (checkboxy) per dystrybucja: **[docs/tested/](tested/)**.
 
 ← [README](../README.md) · [Detekcja stosu](detection.md)

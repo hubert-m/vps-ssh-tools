@@ -12,3 +12,4 @@
 - Fix: webs delete — puste tablice bez [@]:-; whitelist SITES_ROOT
 - Feat: detect — karta stosu (OS/panel/WWW/DB), hinty narzędzi, FORCE_* w conf
 - Feat: wsparcie OS (Ubuntu/Debian/Alma/Rocky/CentOS) + tryb restricted → uninstall
+- Docs: docs/tested/ — checklisty testów ręcznych per OS (checkboxy)
