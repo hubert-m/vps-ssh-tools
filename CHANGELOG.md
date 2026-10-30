@@ -14,7 +14,9 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ---
 
-## [Unreleased] / [v0.1.7]
+## [Unreleased] / [v0.1.8]
+
+## [v0.1.7]
 
 - `webs`: pod listą — suma rozmiarów wszystkich serwisów (kolumna SIZE)
 - Docs: README → `docs/*.md` (install, commands, backup, …) + linki w README
