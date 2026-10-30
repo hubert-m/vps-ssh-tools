@@ -369,6 +369,14 @@ hm_mysql_dump_local() {
     mkdir -p "${dir}"
     chmod 0700 "${dir}" 2>/dev/null || true
     outpath="${dir}/${dbname}-${stamp}.sql.gz"
+  elif [[ -d "${outpath}" || "${outpath}" == */ ]]; then
+    # katalog docelowy (np. --local /root/backups lub ścieżka z /)
+    mkdir -p "${outpath}"
+    chmod 0700 "${outpath}" 2>/dev/null || true
+    outpath="${outpath%/}/${dbname}-${stamp}.sql.gz"
+  else
+    dir="$(dirname "${outpath}")"
+    mkdir -p "${dir}"
   fi
 
   if ! hm_is_safe_fs_path "${outpath}"; then

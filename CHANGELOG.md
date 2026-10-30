@@ -22,6 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `PIPESTATUS` — snapshot tablicy po potoku (`mysqldump`/`tar`; `set -u`)
 - Fix: `backup restore` — bez podwójnego `gunzip`; walidacja nazw baz (`hm_is_valid_db_name`)
 - Fix: `ols cache flush` — pusta lista LSCache; whitelist `/var/www`; `proxy set-port [domena]`
+- Fix: `mysql dump --local <katalog>` — zapis `${db}-stamp.sql.gz` w podanym katalogu
 
 ## [v0.1.6]
 
