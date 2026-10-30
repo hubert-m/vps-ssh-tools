@@ -47,19 +47,9 @@ cmd_security_status() {
   echo "${C_BOLD}Security — status${C_RESET}"
   echo
 
-  # Firewall
+  # Firewall (adapter OS_FAMILY: ufw vs firewalld)
   echo "${C_BOLD}Firewall${C_RESET}"
-  if hm_have_cmd ufw; then
-    ufw status numbered 2>/dev/null | head -40 || ufw status 2>/dev/null | head -40 || true
-  elif hm_have_cmd firewall-cmd; then
-    firewall-cmd --list-all 2>/dev/null | head -50 || true
-  elif hm_have_cmd csf; then
-    csf -l 2>/dev/null | head -40 || true
-  elif hm_have_cmd iptables; then
-    iptables -L -n 2>/dev/null | head -40 || true
-  else
-    hm_warn "Brak ufw / firewalld / csf / iptables w PATH."
-  fi
+  hm_os_firewall_status || true
   echo
 
   # Fail2Ban skrót
@@ -181,7 +171,7 @@ cmd_security_unban() {
   if ! hm_confirm_plan "security unban — ${ip}" \
     "Odblokowanie adresu IP." \
     "Usunięcie blokady adresu IP ${ip} we wszystkich aktywnych jailach Fail2Ban" \
-    "Usunięcie reguły firewall (UFW deny / iptables DROP) dla ${ip}"; then
+    "Usunięcie reguły firewall (ufw / firewalld / iptables) dla ${ip}"; then
     return 0
   fi
 
@@ -200,11 +190,10 @@ cmd_security_unban() {
     [[ "${any}" -eq 1 ]] || hm_warn "Fail2Ban: IP nie było na liście (lub brak jaili)."
   fi
 
-  if hm_have_cmd ufw; then
-    if ufw status 2>/dev/null | grep -q "${ip}"; then
-      ufw delete deny from "${ip}" 2>/dev/null || true
-      ufw status | grep "${ip}" || true
-    fi
+  if hm_os_firewall_unban "${ip}"; then
+    hm_ok "Firewall: usunięto blokadę ${ip}"
+  else
+    hm_warn "Firewall: brak reguły do usunięcia (lub brak ufw/firewalld/iptables)."
   fi
 }
 
@@ -215,7 +204,7 @@ cmd_security_ban() {
   if ! hm_confirm_plan "security ban — ${ip}" \
     "Blokada adresu IP na firewallu i w Fail2Ban." \
     "Dodanie blokady adresu IP ${ip} we wszystkich aktywnych jailach Fail2Ban" \
-    "Dodanie reguły firewall (UFW deny / iptables DROP) dla ${ip}"; then
+    "Dodanie reguły firewall (ufw / firewalld / iptables) dla ${ip}"; then
     return 0
   fi
 
@@ -233,13 +222,11 @@ cmd_security_ban() {
       fi
     done
   fi
-  if [[ "${ok}" -eq 0 ]] && hm_have_cmd ufw; then
-    ufw deny from "${ip}" && hm_ok "UFW deny from ${ip}" && ok=1
+  if hm_os_firewall_ban "${ip}"; then
+    hm_ok "Firewall: zablokowano ${ip}"
+    ok=1
   fi
-  if [[ "${ok}" -eq 0 ]] && hm_have_cmd iptables; then
-    iptables -I INPUT -s "${ip}" -j DROP && hm_ok "iptables DROP ${ip}" && ok=1
-  fi
-  [[ "${ok}" -eq 1 ]] || hm_err "Nie udało się zablokować (brak fail2ban/ufw/iptables)."
+  [[ "${ok}" -eq 1 ]] || hm_err "Nie udało się zablokować (brak fail2ban / firewall OS)."
 }
 
 cmd_security_ssh() {

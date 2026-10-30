@@ -241,61 +241,20 @@ cmd_update_php() {
     return 0
   fi
 
-  local pm
-  if ! pm="$(hm_pkg_manager)"; then
+  if ! hm_pkg_id >/dev/null 2>&1; then
     hm_err "Nie wykryto apt-get / dnf / yum."
     return 1
   fi
 
   set +e
-  case "${pm}" in
-    apt)
-      hm_info "apt-get update…"
-      hm_run apt-get update
-      if [[ "${#pkgs[@]}" -gt 0 ]]; then
-        hm_info "apt-get install --only-upgrade (${#pkgs[@]} pakietów)…"
-        DEBIAN_FRONTEND=noninteractive hm_run apt-get install --only-upgrade -y "${pkgs[@]}"
-      else
-        hm_info "apt-get install lsphp${suffix} (+ typowe rozszerzenia)…"
-        DEBIAN_FRONTEND=noninteractive hm_run apt-get install -y \
-          "lsphp${suffix}" \
-          "lsphp${suffix}-common" \
-          "lsphp${suffix}-mysql" \
-          "lsphp${suffix}-curl" \
-          "lsphp${suffix}-opcache" \
-          "lsphp${suffix}-imap" \
-          "lsphp${suffix}-msgpack" \
-          "lsphp${suffix}-redis" \
-          "lsphp${suffix}-intl" \
-          "lsphp${suffix}-pgsql" \
-          "lsphp${suffix}-sqlite3" \
-          "lsphp${suffix}-ldap" || \
-        DEBIAN_FRONTEND=noninteractive hm_run apt-get install -y "lsphp${suffix}" "lsphp${suffix}-common" "lsphp${suffix}-mysql"
-      fi
-      ;;
-    dnf)
-      hm_info "dnf makecache…"
-      hm_run dnf makecache -y || true
-      if [[ "${#pkgs[@]}" -gt 0 ]]; then
-        hm_info "dnf update lsphp${suffix}*…"
-        hm_run dnf update -y "lsphp${suffix}*"
-      else
-        hm_info "dnf install lsphp${suffix}*…"
-        hm_run dnf install -y "lsphp${suffix}*"
-      fi
-      ;;
-    yum)
-      hm_info "yum makecache…"
-      hm_run yum makecache -y || true
-      if [[ "${#pkgs[@]}" -gt 0 ]]; then
-        hm_info "yum update lsphp${suffix}*…"
-        hm_run yum update -y "lsphp${suffix}*"
-      else
-        hm_info "yum install lsphp${suffix}*…"
-        hm_run yum install -y "lsphp${suffix}*"
-      fi
-      ;;
-  esac
+  hm_pkg_refresh
+  if [[ "${#pkgs[@]}" -gt 0 ]]; then
+    hm_info "Aktualizacja pakietów lsphp${suffix}* (${#pkgs[@]})…"
+    hm_pkg_upgrade "${pkgs[@]}"
+  else
+    hm_info "Instalacja lsphp${suffix} z repozytorium…"
+    hm_php_install_branch_packages "${suffix}"
+  fi
   local rc=$?
   set -e
 

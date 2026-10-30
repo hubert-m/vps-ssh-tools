@@ -284,25 +284,8 @@ cmd_site_clean() {
 }
 
 hm_ols_web_group() {
-  # grupa procesu lshttpd (CyberPanel/OLS: zwykle nogroup lub nobody)
-  local g
-  g="$(ps -o group= -C lshttpd 2>/dev/null | head -1 | tr -d ' ')"
-  if [[ -z "${g}" ]]; then
-    g="$(ps -o group= -C openlitespeed 2>/dev/null | head -1 | tr -d ' ')"
-  fi
-  if [[ -n "${g}" && "${g}" != "root" ]]; then
-    printf '%s' "${g}"
-    return 0
-  fi
-  if getent group nogroup >/dev/null 2>&1; then
-    echo nogroup
-    return 0
-  fi
-  if getent group nobody >/dev/null 2>&1; then
-    echo nobody
-    return 0
-  fi
-  echo nogroup
+  # alias → lib/os_family.sh (grupa procesu OLS lub fallback OS_FAMILY)
+  hm_os_web_group
 }
 
 cmd_site_perms() {

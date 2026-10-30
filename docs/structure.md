@@ -11,6 +11,8 @@ vps-ssh-tools/
 ├── install.sh
 ├── bin/hmtools
 ├── lib/           # help, logging, detect, db, size, rclone, ols (+ loadery)
+│   ├── pkg.sh + pkg/   # adapter menedżera pakietów (apt|rpm) + overrides/OS_ID
+│   ├── os_family.sh + os/  # adapter rodziny OS (debian|rhel) + overrides/OS_ID
 │   ├── common/    # ui, config, context, self
 │   ├── complete/  # helpers, tab
 │   ├── backup/    # core, list, restore, prune, schedule, archive

@@ -19,31 +19,7 @@ hm_php_suffix_to_branch() {
 
 # Lista bazowych pakietów lsphpNN z lokalnego indeksu: suffix<TAB>candidate_raw
 hm_php_repo_list_available_bases() {
-  local pm name ver sfx
-  pm="$(hm_pkg_manager 2>/dev/null || true)"
-  case "${pm}" in
-    apt)
-      while IFS= read -r name; do
-        [[ "${name}" =~ ^lsphp([0-9]+)$ ]] || continue
-        sfx="${BASH_REMATCH[1]}"
-        ver="$(LC_ALL=C apt-cache policy "${name}" 2>/dev/null | awk '/^[[:space:]]+Candidate:/{print $2; exit}')"
-        [[ -n "${ver}" && "${ver}" != "(none)" ]] || continue
-        printf '%s\t%s\n' "${sfx}" "${ver}"
-      done < <(apt-cache pkgnames 'lsphp' 2>/dev/null | grep -E '^lsphp[0-9]+$' | sort -V || true)
-      ;;
-    dnf|yum)
-      while IFS=$'\t' read -r name ver; do
-        [[ -n "${name}" ]] || continue
-        [[ "${name}" =~ ^lsphp([0-9]+)$ ]] || continue
-        sfx="${BASH_REMATCH[1]}"
-        [[ -n "${ver}" && "${ver}" != "(none)" ]] || continue
-        printf '%s\t%s\n' "${sfx}" "${ver}"
-      done < <(
-        LC_ALL=C "${pm}" -q -C repoquery --qf '%{name}\t%{version}-%{release}' 'lsphp[0-9][0-9]' 2>/dev/null \
-          || true
-      )
-      ;;
-  esac
+  hm_pkg_list_available_bases "lsphp"
 }
 
 # Kanał wersji: stable | niepewna (…)
@@ -145,125 +121,30 @@ hm_php_clean_pkg_ver() {
   printf '%s' "${raw}"
 }
 
-hm_pkg_cache_age_info() {
-  local f="" mtime now age_s
-  now="$(date +%s)"
-  if [[ -f /var/cache/apt/pkgcache.bin ]]; then
-    f="/var/cache/apt/pkgcache.bin"
-  elif [[ -d /var/lib/apt/lists ]]; then
-    f="$(find /var/lib/apt/lists -type f 2>/dev/null | head -1 || true)"
-  elif [[ -d /var/cache/dnf ]]; then
-    f="$(find /var/cache/dnf -type f 2>/dev/null | head -1 || true)"
-  elif [[ -d /var/cache/yum ]]; then
-    f="$(find /var/cache/yum -type f 2>/dev/null | head -1 || true)"
-  fi
-  [[ -n "${f}" && -e "${f}" ]] || { printf 'nieznany'; return 0; }
-  mtime="$(stat -c %Y "${f}" 2>/dev/null || echo 0)"
-  age_s=$((now - mtime))
-  [[ "${age_s}" -lt 0 ]] && age_s=0
-  if [[ "${age_s}" -lt 120 ]]; then
-    printf 'przed chwilą'
-  elif [[ "${age_s}" -lt 3600 ]]; then
-    printf '%s min temu' "$((age_s / 60))"
-  elif [[ "${age_s}" -lt 86400 ]]; then
-    printf '%s godz. temu' "$((age_s / 3600))"
-  else
-    printf '%s dni temu' "$((age_s / 86400))"
-  fi
-}
+# hm_pkg_cache_age_info — w lib/pkg.sh
 
 hm_php_pkg_refresh() {
-  local pm
-  pm="$(hm_pkg_manager 2>/dev/null || true)"
-  case "${pm}" in
-    apt)
-      hm_info "Odświeżanie list pakietów (apt-get update)…"
-      hm_run apt-get update
-      ;;
-    dnf)
-      hm_info "Odświeżanie cache (dnf makecache)…"
-      hm_run dnf makecache -y || true
-      ;;
-    yum)
-      hm_info "Odświeżanie cache (yum makecache)…"
-      hm_run yum makecache -y || true
-      ;;
-    *)
-      hm_err "Brak apt-get / dnf / yum — nie mogę odświeżyć indeksu."
-      return 1
-      ;;
-  esac
+  hm_pkg_refresh
 }
 
 # Wypisz: installed_pkg<TAB>candidate_pkg<TAB>candidate_clean<TAB>upgradable_count
 hm_php_repo_info_for_suffix() {
   local suffix="$1"
-  local pm
-  pm="$(hm_pkg_manager 2>/dev/null || echo '')"
-
-  case "${pm}" in
-    apt)
-      local -a pkgs=()
-      local p
-      while IFS= read -r p; do
-        [[ -n "${p}" ]] && pkgs+=("${p}")
-      done < <(hm_php_installed_packages "${suffix}")
-      [[ "${#pkgs[@]}" -eq 0 ]] && pkgs=("lsphp${suffix}")
-
-      local policy_out inst cand upg_count=0
-      policy_out="$(LC_ALL=C apt-cache policy "${pkgs[@]}" 2>/dev/null || true)"
-      IFS=$'\t' read -r inst cand upg_count < <(
-        awk -v main="lsphp${suffix}:" '
-          /^[^ ]/ { pkg=$1; inst=""; cand="" }
-          /^[[:space:]]+Installed:/ { inst=$2 }
-          /^[[:space:]]+Candidate:/ {
-            cand=$2
-            if (pkg == main || main_inst == "") {
-              main_inst=inst; main_cand=cand
-            }
-            if (inst != "" && inst != "(none)" && cand != "" && cand != "(none)" && inst != cand) {
-              upg++
-            }
-          }
-          END {
-            printf "%s\t%s\t%d\n", (main_inst ? main_inst : "-"), (main_cand ? main_cand : "-"), upg+0
-          }
-        ' <<<"${policy_out}"
-      )
-      [[ -n "${inst}" ]] || inst="-"
-      [[ -n "${cand}" ]] || cand="-"
-      [[ -n "${upg_count}" ]] || upg_count=0
-
-      # dpkg: Candidate nowszy od Installed (rebuildy -1 → -2)
-      if [[ "${inst}" != "-" && "${inst}" != "(none)" && "${cand}" != "-" && "${cand}" != "(none)" ]]; then
-        if hm_have_cmd dpkg && dpkg --compare-versions "${cand}" gt "${inst}" 2>/dev/null; then
-          [[ "${upg_count}" -eq 0 ]] && upg_count=1
-        fi
-      fi
-
-      printf '%s\t%s\t%s\t%s\n' "${inst}" "${cand}" "$(hm_php_clean_pkg_ver "${cand}")" "${upg_count:-0}"
-      ;;
-    dnf|yum)
-      local inst="-" cand="" clean_cand upg_count=0 chk
-      if hm_have_cmd rpm; then
-        inst="$(rpm -q --qf '%{VERSION}-%{RELEASE}' "lsphp${suffix}" 2>/dev/null || echo '-')"
-        [[ "${inst}" == *"not installed"* ]] && inst="-"
-      fi
-      # lokalny cache (-C); check-update zwraca tylko pakiety do aktualizacji
-      chk="$(LC_ALL=C "${pm}" -q -C check-update "lsphp${suffix}*" 2>/dev/null || true)"
-      cand="$(printf '%s\n' "${chk}" | awk -v p="^lsphp${suffix}" '$1 ~ p { print $2; exit }')"
-      upg_count="$(printf '%s\n' "${chk}" | awk -v p="^lsphp${suffix}" '$1 ~ p { c++ } END { print c+0 }')"
-      if [[ -z "${cand}" ]]; then
-        cand="${inst}"
-      fi
-      [[ -n "${cand}" ]] || cand="-"
-      clean_cand="$(hm_php_clean_pkg_ver "${cand}")"
-      printf '%s\t%s\t%s\t%s\n' "${inst}" "${cand}" "${clean_cand}" "${upg_count:-0}"
-      ;;
-    *)
-      printf -- '-\t-\t-\t0\n'
-      ;;
-  esac
+  local main="lsphp${suffix}"
+  local -a pkgs=()
+  local p inst cand upg_count
+  while IFS= read -r p; do
+    [[ -n "${p}" ]] && pkgs+=("${p}")
+  done < <(hm_php_installed_packages "${suffix}")
+  if [[ "${#pkgs[@]}" -eq 0 ]]; then
+    IFS=$'\t' read -r inst cand upg_count < <(hm_pkg_status_for "${main}")
+  else
+    IFS=$'\t' read -r inst cand upg_count < <(hm_pkg_status_for "${main}" "${pkgs[@]}")
+  fi
+  [[ -n "${inst}" ]] || inst="-"
+  [[ -n "${cand}" ]] || cand="-"
+  [[ -n "${upg_count}" ]] || upg_count=0
+  printf '%s\t%s\t%s\t%s\n' "${inst}" "${cand}" "$(hm_php_clean_pkg_ver "${cand}")" "${upg_count}"
 }
 
 hm_php_latest_remote() {
@@ -451,7 +332,7 @@ hm_list_available_php() {
       elif [[ "${upg_count}" -gt 0 && "${inst_pkg}" != "${cand_pkg}" ]]; then
         status="${C_YELLOW}dostępna aktualizacja pakietów → ${cand_pkg}${C_RESET}"
       elif [[ "${inst_pkg}" != "-" && "${inst_pkg}" != "(none)" && "${cand_pkg}" != "-" && "${cand_pkg}" != "(none)" && "${inst_pkg}" != "${cand_pkg}" ]]; then
-        if hm_have_cmd dpkg && dpkg --compare-versions "${cand_pkg}" gt "${inst_pkg}" 2>/dev/null; then
+        if hm_pkg_version_gt "${cand_pkg}" "${inst_pkg}" 2>/dev/null; then
           status="${C_YELLOW}dostępna aktualizacja pakietów → ${cand_pkg}${C_RESET}"
         fi
       fi
@@ -466,11 +347,7 @@ hm_list_available_php() {
     echo
     local age_info pm_label
     age_info="$(hm_pkg_cache_age_info)"
-    pm_label="apt-cache"
-    case "$(hm_pkg_manager 2>/dev/null || true)" in
-      dnf) pm_label="dnf" ;;
-      yum) pm_label="yum" ;;
-    esac
+    pm_label="$(hm_pkg_label)"
     echo "  ${C_DIM}Źródło: repozytorium pakietów (${pm_label}, indeks sprzed ${age_info}). Odśwież: php --refresh${C_RESET}"
   fi
 

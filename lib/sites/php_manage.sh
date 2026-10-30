@@ -27,29 +27,42 @@ hm_php_lsphp_suffix() {
   printf '%s%s' "${maj}" "${min}"
 }
 
-hm_pkg_manager() {
-  if hm_have_cmd apt-get; then
-    echo apt
-  elif hm_have_cmd dnf; then
-    echo dnf
-  elif hm_have_cmd yum; then
-    echo yum
-  else
-    return 1
-  fi
+# hm_pkg_manager / hm_pkg_id — w lib/pkg.sh
+
+# Instalacja brakującej gałęzi LSPHP (różne zestawy pakietów per PM — bez CLI w feature)
+hm_php_install_branch_packages() {
+  local suffix="${1:-}"
+  [[ -n "${suffix}" ]] || return 1
+  case "$(hm_pkg_id)" in
+    apt)
+      hm_pkg_install \
+        "lsphp${suffix}" \
+        "lsphp${suffix}-common" \
+        "lsphp${suffix}-mysql" \
+        "lsphp${suffix}-curl" \
+        "lsphp${suffix}-opcache" \
+        "lsphp${suffix}-imap" \
+        "lsphp${suffix}-msgpack" \
+        "lsphp${suffix}-redis" \
+        "lsphp${suffix}-intl" \
+        "lsphp${suffix}-pgsql" \
+        "lsphp${suffix}-sqlite3" \
+        "lsphp${suffix}-ldap" \
+        || hm_pkg_install "lsphp${suffix}" "lsphp${suffix}-common" "lsphp${suffix}-mysql"
+      ;;
+    *)
+      hm_pkg_install "lsphp${suffix}*"
+      ;;
+  esac
 }
 
 hm_php_installed_packages() {
-  local suffix="$1"
-  if hm_have_cmd dpkg-query; then
-    dpkg-query -W -f='${Package}\n' "lsphp${suffix}*" 2>/dev/null | grep -E "^lsphp${suffix}" || true
-    return 0
-  fi
-  if hm_have_cmd rpm; then
-    rpm -qa --qf '%{NAME}\n' "lsphp${suffix}*" 2>/dev/null | grep -E "^lsphp${suffix}" || true
-    return 0
-  fi
-  return 1
+  local suffix="$1" p
+  while IFS= read -r p; do
+    [[ -n "${p}" ]] || continue
+    [[ "${p}" =~ ^lsphp${suffix} ]] || continue
+    printf '%s\n' "${p}"
+  done < <(hm_pkg_list_installed "lsphp${suffix}*" 2>/dev/null || true)
 }
 
 # hm_ols_reload_soft — w lib/detect.sh
@@ -273,12 +286,11 @@ hm_php_ext_install() {
   name="$(printf '%s' "${name}" | sed -E 's/^php-//; s/^lsphp[0-9]+-//')"
   pkg="lsphp${suffix}-${name}"
 
-  if ! pm="$(hm_pkg_manager)"; then
+  if ! pm="$(hm_pkg_id)"; then
     hm_err "Brak apt-get / dnf / yum."
     return 1
   fi
-  local refresh_step="Odświeżenie indeksów pakietów (dnf/yum)"
-  [[ "${pm}" == "apt" ]] && refresh_step="Odświeżenie indeksów pakietów (apt-get update)"
+  local refresh_step="Odświeżenie indeksów pakietów (${pm})"
   if ! hm_confirm_plan "php ext install — ${pkg}" \
     "Instalacja rozszerzenia PHP z repozytorium LiteSpeed." \
     "${refresh_step}" \
@@ -289,14 +301,8 @@ hm_php_ext_install() {
   fi
 
   set +e
-  case "${pm}" in
-    apt)
-      hm_run apt-get update
-      DEBIAN_FRONTEND=noninteractive hm_run apt-get install -y "${pkg}"
-      ;;
-    dnf) hm_run dnf install -y "${pkg}" ;;
-    yum) hm_run yum install -y "${pkg}" ;;
-  esac
+  hm_pkg_refresh
+  hm_pkg_install "${pkg}"
   local rc=$?
   set -e
   [[ "${rc}" -eq 0 ]] || { hm_err "Instalacja ${pkg} nieudana (rc=${rc})."; return "${rc}"; }

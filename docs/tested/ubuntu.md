@@ -194,7 +194,10 @@ Checklist ręcznych testów hmtools na **ubuntu**. Zaznaczaj `- [x]` po weryfika
 
 - [ ] `hmtools.conf` — odczyt `RCLONE_REMOTE` / `FORCE_*`
 - [ ] `FORCE_PANEL` / `FORCE_WEBSERVER` zmienia wynik `detect`
-- [ ] Menedżer pakietów zgodny z OS (apt vs dnf/yum) przy `php --refresh` / `update-php`
+- [ ] `FORCE_PKG_MANAGER` (opcjonalnie) — wymusza adapter `lib/pkg/`
+- [ ] Menedżer pakietów zgodny z OS (apt vs dnf/yum) przy `php --refresh` / `update-php` (przez `hm_pkg_*`)
+- [ ] Zmiana w `lib/pkg/apt.sh` lub `rpm.sh` → retest **obu** rodzin; zmiana w `overrides/<OS_ID>.sh` → tylko ta dystrybucja
+- [ ] `security ban` / `unban` — firewall przez adapter OS (ufw lub firewalld)
 - [ ] (opcjonalnie) `SITES_ROOT` — `webs delete` / `ols cache flush` akceptuje ścieżkę
 
 ## Tryb restricted (symulacja)

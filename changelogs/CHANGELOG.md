@@ -16,6 +16,9 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [v0.1.8]
 
+- Refactor: `lib/pkg.sh` + `pkg/apt|rpm` — adapter menedżera pakietów; PHP/`update-php`/`ext` bez `case apt|dnf|yum`
+- Refactor: `lib/os_family.sh` + `os/debian|rhel` — web group, apache, firewall; override per `OS_ID`
+- Feat: `FORCE_PKG_MANAGER` w conf; docs `architecture-pkg.md` + reguła Cursor distro-adapters
 - Feat: `php` — sekcja nowszych gałęzi LSPHP dostępnych w repo do instalacji (kanał stable/niepewna → `update-php`)
 - Docs: `CHANGELOG.md` przeniesiony do `changelogs/CHANGELOG.md`
 - Docs: `docs/FAQ.md` — FAQ z sekcjami toggle; pierwsze Q: mechanizm `update-php <ver>` (pełny przebieg krok po kroku)

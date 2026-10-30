@@ -22,7 +22,9 @@ Na Nginx/Apache dostępne są głównie narzędzia niezależne od OLS (`mysql`, 
 | Reload | `lswsctrl` → `systemctl` | `systemctl reload nginx` | `apache2` | `httpd` |
 | SSL LE | `/etc/letsencrypt/` (wspólne) | j.w. | j.w. | j.w. |
 
-Helpery: `hm_service_reload`, `hm_web_error_log_guess`, `hm_pkg_install`, `PKG_MANAGER` / `OS_FAMILY`.
+Helpery: `hm_service_reload`, `hm_web_error_log_guess`, `hm_pkg_*` ([`lib/pkg.sh`](../lib/pkg.sh)), `hm_os_*` ([`lib/os_family.sh`](../lib/os_family.sh)), `PKG_MANAGER` / `OS_FAMILY`.
+
+Architektura SOLID (dwie osie + override per `OS_ID`): **[architecture-pkg.md](architecture-pkg.md)**.
 
 ## Niewspierany / nierozpoznany OS
 

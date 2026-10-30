@@ -11,7 +11,7 @@ Często zadawane pytania o działanie komend. Kliknij pytanie, żeby rozwinąć 
 
 `update-php <ver>` (aliasy: `php-update`, `php update <ver>` / `php upgrade <ver>`) **nie zmienia** wersji PHP przypisanej do strony (`php set`). Aktualizuje **pakiety LSPHP danej gałęzi** (np. `lsphp84*`) z **repozytorium LiteSpeed** na serwerze (apt/dnf/yum), a potem miękko przeładowuje OpenLiteSpeed.
 
-Kod: `commands/health.sh` → `cmd_update_php`; pomocnicze: `lib/sites/php_manage.sh`, `lib/sites/php.sh`, `lib/common/ui.sh` (`hm_confirm` / `hm_confirm_plan`), `lib/detect.sh` (`hm_ols_reload_soft`).
+Kod: `commands/health.sh` → `cmd_update_php` (orkiestracja); pakiety wyłącznie przez `hm_pkg_*` ([`lib/pkg.sh`](../lib/pkg.sh) → adapter `apt`/`rpm`); pomocnicze: `lib/sites/php_manage.sh`, `lib/sites/php.sh`, `lib/common/ui.sh`, `hm_ols_reload_soft`. Szczegóły warstw: [architecture-pkg.md](architecture-pkg.md).
 
 ---
 

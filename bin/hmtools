@@ -23,6 +23,10 @@ source "${HMTOOLS_ROOT}/lib/complete.sh"
 # shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/detect.sh"
 # shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/pkg.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/os_family.sh"
+# shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/size.sh"
 # shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/db.sh"

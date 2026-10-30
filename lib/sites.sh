@@ -11,6 +11,10 @@ _LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${_LIB_DIR}/common.sh"
 # shellcheck source=detect.sh
 source "${_LIB_DIR}/detect.sh"
+# shellcheck source=pkg.sh
+[[ -n "${HMTOOLS_PKG_LOADED:-}" ]] || source "${_LIB_DIR}/pkg.sh"
+# shellcheck source=os_family.sh
+[[ -n "${HMTOOLS_OS_FAMILY_LOADED:-}" ]] || source "${_LIB_DIR}/os_family.sh"
 # shellcheck source=size.sh
 source "${_LIB_DIR}/size.sh"
 # shellcheck source=db.sh

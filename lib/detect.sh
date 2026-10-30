@@ -267,6 +267,11 @@ hm_detect_apply_overrides() {
   if [[ -n "${FORCE_SITES_ROOT:-}" && -z "${SITES_ROOT:-}" ]]; then
     SITES_ROOT="${FORCE_SITES_ROOT}"
   fi
+  if [[ -n "${FORCE_PKG_MANAGER:-}" ]]; then
+    case "${FORCE_PKG_MANAGER}" in
+      apt|dnf|yum) PKG_MANAGER="${FORCE_PKG_MANAGER}" ;;
+    esac
+  fi
   if [[ "${ALLOW_UNSUPPORTED_OS:-0}" == "1" ]]; then
     OS_SUPPORTED=1
   fi
@@ -274,16 +279,24 @@ hm_detect_apply_overrides() {
 
 hm_detect_pkg_manager() {
   PKG_MANAGER="unknown"
-  if type hm_pkg_manager >/dev/null 2>&1; then
-    PKG_MANAGER="$(hm_pkg_manager 2>/dev/null || echo unknown)"
-  elif hm_have_cmd apt-get; then
-    PKG_MANAGER="apt"
-  elif hm_have_cmd dnf; then
-    PKG_MANAGER="dnf"
-  elif hm_have_cmd yum; then
-    PKG_MANAGER="yum"
+  if [[ -n "${FORCE_PKG_MANAGER:-}" ]]; then
+    case "${FORCE_PKG_MANAGER}" in
+      apt|dnf|yum) PKG_MANAGER="${FORCE_PKG_MANAGER}" ;;
+    esac
   fi
-  # spójność z rodziną OS (gdy CLI obecne)
+  if [[ "${PKG_MANAGER}" == "unknown" ]] && type hm_pkg_id >/dev/null 2>&1; then
+    PKG_MANAGER="$(hm_pkg_id 2>/dev/null || echo unknown)"
+  fi
+  if [[ "${PKG_MANAGER}" == "unknown" ]]; then
+    if hm_have_cmd apt-get; then
+      PKG_MANAGER="apt"
+    elif hm_have_cmd dnf; then
+      PKG_MANAGER="dnf"
+    elif hm_have_cmd yum; then
+      PKG_MANAGER="yum"
+    fi
+  fi
+  # spójność z rodziną OS (gdy CLI nieobecne)
   if [[ "${PKG_MANAGER}" == "unknown" ]]; then
     case "${OS_FAMILY}" in
       debian) PKG_MANAGER="apt" ;;
@@ -304,6 +317,15 @@ hm_detect_all() {
   if ! hm_os_is_supported; then
     HMTOOLS_RESTRICTED=1
   fi
+  # wiązanie strategii pakietów / OS_FAMILY (po znanym OS_ID + PKG_MANAGER)
+  if type hm_pkg_bind >/dev/null 2>&1; then
+    HM_PKG_BACKEND_KEY=""
+    hm_pkg_bind 2>/dev/null || true
+  fi
+  if type hm_os_bind >/dev/null 2>&1; then
+    HM_OS_BACKEND_KEY=""
+    hm_os_bind 2>/dev/null || true
+  fi
 }
 
 # --- Ścieżki / usługi zależne od dystrybucji i WWW -------------------------
@@ -318,6 +340,9 @@ hm_web_error_log_guess() {
       [[ -f /var/log/nginx/error.log ]] && { echo /var/log/nginx/error.log; return 0; }
       ;;
     apache)
+      if type hm_os_apache_error_log >/dev/null 2>&1 && hm_os_apache_error_log; then
+        return 0
+      fi
       [[ -f /var/log/apache2/error.log ]] && { echo /var/log/apache2/error.log; return 0; }
       [[ -f /var/log/httpd/error_log ]] && { echo /var/log/httpd/error_log; return 0; }
       ;;
@@ -330,7 +355,9 @@ hm_service_unit_for_web() {
     openlitespeed|litespeed) echo "lsws" ;;
     nginx) echo "nginx" ;;
     apache)
-      if [[ "${OS_FAMILY}" == "rhel" ]] || [[ -d /etc/httpd ]]; then
+      if type hm_os_apache_unit >/dev/null 2>&1; then
+        hm_os_apache_unit
+      elif [[ "${OS_FAMILY}" == "rhel" ]] || [[ -d /etc/httpd ]]; then
         echo "httpd"
       else
         echo "apache2"
@@ -361,21 +388,7 @@ hm_service_reload() {
   return 1
 }
 
-hm_pkg_install() {
-  # hm_pkg_install <pakiet…> — apt vs dnf/yum
-  local pm
-  pm="${PKG_MANAGER:-}"
-  [[ -n "${pm}" && "${pm}" != "unknown" ]] || pm="$(hm_pkg_manager 2>/dev/null || true)"
-  case "${pm}" in
-    apt) hm_run apt-get install -y "$@" ;;
-    dnf) hm_run dnf install -y "$@" ;;
-    yum) hm_run yum install -y "$@" ;;
-    *)
-      hm_err "Brak wspieranego menedżera pakietów (apt/dnf/yum)."
-      return 1
-      ;;
-  esac
-}
+# hm_pkg_install — w lib/pkg.sh (adapter apt/rpm)
 
 hm_detect_tool_hints() {
   # Sugerowane komendy hmtools pod wykryty stos (stdout, jedna linia / punkt)
@@ -445,7 +458,7 @@ hm_detect_print() {
   fi
   echo
   echo "  ${C_DIM}Nadpisanie (gdy auto się myli) w ${HMTOOLS_CONF:-hmtools.conf}:${C_RESET}"
-  echo "    FORCE_PANEL=…   FORCE_WEBSERVER=…   FORCE_DB_ENGINE=…   ALLOW_UNSUPPORTED_OS=1"
+  echo "    FORCE_PANEL=…   FORCE_WEBSERVER=…   FORCE_DB_ENGINE=…   FORCE_PKG_MANAGER=…   ALLOW_UNSUPPORTED_OS=1"
   echo
 }
 

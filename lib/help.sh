@@ -211,14 +211,15 @@ EOF
 Użycie (kontekst strony): perms [check|fix]
 
 check  właściciel/grupa docroot, pliki root, 777, wp-config/.env
-fix    chown user:user wewnątrz public_html; docroot user:nogroup 750;
+fix    chown user:user wewnątrz public_html; docroot user:<web_group> 750;
+       (grupa: hm_os_web_group — nogroup/nobody wg OS)
        katalogi 755 / pliki 644; wrażliwe 600 (z potwierdzeniem)
 EOF
       ;;
     php)
       cat <<'EOF'
 Użycie:
-  php                      Lista LSPHP + Candidate z repo (apt-cache/dnf);
+  php                      Lista LSPHP + Candidate z repo (hm_pkg_*);
                            na dole: nowsze gałęzie dostępne do instalacji (stable/niepewna)
   php --refresh | -r       Odśwież indeks pakietów, potem lista
   php check-update         Alias: php --refresh
