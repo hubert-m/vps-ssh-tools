@@ -427,14 +427,25 @@ hm_ols_cache_flush() {
     [[ -L "${t}" ]] && continue
     real="$(realpath -m "${t}" 2>/dev/null || echo "${t}")"
     case "${real}" in
-      /home/*|/usr/local/lsws/*|/usr/local/litespeed/*|/tmp/lshttpd/*) ;;
-      *) hm_warn "Pominięto niebezpieczną ścieżkę: ${t}"; continue ;;
+      /home/*|/usr/local/lsws/*|/usr/local/litespeed/*|/tmp/lshttpd/*|/var/www/*/*) ;;
+      *)
+        if [[ -n "${SITES_ROOT:-}" && "${real}" == "${SITES_ROOT%/}"/*/* ]]; then
+          :
+        else
+          hm_warn "Pominięto niebezpieczną ścieżkę: ${t}"
+          continue
+        fi
+        ;;
     esac
     uniq+=("${real}")
   done
-  # dedupe
-  mapfile -t uniq < <(printf '%s\n' "${uniq[@]}" | awk '!seen[$0]++')
 
+  if [[ "${#uniq[@]}" -eq 0 ]]; then
+    hm_info "Brak katalogów LSCache do wyczyszczenia."
+    return 0
+  fi
+  # dedupe (po sprawdzeniu pustej tablicy — inaczej printf+awk tworzy uniq=(""))
+  mapfile -t uniq < <(printf '%s\n' "${uniq[@]}" | awk 'NF && !seen[$0]++')
   if [[ "${#uniq[@]}" -eq 0 ]]; then
     hm_info "Brak katalogów LSCache do wyczyszczenia."
     return 0

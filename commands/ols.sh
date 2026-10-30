@@ -146,13 +146,20 @@ cmd_ols_proxy() {
       ;;
     set-port|port|setport)
       shift || true
-      local port="${1:-}" name="${2:-}"
-      [[ -n "${port}" ]] || { hm_err "Użycie: ols proxy set-port <port> [nazwa]"; return 1; }
-      hm_ols_proxy_set_port "${HM_SITE_DOMAIN:-}" "${port}" "${name}"
+      local domain="" port="" name=""
+      if [[ -n "${1:-}" ]] && hm_is_valid_domain "${1}" && [[ -n "${2:-}" ]] && hm_is_valid_port "${2}"; then
+        domain="${1}"; port="${2}"; name="${3:-}"
+      elif [[ -n "${1:-}" ]] && hm_is_valid_port "${1}"; then
+        domain="${HM_SITE_DOMAIN:-}"; port="${1}"; name="${2:-}"
+      else
+        hm_err "Użycie: ols proxy set-port [domena] <port> [nazwa]"
+        return 1
+      fi
+      hm_ols_proxy_set_port "${domain}" "${port}" "${name}"
       ;;
     help|-h|--help)
       echo "Użycie: ols proxy [status] [domena]"
-      echo "        ols proxy set-port <port> [nazwa]   (w kontekście strony)"
+      echo "        ols proxy set-port [domena] <port> [nazwa]"
       echo "  W kontekście: proxy / proxy set-port <port>"
       ;;
     *)

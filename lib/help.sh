@@ -164,7 +164,7 @@ EOF
       cat <<'EOF'
 Użycie (kontekst strony): proxy [status|set-port <port> [nazwa]]
        ols proxy [status] [domena]
-       ols proxy set-port <port> [nazwa]
+       ols proxy set-port [domena] <port> [nazwa]
 
 Weryfikuje extprocessor type proxy (ss + curl). Martwy port → ryzyko 503.
 EOF
