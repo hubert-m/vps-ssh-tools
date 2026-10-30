@@ -1,6 +1,47 @@
 #!/usr/bin/env bash
 # Komenda: ols / lsws (+ htaccess/proxy w kontekście strony)
 
+
+_hm_cmd_help ols <<'EOF'
+Użycie: ols [status|reload|restart|log|stats|top|htaccess|cache|proxy|admin]
+
+Zarządzanie OpenLiteSpeed:
+  status              Stan / wersja / proces (domyślne)
+  reload              Przeładowanie konfiguracji
+  restart             Restart (z potwierdzeniem)
+  log [N]             Ostatnie N linii error.log (domyślnie 50)
+  stats | top         Live /tmp/lshttpd/.rtreport* (RPS, vhosty, WAITQUE LSAPI)
+  htaccess [enable]   .htaccess / autoLoadHtaccess (+ reload)
+  cache status|flush  LSCache (vhost / global all)
+  proxy [set-port N]  Zdrowie backendów reverse proxy (503)
+  admin [status|pass] WebAdmin (port, tunel SSH, admpass.sh)
+
+W kontekście strony: htaccess, proxy, clean --lscache
+EOF
+
+_hm_cmd_help htaccess <<'EOF'
+Użycie (kontekst strony): htaccess [enable]
+       ols htaccess [check|enable] [domena]
+
+Sprawdza .htaccess, autoLoadHtaccess, rewrite enable oraz mtime vs start OLS.
+htaccess enable — dopisuje dyrektywy i robi ols reload.
+EOF
+
+_hm_cmd_help proxy <<'EOF'
+Użycie (kontekst strony): proxy [status|set-port <port> [nazwa]]
+       ols proxy [status] [domena]
+       ols proxy set-port [domena] <port> [nazwa]
+
+Weryfikuje extprocessor type proxy (ss + curl). Martwy port → ryzyko 503.
+EOF
+
+_hm_cmd_help cache <<'EOF'
+Użycie: ols cache [status|flush [domena|all]]
+        clean --lscache   (w kontekście strony)
+
+Status module cache + katalogi lscache; flush czyści zawartość (z potwierdzeniem).
+EOF
+
 cmd_ols() {
   hm_detect_all
   local sub="${1:-status}"

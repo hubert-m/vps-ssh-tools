@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 # Moduł: use
 
+
+_hm_cmd_help use <<'EOF'
+Użycie: use <numer|domena>
+
+Wejście w kontekst wybranej strony. Numer z listy 'webs' albo nazwa domeny
+(dopuszczalne częściowe dopasowanie).
+
+W kontekście prompt zmienia się na [domena]> .
+Wyjście z kontekstu: exit
+
+Tab uzupełnia dostępne domeny.
+EOF
+
 cmd_use() {
   local arg="${1:-}"
   if [[ -z "${arg}" ]]; then

@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 # cron / crons — lista i edycja zadań cron
 
+
+_hm_cmd_help cron <<'EOF'
+Użycie:
+  cron | cron list     W kontekście: crony strony; globalnie: system + users
+  cron all             Wszystkie crony (system + użytkownicy)
+  cron system          /etc/crontab, /etc/cron.d, katalogi okresowe
+  cron users           Crontaby wszystkich użytkowników ze spoola
+  cron site <domena>   Crony powiązane ze stroną (user + heurystyka w /etc)
+  cron user <name>     Crontab wybranego użytkownika
+  cron edit [user]     Edycja crontab -e (w kontekście: user strony)
+
+Przykłady:
+  hmtools> cron
+  hmtools> use example.com
+  [example.com]> cron
+  [example.com]> cron edit
+EOF
+
 hm_cron_spool_dir() {
   if [[ -d /var/spool/cron/crontabs ]]; then
     echo /var/spool/cron/crontabs

@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 # Komenda: security — audyt VPS (porty, firewall, Fail2Ban, SSH, skan docroot)
 
+
+_hm_cmd_help security <<'EOF'
+Użycie:
+  security status          Firewall + Fail2Ban + skrót portów
+  security ports           Publiczne 0.0.0.0/[::] + alerty (3306/6379/7080/3xxx)
+  security ssh             sshd_config, authorized_keys, lastb
+  security fail2ban        Status jaili i zbanowanych IP
+  security ban|unban <IP>  Blokada / odbanowanie
+  security scan [domena]   Skan docroot (php w uploads, 777, .sql/.env/.git)
+
+W health: skrócone ostrzeżenia o wrażliwych portach publicznych.
+EOF
+
 hm_is_valid_ip() {
   local ip="${1:-}"
   [[ "${ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || [[ "${ip}" =~ ^[0-9a-fA-F:]+$ ]]

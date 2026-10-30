@@ -26,6 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Refactor: logika toolowa `lib/backup/*` / `lib/sites/*` → `commands/backup|php|delete-site|_shared/sites/`
 - Feat: pluginowy dispatch (`_dispatch.sh`) — aliasy / restricted / site bez centralnego `case`
 - Docs: `structure.md` + `architecture-commands.md` (kontrakt rejestru modułów)
+- Refactor: `help <polecenie>` — treści w `commands/*/main.sh` (`_hm_cmd_help` / `HM_CMD_HELP`); brak wpisu → „Brak podpowiedzi dla tego polecenia”
 
 ## [v0.1.7]
 

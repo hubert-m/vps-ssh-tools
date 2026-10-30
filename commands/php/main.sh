@@ -1,6 +1,46 @@
 #!/usr/bin/env bash
 # Moduł: php
 
+
+_hm_cmd_help php <<'EOF'
+Użycie:
+  php                      Lista LSPHP + Candidate z repo (hm_pkg_*);
+                           na dole: nowsze gałęzie dostępne do instalacji (stable/niepewna)
+  php --refresh | -r       Odśwież indeks pakietów, potem lista
+  php check-update         Alias: php --refresh
+  php --phpnet             Opcjonalnie: porównanie z php.net (HTTP)
+  php update <ver>         Alias: update-php <ver> (też instalacja nowej gałęzi)
+  php set <ver>            W kontekście: przełącz LSPHP strony (vhost/CyberPanel)
+  php ext [list] [ver]     Moduły php -m + status kluczowych rozszerzeń
+  php ext install <n> [ver] Instalacja lsphpXX-<n> (apt/dnf/yum)
+  php ini [ver]            Limity php.ini + nadpisania vhost / .user.ini
+  php ini set <k> <v> [--vhost|--global]
+  php restart [--global]   Kill workerów lsphp (Detached Mode) + ols reload
+  php ps                   Procesy lsphp (CPU/RAM)
+
+W kontekście (use <domena>): php set / ext / ini / restart działają na tej stronie.
+EOF
+
+_hm_cmd_help update-php <<'EOF'
+Użycie:
+  update-php <wersja>
+  php update <wersja>
+
+Przykłady:
+  update-php 8.4
+  update-php 84
+  php update lsphp83
+
+Działanie:
+  1) pokazuje wersję lokalną vs Candidate z repozytorium
+  2) przy braku nowszej wersji proponuje odświeżenie indeksu
+  3) pyta o potwierdzenie [t/N]
+  4) aktualizuje pakiety lsphpXX* (apt/dnf/yum)
+  5) przeładowuje OpenLiteSpeed
+
+Źródło: to samo repo LiteSpeed, z którego instaluje update-php (nie php.net).
+EOF
+
 _HM_PHP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=repo.sh
 source "${_HM_PHP_DIR}/repo.sh"

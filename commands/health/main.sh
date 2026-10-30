@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # Moduł: health
 
+
+_hm_cmd_help health <<'EOF'
+Użycie: health
+
+Szybki przegląd: load, RAM, dysk, status OLS i MySQL,
+certyfikaty wygasające w ciągu 14 dni.
+EOF
+
 cmd_health() {
   hm_detect_all
   echo "${C_BOLD}Health check${C_RESET}"

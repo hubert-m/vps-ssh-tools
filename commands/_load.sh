@@ -13,6 +13,13 @@ declare -gA HM_CMD_ALIAS_MAP=()
 declare -gA HM_CMD_ENTRY=()
 declare -gA HM_CMD_RESTRICTED=()
 declare -gA HM_CMD_SITE_ENTRY=()
+declare -gA HM_CMD_HELP=()
+
+# _hm_cmd_help <topic>  + heredoc na stdin
+_hm_cmd_help() {
+  local topic="$1"
+  HM_CMD_HELP["${topic}"]="$(cat)"
+}
 
 # _hm_cmd_register <canonical> <entry_fn> [restricted_ok] [alias...]
 _hm_cmd_register() {

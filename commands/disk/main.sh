@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # Komenda: disk
 
+
+_hm_cmd_help disk <<'EOF'
+Użycie: disk
+
+Pokazuje zajętość dysków (df), inody oraz największe katalogi w /home.
+EOF
+
 cmd_disk() {
   echo "${C_BOLD}Zużycie dysku${C_RESET}"
   df -hT 2>/dev/null || df -h

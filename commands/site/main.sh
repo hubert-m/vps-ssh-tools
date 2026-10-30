@@ -3,6 +3,48 @@
 
 # Komendy dostępne w kontekście strony
 
+
+_hm_cmd_help info <<'EOF'
+Użycie: info   (w kontekście strony)
+
+Pełne informacje o środowisku: ścieżki, rozmiar, bazy, SSL, PHP, dysk.
+EOF
+
+_hm_cmd_help size <<'EOF'
+Użycie: size   (w kontekście strony)
+
+Rozmiary katalogów środowiska + top du.
+EOF
+
+_hm_cmd_help logs <<'EOF'
+Użycie (kontekst strony):
+  logs [N]           Ostatnie N linii (access/error + OLS stderr.log)
+  logs errors [N]    Tylko błędy PHP/5xx/ERROR + top powtarzających się
+  logs stats|top     Kody HTTP, top IP, top URL z access.log
+  logs follow|live   tail -F (Ctrl+C wraca do hmtools)
+EOF
+
+_hm_cmd_help clean <<'EOF'
+Użycie: clean [--lscache]   (w kontekście strony)
+
+1) Pokazuje podgląd: ścieżki, rozmiary, liczbę wpisów, próbkę zawartości
+2) Pyta o potwierdzenie [yes/no]
+3) Usuwa tylko zawartość typowych cache/tmp (+ LSCache) — foldery zostają
+
+--lscache  tylko katalogi LSCache (jak ols cache flush)
+
+Nie rusza m.in. uploads, mediów ani całego node_modules.
+EOF
+
+_hm_cmd_help perms <<'EOF'
+Użycie (kontekst strony): perms [check|fix]
+
+check  właściciel/grupa docroot, pliki root, 777, wp-config/.env
+fix    chown user:user wewnątrz public_html; docroot user:<web_group> 750;
+       (grupa: hm_os_web_group — nogroup/nobody wg OS)
+       katalogi 755 / pliki 644; wrażliwe 600 (z potwierdzeniem)
+EOF
+
 cmd_site_info() {
   hm_print_site_info "${HM_SITE_DOMAIN}"
 }

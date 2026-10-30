@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
 # pm2 / node / apps — procesy Node/React/Next pod PM2 + porty + powiązanie ze stronami
 
+
+_hm_cmd_help pm2 <<'EOF'
+Użycie:
+  pm2 | node | apps              Lista + porty + mapa proxy OLS
+  pm2 all                        Wszystkie procesy (bez filtra kontekstu)
+  pm2 proxy | site | ports | raw Jak wcześniej
+  pm2 restart|reload|stop|start <nazwa|id|all>
+  pm2 logs [nazwa] [N]           Ostatnie linie (--nostream)
+  pm2 save                       Zapisz listę procesów
+
+Akcje uruchamiane jako właściciel PM2_HOME (runuser/sudo -u),
+nie jako root z binarką z NVM użytkownika.
+
+W kontekście strony: filtr listy + PM2_HOME użytkownika strony.
+EOF
+
 hm_pm2_unix_home() {
   local user="$1"
   [[ -n "${user}" ]] || return 1

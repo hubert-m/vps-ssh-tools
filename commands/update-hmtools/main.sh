@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 # Moduł: update-hmtools
 
+
+_hm_cmd_help update-hmtools <<'EOF'
+Użycie: update-hmtools [--force]
+
+Pobiera instalator z GitHuba i aktualizuje hmtools do najnowszego taga.
+Jeśli lokalna wersja = remote — nic nie robi (chyba że --force).
+
+Po udanym update wypisuje changelog nowej wersji.
+EOF
+
 cmd_update_hmtools() {
   local force=0
   local a

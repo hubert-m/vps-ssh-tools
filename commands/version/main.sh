@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # Moduł: version
 
+
+_hm_cmd_help version <<'EOF'
+Użycie: version
+
+Pokazuje zainstalowaną wersję vs najnowszy tag na GitHubie
+oraz punktowy changelog zainstalowanej wersji.
+EOF
+
 cmd_version() {
   local cur latest
   cur="$(hm_installed_version)"

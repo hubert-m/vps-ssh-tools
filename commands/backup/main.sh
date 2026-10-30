@@ -1,6 +1,64 @@
 #!/usr/bin/env bash
 # Moduł: backup (logika w core/list/restore/prune/schedule/archive)
 
+
+_hm_cmd_help backup <<'EOF'
+Użycie:
+  backup setup              Instalacja/konfiguracja rclone + Google Drive
+  backup config             Ustaw katalog root na Drive (jednorazowo)
+  backup show               Pokaż aktualny root i strukturę
+  backup full               Pełna kopia serwera → Drive/full/<stamp>/
+  backup site <domena>      Kopia strony → Drive/<domena>/<stamp>/
+  backup archive <domena>   Archiwum (type=archive) → weryfikacja Drive → usunięcie z VPS
+  backup list [domena|full] Snapshoty + manifest (w kontekście: bieżąca domena)
+  backup restore <domena> [stamp] [--files-only|--db-only]
+                            Odtwórz pliki (tar lub chunks) + bazy; bez stamp = najnowszy
+                            (działa też dla domen tylko na Drive po webs archive)
+  backup prune [--days N] [--dry-run] [--yes]
+                            Usuń stare snapshoty (BACKUP_KEEP_DAYS / BACKUP_KEEP_MIN)
+                            Snapshoty type=archive są chronione przed prune
+  backup schedule [enable|disable|status]
+                            Cron: /etc/cron.d/hmtools-backup + log backup-cron.log
+  backup test               Test połączenia rclone
+
+Struktura na Google Drive (root = RCLONE_REMOTE):
+  <root>/full/<stamp>/           — pełne kopie serwera
+  <root>/<domena>/<stamp>/       — kopie poszczególnych stron
+  <root>/db-dumps/               — jednorazowe mysql dump
+
+W kontekście strony samo 'backup' = kopia tej strony.
+EOF
+
+_hm_cmd_help archive-site <<'EOF'
+Użycie:
+  webs archive <numer|domena>
+  backup archive <numer|domena>
+  archive-site <numer|domena>
+  (w kontekście) archive
+
+1) Pełna kopia archiwalna na Google Drive (DB + pliki + OLS + SSL + cron + PM2)
+2) Twarda weryfikacja plików na Drive (Atomic Guard)
+3) Dopiero potem całkowite usunięcie serwisu z VPS (jak delete-site)
+
+Snapshot ma type=archive (chroniony przed backup prune).
+Przywrócenie: backup restore <domena> [stamp]
+EOF
+
+_hm_cmd_help archive <<'EOF'
+Użycie:
+  webs archive <numer|domena>
+  backup archive <numer|domena>
+  archive-site <numer|domena>
+  (w kontekście) archive
+
+1) Pełna kopia archiwalna na Google Drive (DB + pliki + OLS + SSL + cron + PM2)
+2) Twarda weryfikacja plików na Drive (Atomic Guard)
+3) Dopiero potem całkowite usunięcie serwisu z VPS (jak delete-site)
+
+Snapshot ma type=archive (chroniony przed backup prune).
+Przywrócenie: backup restore <domena> [stamp]
+EOF
+
 _HM_BACKUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=core.sh
 source "${_HM_BACKUP_DIR}/core.sh"

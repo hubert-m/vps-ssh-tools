@@ -1,6 +1,31 @@
 #!/usr/bin/env bash
 # Komendy: ssl / renew-ssl
 
+
+_hm_cmd_help ssl <<'EOF'
+Użycie:
+  ssl                 Lista certyfikatów (status / dni do wygaśnięcia)
+  ssl renew [domena]  Alias: renew-ssl
+  renew-ssl [domena]  Odnów Let's Encrypt (potwierdzenie [t/N])
+
+W kontekście strony: ssl = szczegóły certu; renew-ssl = odnowienie.
+Wygasły cert → wyraźny komunikat na czerwono + podpowiedź renew-ssl.
+
+Kolejność odnawiania: cyberpanel issueSSL → acme.sh → certbot.
+EOF
+
+_hm_cmd_help renew-ssl <<'EOF'
+Użycie:
+  ssl                 Lista certyfikatów (status / dni do wygaśnięcia)
+  ssl renew [domena]  Alias: renew-ssl
+  renew-ssl [domena]  Odnów Let's Encrypt (potwierdzenie [t/N])
+
+W kontekście strony: ssl = szczegóły certu; renew-ssl = odnowienie.
+Wygasły cert → wyraźny komunikat na czerwono + podpowiedź renew-ssl.
+
+Kolejność odnawiania: cyberpanel issueSSL → acme.sh → certbot.
+EOF
+
 cmd_ssl() {
   case "${1:-}" in
     renew|renewal|issue)
