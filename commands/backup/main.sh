@@ -1,5 +1,23 @@
 #!/usr/bin/env bash
-# Komenda globalna: backup
+# Moduł: backup (logika w core/list/restore/prune/schedule/archive)
+
+_HM_BACKUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=core.sh
+source "${_HM_BACKUP_DIR}/core.sh"
+# shellcheck source=list.sh
+source "${_HM_BACKUP_DIR}/list.sh"
+# shellcheck source=restore.sh
+source "${_HM_BACKUP_DIR}/restore.sh"
+# shellcheck source=prune.sh
+source "${_HM_BACKUP_DIR}/prune.sh"
+# shellcheck source=schedule.sh
+source "${_HM_BACKUP_DIR}/schedule.sh"
+# shellcheck source=archive.sh
+source "${_HM_BACKUP_DIR}/archive.sh"
+
+cmd_archive_site() {
+  hm_backup_archive_site "$@"
+}
 
 cmd_backup() {
   local sub="${1:-}"
@@ -94,3 +112,6 @@ cmd_backup() {
       ;;
   esac
 }
+
+_hm_cmd_register backup cmd_backup 0
+_hm_cmd_register archive-site cmd_archive_site 0

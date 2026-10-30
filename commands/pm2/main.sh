@@ -700,3 +700,5 @@ hm_pm2_logs() {
 
 cmd_node() { cmd_pm2 "$@"; }
 cmd_apps() { cmd_pm2 "$@"; }
+
+_hm_cmd_register pm2 cmd_pm2 0 node apps

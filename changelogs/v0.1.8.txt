@@ -6,4 +6,8 @@
 - Feat: `php` — sekcja nowszych gałęzi LSPHP dostępnych w repo do instalacji (kanał stable/niepewna → `update-php`)
 - Docs: `CHANGELOG.md` przeniesiony do `changelogs/CHANGELOG.md`
 - Docs: `docs/FAQ.md` — FAQ z sekcjami toggle; pierwsze Q: mechanizm `update-php <ver>` (pełny przebieg krok po kroku)
+- Refactor: komendy jako moduły `commands/<narzędzie>/` + loader `_load.sh`
+- Refactor: logika toolowa `lib/backup/*` / `lib/sites/*` → `commands/backup|php|delete-site|_shared/sites/`
+- Feat: pluginowy dispatch (`_dispatch.sh`) — aliasy / restricted / site bez centralnego `case`
+- Docs: `structure.md` + `architecture-commands.md` (kontrakt rejestru modułów)
 

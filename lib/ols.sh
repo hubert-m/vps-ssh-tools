@@ -13,8 +13,14 @@ source "${_LIB_DIR}/common.sh"
 source "${_LIB_DIR}/detect.sh"
 # shellcheck source=size.sh
 source "${_LIB_DIR}/size.sh"
-# shellcheck source=sites/vhost.sh
-source "${_LIB_DIR}/sites/vhost.sh"
+# vhost helpers żyją w commands/_shared (ładowane też przez commands/_load.sh)
+if [[ -n "${HMTOOLS_ROOT:-}" && -f "${HMTOOLS_ROOT}/commands/_shared/sites/vhost.sh" ]]; then
+  # shellcheck disable=SC1091
+  source "${HMTOOLS_ROOT}/commands/_shared/sites/vhost.sh"
+elif [[ -f "${_LIB_DIR}/../commands/_shared/sites/vhost.sh" ]]; then
+  # shellcheck disable=SC1091
+  source "${_LIB_DIR}/../commands/_shared/sites/vhost.sh"
+fi
 
 hm_is_valid_port() {
   [[ "${1:-}" =~ ^[0-9]+$ ]] && [[ "${1}" -ge 1 && "${1}" -le 65535 ]]

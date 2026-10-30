@@ -303,3 +303,5 @@ cmd_cron() {
 cmd_crons() {
   cmd_cron "$@"
 }
+
+_hm_cmd_register cron cmd_cron 0 crons

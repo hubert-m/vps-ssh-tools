@@ -387,3 +387,5 @@ cmd_security_scan() {
     hm_warn "Skan: ${issues} kategori(e) z alertami."
   fi
 }
+
+_hm_cmd_register security cmd_security 0 sec

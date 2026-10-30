@@ -31,36 +31,12 @@ source "${HMTOOLS_ROOT}/lib/size.sh"
 # shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/db.sh"
 # shellcheck disable=SC1091
-source "${HMTOOLS_ROOT}/lib/sites.sh"
-# shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/ols.sh"
 # shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/rclone_drive.sh"
+# Moduły narzędzi (backup/sites/php/… + plugin dispatch)
 # shellcheck disable=SC1091
-source "${HMTOOLS_ROOT}/lib/backup.sh"
-
-# shellcheck disable=SC1091
-source "${HMTOOLS_ROOT}/commands/webs.sh"
-# shellcheck disable=SC1091
-source "${HMTOOLS_ROOT}/commands/site_shell.sh"
-# shellcheck disable=SC1091
-source "${HMTOOLS_ROOT}/commands/backup.sh"
-# shellcheck disable=SC1091
-source "${HMTOOLS_ROOT}/commands/disk.sh"
-# shellcheck disable=SC1091
-source "${HMTOOLS_ROOT}/commands/ols.sh"
-# shellcheck disable=SC1091
-source "${HMTOOLS_ROOT}/commands/ssl.sh"
-# shellcheck disable=SC1091
-source "${HMTOOLS_ROOT}/commands/mysql.sh"
-# shellcheck disable=SC1091
-source "${HMTOOLS_ROOT}/commands/health.sh"
-# shellcheck disable=SC1091
-source "${HMTOOLS_ROOT}/commands/cron.sh"
-# shellcheck disable=SC1091
-source "${HMTOOLS_ROOT}/commands/pm2.sh"
-# shellcheck disable=SC1091
-source "${HMTOOLS_ROOT}/commands/security.sh"
+source "${HMTOOLS_ROOT}/commands/_load.sh"
 
 hm_require_root
 hm_load_config
@@ -75,153 +51,29 @@ hm_dispatch() {
     hm_log_cmd "${cmd}${*:+ $*}"
   fi
 
-  # Niewspierany OS — tylko uninstall / help / version / detect / exit
+  # pusta linia / exit — rdzeń (nie są narzędziami-modułami)
+  case "${cmd}" in
+    "") return 0 ;;
+    exit|quit|q) return 99 ;;
+  esac
+
+  # Niewspierany OS — whitelist z HM_CMD_RESTRICTED (moduł)
   if [[ "${HMTOOLS_RESTRICTED:-0}" -eq 1 ]] && ! hm_dispatch_allowed_when_restricted "${cmd}"; then
     hm_err "System nieobsługiwany (${OS_PRETTY:-${OS_ID:-unknown}}). Dozwolone: uninstall-hmtools, help, version, detect, exit."
     hm_info "Bypass (na własne ryzyko): ALLOW_UNSUPPORTED_OS=1 w ${HMTOOLS_CONF:-hmtools.conf}"
     return 1
   fi
 
-  # W kontekście strony — lokalne komendy
-  if [[ -n "${HM_SITE_DOMAIN}" ]]; then
-    case "${cmd}" in
-      info)   cmd_site_info; return ;;
-      size)   cmd_site_size; return ;;
-      dbs|databases) cmd_site_dbs; return ;;
-      ssl)
-        if [[ "${1:-}" == "renew" || "${1:-}" == "renewal" || "${1:-}" == "issue" ]]; then
-          shift || true
-          cmd_renew_ssl "${1:-${HM_SITE_DOMAIN}}"
-          return
-        fi
-        cmd_site_ssl
-        return
-        ;;
-      renew-ssl|ssl-renew) cmd_renew_ssl "${1:-${HM_SITE_DOMAIN}}"; return ;;
-      php)
-        # pełny dispatcher (set / ext / ini / restart / update / …)
-        cmd_php "$@"
-        return
-        ;;
-      logs|log) cmd_site_logs "$@"; return ;;
-      backup)
-        if [[ "${1:-}" == "archive" ]]; then
-          hm_backup_archive_site "${HM_SITE_DOMAIN}"
-        elif [[ "${1:-}" == "" ]]; then
-          cmd_site_backup
-        else
-          cmd_backup "$@"
-        fi
-        return
-        ;;
-      clean)  cmd_site_clean "$@"; return ;;
-      htaccess|hta) cmd_site_htaccess "$@"; return ;;
-      proxy) cmd_site_proxy "$@"; return ;;
-      perms|perm) cmd_site_perms "$@"; return ;;
-      cron|crons) cmd_cron "$@"; return ;;
-      pm2|node|apps) cmd_pm2 "$@"; return ;;
-      delete-site|deletesite|destroy-site)
-        cmd_delete_site "$@"
-        return
-        ;;
-      archive|archive-site)
-        hm_backup_archive_site "${HM_SITE_DOMAIN}"
-        return
-        ;;
-      webs|sites)
-        if [[ "${1:-}" == "delete" || "${1:-}" == "remove" || "${1:-}" == "destroy" || "${1:-}" == "rm" ]]; then
-          shift || true
-          cmd_delete_site "${HM_SITE_DOMAIN}" "$@"
-          return
-        fi
-        if [[ "${1:-}" == "archive" ]]; then
-          hm_backup_archive_site "${HM_SITE_DOMAIN}"
-          return
-        fi
-        ;;
-      help|?) hm_cmd_help "$@"; return ;;
-      exit|quit|back|.. )
-        hm_ok "Wyjście z kontekstu ${HM_SITE_DOMAIN}."
-        hm_clear_site_context
-        return
-        ;;
-    esac
+  # Kontekst strony — lokalne handlery (site + wyjątki)
+  if [[ -n "${HM_SITE_DOMAIN:-}" ]]; then
+    local _hm_site_rc=0
+    hm_site_try_dispatch "${cmd}" "$@" || _hm_site_rc=$?
+    if [[ "${HM_SITE_DISPATCH_HIT:-0}" -eq 1 ]]; then
+      return "${_hm_site_rc}"
+    fi
   fi
 
-  case "${cmd}" in
-    "" ) return 0 ;;
-    webs|sites|list) cmd_webs "$@" ;;
-    delete-site|deletesite|destroy-site) cmd_delete_site "$@" ;;
-    archive-site) hm_backup_archive_site "$@" ;;
-    use|enter|cd)    cmd_use "$@" ;;
-    backup)          cmd_backup "$@" ;;
-    disk|df)         cmd_disk "$@" ;;
-    ols|lsws)        cmd_ols "$@" ;;
-    ssl)             cmd_ssl "$@" ;;
-    renew-ssl|ssl-renew) cmd_renew_ssl "$@" ;;
-    mysql|dbs|db)    cmd_mysql "$@" ;;
-    php)             cmd_php "$@" ;;
-    update-php|php-update) cmd_update_php "$@" ;;
-    health|status)   cmd_health "$@" ;;
-    security|sec)    cmd_security "$@" ;;
-    applog|selflog|hmlog) cmd_applog "$@" ;;
-    cron|crons)      cmd_cron "$@" ;;
-    pm2|node|apps)   cmd_pm2 "$@" ;;
-    detect|env)      hm_detect_print ;;
-    help|h|\?)       hm_cmd_help "$@" ;;
-    update-hmtools)
-      local force=0
-      local a
-      for a in "$@"; do
-        case "${a}" in
-          --force|-f) force=1 ;;
-          --help|-h)
-            echo "Użycie: update-hmtools [--force]"
-            echo "  Porównuje /hm-tools/VERSION z najnowszym tagiem GitHuba."
-            echo "  Aktualizuje tylko gdy jest nowsza wersja (albo --force)."
-            return 0
-            ;;
-        esac
-      done
-      hm_info "Sprawdzanie aktualizacji hmtools..."
-      local branch="${HMTOOLS_BRANCH:-develop}"
-      local url="https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/${branch}/install.sh"
-      if [[ "${force}" -eq 1 ]]; then
-        HMTOOLS_FORCE=1 curl -fsSL "${url}" | bash
-      else
-        curl -fsSL "${url}" | bash
-      fi
-      hm_ok "Po update-hmtools uruchom ponownie hmtools, jeśli jesteś w REPL."
-      ;;
-    version|ver)
-      local cur latest
-      cur="$(hm_installed_version)"
-      [[ -n "${cur}" ]] || cur="?"
-      echo "Zainstalowana: ${cur}"
-      latest="$(hm_latest_remote_version)"
-      if [[ -n "${latest}" ]]; then
-        echo "Najnowsza:     ${latest}"
-        if hm_version_is_newer "${cur}" "${latest}"; then
-          hm_warn "Dostępna aktualizacja: ${cur} → ${latest}"
-          hm_warn "curl -fsSL https://raw.githubusercontent.com/${HMTOOLS_REPO:-hubert-m/vps-ssh-tools}/${HMTOOLS_BRANCH:-develop}/install.sh | bash"
-          hm_warn "Albo: update-hmtools"
-        else
-          hm_ok "Jesteś na najnowszej wersji."
-        fi
-      else
-        hm_warn "Nie udało się sprawdzić najnowszej wersji na GitHubie."
-      fi
-      hm_print_changelog "${cur}" "Co zawiera zainstalowana wersja (${cur})"
-      ;;
-    uninstall-hmtools)
-      cmd_uninstall_hmtools "$@"
-      ;;
-    exit|quit|q)     return 99 ;;
-    *)
-      hm_err "Nieznana komenda: ${cmd}. Wpisz 'help'."
-      return 1
-      ;;
-  esac
+  hm_cmd_invoke "${cmd}" "$@"
 }
 
 # Tryb jednorazowy: hmtools -c "backup prune --yes" / hmtools webs …

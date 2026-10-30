@@ -11,7 +11,7 @@ Często zadawane pytania o działanie komend. Kliknij pytanie, żeby rozwinąć 
 
 `update-php <ver>` (aliasy: `php-update`, `php update <ver>` / `php upgrade <ver>`) **nie zmienia** wersji PHP przypisanej do strony (`php set`). Aktualizuje **pakiety LSPHP danej gałęzi** (np. `lsphp84*`) z **repozytorium LiteSpeed** na serwerze (apt/dnf/yum), a potem miękko przeładowuje OpenLiteSpeed.
 
-Kod: `commands/health.sh` → `cmd_update_php` (orkiestracja); pakiety wyłącznie przez `hm_pkg_*` ([`lib/pkg.sh`](../lib/pkg.sh) → adapter `apt`/`rpm`); pomocnicze: `lib/sites/php_manage.sh`, `lib/sites/php.sh`, `lib/common/ui.sh`, `hm_ols_reload_soft`. Szczegóły warstw: [architecture-pkg.md](architecture-pkg.md).
+Kod: `commands/php/update.sh` → `cmd_update_php` (orkiestracja); pakiety wyłącznie przez `hm_pkg_*` ([`lib/pkg.sh`](../lib/pkg.sh) → adapter `apt`/`rpm`); pomocnicze: `commands/php/manage.sh`, `commands/php/repo.sh`, `lib/common/ui.sh`, `hm_ols_reload_soft`. Szczegóły warstw: [architecture-pkg.md](architecture-pkg.md).
 
 ---
 
@@ -21,18 +21,18 @@ Kod: `commands/health.sh` → `cmd_update_php` (orkiestracja); pakiety wyłączn
    - `update-php 8.4`
    - `php-update 8.4`
    - `php update 8.4` / `php upgrade 8.4`
-2. Router w `bin/hmtools`:
-   - `update-php|php-update` → bezpośrednio `cmd_update_php "$@"`
+2. Pluginowy dispatch (`commands/_dispatch.sh` + rejestr modułu `php/`):
+   - aliasy `update-php` / `php-update` → `cmd_update_php`
    - `php` → `cmd_php`; podkomendy `update|upgrade` → `shift` + `cmd_update_php "$@"`
 
 ---
 
 ### Krok 1 — walidacja argumentu
 
-Plik: `commands/health.sh` (`cmd_update_php`).
+Plik: `commands/php/update.sh` (`cmd_update_php`).
 
 1. Brak argumentu → błąd: `Użycie: update-php <wersja>` + hint o aliasie `php update 8.4`, exit `1`.
-2. `hm_php_normalize_branch "${arg}"` (`lib/sites/php_manage.sh`):
+2. `hm_php_normalize_branch "${arg}"` (`commands/php/manage.sh`):
    - lower-case,
    - obcięcie prefiksów `php` / `lsphp`,
    - zostawia tylko cyfry i kropki,
@@ -59,7 +59,7 @@ To jest wersja **runtime** z katalogu LSPHP, nie string z dpkg/rpm.
 
 ### Krok 3 — porównanie z lokalnym indeksem pakietów (Candidate)
 
-Wywołanie: `hm_php_repo_info_for_suffix "${suffix}"` (`lib/sites/php.sh`).
+Wywołanie: `hm_php_repo_info_for_suffix "${suffix}"` (`commands/php/repo.sh`).
 
 Zwraca TSV (tab):  
 `installed_pkg` · `candidate_pkg` · `candidate_clean` · `upgradable_count`

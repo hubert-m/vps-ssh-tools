@@ -17,3 +17,5 @@ cmd_disk() {
   echo
   hm_info "Wolne: $(hm_disk_free_percent /)%  |  Zajęte: $(hm_disk_used_percent /)%"
 }
+
+_hm_cmd_register disk cmd_disk 0 df

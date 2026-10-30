@@ -219,3 +219,5 @@ cmd_site_proxy() {
       ;;
   esac
 }
+
+_hm_cmd_register ols cmd_ols 0 lsws

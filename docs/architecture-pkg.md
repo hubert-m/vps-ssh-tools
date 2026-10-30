@@ -1,6 +1,6 @@
 # Architektura: pakiety i różnice dystrybucji
 
-hmtools rozdziela **dwie osie** różnic między serwerami — nie mieszać ich w kodzie feature’ów (`commands/`, `lib/sites/` poza cienkimi wrapperami).
+hmtools rozdziela **dwie osie** różnic między serwerami — nie mieszać ich w kodzie feature’ów (`commands/<narzędzie>/`).
 
 ## Osie
 

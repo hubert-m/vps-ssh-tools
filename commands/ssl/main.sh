@@ -202,3 +202,6 @@ cmd_renew_ssl() {
   echo
   hm_print_site_ssl "${domain}"
 }
+
+_hm_cmd_register ssl cmd_ssl 0
+_hm_cmd_register renew-ssl cmd_renew_ssl 0 ssl-renew

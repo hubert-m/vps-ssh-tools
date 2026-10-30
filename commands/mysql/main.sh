@@ -115,3 +115,5 @@ cmd_mysql_dump() {
 cmd_dbs() {
   cmd_mysql "$@"
 }
+
+_hm_cmd_register mysql cmd_mysql 0 dbs db
