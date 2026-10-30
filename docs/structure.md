@@ -3,9 +3,10 @@
 ```text
 vps-ssh-tools/
 ├── README.md
-├── CHANGELOG.md
 ├── VERSION                 # np. v0.1.7
-├── changelogs/*.txt        # punktowy changelog (CLI + instalator)
+├── changelogs/
+│   ├── CHANGELOG.md        # pełna historia wersji
+│   └── *.txt               # punktowy changelog (CLI + instalator)
 ├── docs/                   # dokumentacja (ten katalog)
 ├── install.sh
 ├── bin/hmtools

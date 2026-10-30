@@ -18,7 +18,7 @@ Na serwerze jako **root** — **to samo polecenie** instaluje i aktualizuje do *
 curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/install.sh | bash
 ```
 
-Wymagane: `curl`, `tar`, `bash`. Historia wersji i polecenia instalacji konkretnych tagów: [CHANGELOG.md](../CHANGELOG.md).
+Wymagane: `curl`, `tar`, `bash`. Historia wersji i polecenia instalacji konkretnych tagów: [CHANGELOG.md](../changelogs/CHANGELOG.md).
 
 ### Starsza / konkretna wersja
 

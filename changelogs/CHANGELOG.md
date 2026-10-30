@@ -2,7 +2,7 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/) · [Semantic Versioning](https://semver.org/lang/pl/).
 
-Pliki punktowe dla CLI (`version`, `update-hmtools`): katalog [`changelogs/`](changelogs/).
+Pliki punktowe dla CLI (`version`, `update-hmtools`): ten katalog (`changelogs/*.txt`).
 
 **Instalator** (`install.sh` z brancha `develop`) domyślnie instaluje **najnowszy git tag**.  
 Konkretną wersję wymuszasz zmienną `HMTOOLS_VERSION`.
@@ -15,6 +15,9 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 ---
 
 ## [Unreleased] / [v0.1.8]
+
+- Docs: `CHANGELOG.md` przeniesiony do `changelogs/CHANGELOG.md`
+- Docs: `docs/FAQ.md` — FAQ z sekcjami toggle; pierwsze Q: mechanizm `update-php <ver>` (pełny przebieg krok po kroku)
 
 ## [v0.1.7]
 

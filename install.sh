@@ -433,8 +433,8 @@ install_tree() {
   mkdir -p "${DEST}/config" "${DEST}/logs"
   "${HM_CP[@]}" -a "${from}/config/hmtools.conf.example" "${DEST}/config/"
   [[ -f "${from}/README.md" ]] && "${HM_CP[@]}" -a "${from}/README.md" "${DEST}/"
-  [[ -f "${from}/CHANGELOG.md" ]] && "${HM_CP[@]}" -a "${from}/CHANGELOG.md" "${DEST}/"
   [[ -f "${from}/install.sh" ]] && "${HM_CP[@]}" -a "${from}/install.sh" "${DEST}/"
+  # CHANGELOG.md jest w changelogs/ (kopiowany razem z katalogiem)
   # VERSION / .installed zapisujemy osobno po instalacji
   # logs/ i config/hmtools.conf — zachowane (nie kasujemy)
 }

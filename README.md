@@ -21,8 +21,9 @@ Panel i webserver **nie są hardcodowane** — przy starcie `detect` rozpoznaje 
 | Backup → Google Drive (rclone) | [docs/backup.md](docs/backup.md) |
 | Przywracanie | [docs/restore.md](docs/restore.md) |
 | Troubleshooting | [docs/troubleshooting.md](docs/troubleshooting.md) |
+| FAQ | [docs/FAQ.md](docs/FAQ.md) |
 | Struktura repozytorium | [docs/structure.md](docs/structure.md) |
-| Historia wersji | [CHANGELOG.md](CHANGELOG.md) |
+| Historia wersji | [changelogs/CHANGELOG.md](changelogs/CHANGELOG.md) |
 
 ---
 

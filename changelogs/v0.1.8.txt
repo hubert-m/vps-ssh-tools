@@ -1,2 +1,5 @@
 # hmtools v0.1.8
 
+- Docs: `CHANGELOG.md` przeniesiony do `changelogs/CHANGELOG.md`
+- Docs: `docs/FAQ.md` — FAQ z sekcjami toggle; pierwsze Q: mechanizm `update-php <ver>` (pełny przebieg krok po kroku)
+
