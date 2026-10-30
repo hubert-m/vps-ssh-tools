@@ -24,6 +24,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `ols cache flush` — pusta lista LSCache; whitelist `/var/www`; `proxy set-port [domena]`
 - Fix: `mysql dump --local <katalog>` — zapis `${db}-stamp.sql.gz` w podanym katalogu
 - Fix: `php` — puste pola TSV (`cand_clean`/`branch`) nie zlewają kolumn przy `IFS=tab`
+- Fix: `webs archive` — stdout trybu plików (`>&2`); puste `archive_dbs` bez fałszywej iteracji
 
 ## [v0.1.6]
 

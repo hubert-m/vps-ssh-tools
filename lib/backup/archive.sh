@@ -68,7 +68,8 @@ hm_archive_upload_site_files() {
   threshold_b=$((CHUNK_THRESHOLD_MB * 1024 * 1024))
 
   if [[ "${size_b}" -ge "${threshold_b}" ]]; then
-    hm_chunked_tar_upload "${src_dir}" "${remote_base}/files.chunks" || return 1
+    # hm_info/hm_ok idą na stdout — przekieruj, żeby report=$((...)) dostał tylko printf
+    hm_chunked_tar_upload "${src_dir}" "${remote_base}/files.chunks" >&2 || return 1
     local marker n
     marker="$(rclone cat "${remote_base}/files.chunks/files.tar.gz.chunks.txt" 2>/dev/null || true)"
     n="$(printf '%s' "${marker}" | sed -n 's/^chunks=//p' | tr -d '[:space:]')"
@@ -78,7 +79,7 @@ hm_archive_upload_site_files() {
     fi
     printf 'chunks\t%s\n' "${n:-0}"
   else
-    hm_stream_tar_rcat "${src_dir}" "${remote_base}/files.tar.gz" || return 1
+    hm_stream_tar_rcat "${src_dir}" "${remote_base}/files.tar.gz" >&2 || return 1
     printf 'tar\t0\n'
   fi
 }
@@ -202,7 +203,8 @@ hm_backup_archive_site() {
 
   mkdir -p "${TMP_DIR}"
   local name
-  for name in "${archive_dbs[@]:-}"; do
+  for name in "${archive_dbs[@]}"; do
+    [[ -n "${name}" ]] || continue
     if ! hm_stream_mysqldump "${name}" "${remote_base}/db/${name}.sql.gz"; then
       hm_err "Archiwizacja przerwana — błąd zrzutu/uploadu bazy ${name}. Nic nie usunięto z VPS."
       return 1
@@ -223,8 +225,16 @@ hm_backup_archive_site() {
     hm_err "Archiwizacja przerwana — błąd wysyłki plików. Nic nie usunięto z VPS."
     return 1
   }
-  IFS=$'\t' read -r files_mode chunks_count <<<"${report}"
+  # ostatnia linia = tryb (tar|chunks); ignoruj ewentualne śmieci na stdout
+  IFS=$'\t' read -r files_mode chunks_count < <(printf '%s\n' "${report}" | tail -n 1)
   [[ -n "${chunks_count}" ]] || chunks_count=0
+  case "${files_mode}" in
+    tar|chunks) ;;
+    *)
+      hm_err "Nie udało się odczytać trybu archiwum plików (otrzymano: ${files_mode:-puste}). Nic nie usunięto z VPS."
+      return 1
+      ;;
+  esac
 
   # vhost + cały katalog OLS vhost
   if [[ -n "${HM_SITE_VHOST:-}" && -f "${HM_SITE_VHOST}" ]]; then
@@ -300,7 +310,8 @@ hm_backup_archive_site() {
   rm -f "${pm2_json}"
 
   local db_json="" n
-  for n in "${archive_dbs[@]:-}"; do
+  for n in "${archive_dbs[@]}"; do
+    [[ -n "${n}" ]] || continue
     db_json="${db_json}\"${n}\","
   done
   db_json="${db_json%,}"
@@ -332,7 +343,7 @@ EOF
   rm -f "${manifest}"
 
   # --- Weryfikacja ---
-  if ! hm_backup_verify_remote_archive "${remote_base}" "${files_mode}" "${chunks_count}" "${archive_dbs[@]:-}"; then
+  if ! hm_backup_verify_remote_archive "${remote_base}" "${files_mode}" "${chunks_count}" "${archive_dbs[@]}"; then
     hm_err "Archiwizacja przerwana po nieudanej weryfikacji. Nic nie usunięto z VPS."
     return 1
   fi
