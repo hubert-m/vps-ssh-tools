@@ -213,16 +213,25 @@ hm_dispatch() {
   esac
 }
 
-# Tryb jednorazowy: hmtools webs / hmtools use example.com info ...
+# Tryb jednorazowy: hmtools -c "backup prune --yes" / hmtools webs …
+# Po -c jeden zacytowany argument ze spacjami → rozbij jak w REPL (cron: hmtools -c "…")
 if [[ "${1:-}" == "-c" ]]; then
   shift
   hm_log_session_start "oneshot"
   # bez 'local' — jesteśmy poza funkcją (set -e + local = crash)
   _t0="$(date +%s)"
   rc=0
+  _c_args=()
+  if [[ $# -eq 1 ]]; then
+    set -f
+    # shellcheck disable=SC2206
+    _c_args=( $1 )
+    set +f
+  else
+    _c_args=( "$@" )
+  fi
   set +e
-  # quoted "$@" — bez rozwijania globów (*, ?, [...])
-  hm_dispatch "$@"
+  hm_dispatch "${_c_args[@]}"
   rc=$?
   set -e
   hm_log_cmd_end "${rc}" "$(( $(date +%s) - _t0 ))"
