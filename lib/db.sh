@@ -386,7 +386,8 @@ hm_mysql_dump_local() {
   set +o pipefail
   "${dumpcli}" "${sock_args[@]}" --single-transaction --quick --routines --triggers \
     -- "${dbname}" 2>/dev/null | gzip -c > "${outpath}"
-  local dump_rc=${PIPESTATUS[0]} gzip_rc=${PIPESTATUS[1]}
+  local -a _ps=( "${PIPESTATUS[@]}" )
+  local dump_rc=${_ps[0]:-1} gzip_rc=${_ps[1]:-1}
   set -o pipefail
   set -e
   hm_status_clear

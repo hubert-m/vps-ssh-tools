@@ -57,8 +57,9 @@ hm_stream_mysqldump() {
   set +o pipefail
   "${dumpcli}" "${sock_args[@]}" --single-transaction --quick --routines --triggers \
     -- "${dbname}" 2>"${errf}" | gzip -c > "${tmp}"
-  dump_rc=${PIPESTATUS[0]}
-  gzip_rc=${PIPESTATUS[1]}
+  local -a _ps=( "${PIPESTATUS[@]}" )
+  dump_rc=${_ps[0]:-1}
+  gzip_rc=${_ps[1]:-1}
   set -o pipefail
   set -e
   hm_status_clear
@@ -112,9 +113,10 @@ hm_stream_tar_rcat() {
   tar -C "${src_dir}" --warning=no-file-changed --ignore-failed-read ${excludes} -cf - . 2>"${tar_err}" \
     | gzip -c \
     | hm_rclone_rcat "${dest}"
-  tar_rc=${PIPESTATUS[0]}
-  gzip_rc=${PIPESTATUS[1]}
-  rcat_rc=${PIPESTATUS[2]}
+  local -a _ps=( "${PIPESTATUS[@]}" )
+  tar_rc=${_ps[0]:-1}
+  gzip_rc=${_ps[1]:-1}
+  rcat_rc=${_ps[2]:-1}
   set -o pipefail
   set -e
   hm_status_clear
@@ -156,9 +158,10 @@ hm_chunked_tar_upload() {
   tar -C "${src_dir}" --warning=no-file-changed --ignore-failed-read ${excludes} -cf - . 2>"${tar_err}" \
     | gzip -c \
     | split -b "${chunk_bytes}" -d -a 4 - "${work}/part_"
-  tar_rc=${PIPESTATUS[0]}
-  gzip_rc=${PIPESTATUS[1]}
-  split_rc=${PIPESTATUS[2]}
+  local -a _ps=( "${PIPESTATUS[@]}" )
+  tar_rc=${_ps[0]:-1}
+  gzip_rc=${_ps[1]:-1}
+  split_rc=${_ps[2]:-1}
   set -o pipefail
   set -e
 
@@ -335,9 +338,10 @@ hm_backup_system_configs() {
   tar --warning=no-file-changed --ignore-failed-read -cf - \
     --exclude='*.log' --exclude='cache' --exclude='tmp' \
     "${paths[@]}" 2>"${tar_err}" | gzip -c | hm_rclone_rcat "${remote_base}/system-configs.tar.gz"
-  tar_rc=${PIPESTATUS[0]}
-  gzip_rc=${PIPESTATUS[1]}
-  rcat_rc=${PIPESTATUS[2]}
+  local -a _ps=( "${PIPESTATUS[@]}" )
+  tar_rc=${_ps[0]:-1}
+  gzip_rc=${_ps[1]:-1}
+  rcat_rc=${_ps[2]:-1}
   set -o pipefail
   set -e
   if [[ -s "${tar_err}" ]]; then

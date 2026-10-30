@@ -19,6 +19,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - `webs`: pod listą — suma rozmiarów wszystkich serwisów (kolumna SIZE)
 - Docs: README → `docs/*.md` (install, commands, backup, …) + linki w README
 - Fix: `hmtools -c "cmd args"` — rozbijanie zacytowanej komendy (cron `backup`/`prune`)
+- Fix: `PIPESTATUS` — snapshot tablicy po potoku (`mysqldump`/`tar`; `set -u`)
 
 ## [v0.1.6]
 
