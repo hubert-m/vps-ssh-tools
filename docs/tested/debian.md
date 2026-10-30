@@ -129,7 +129,8 @@ Checklist ręcznych testów hmtools na **debian**. Zaznaczaj `- [x]` po weryfika
 - [ ] `php --phpnet` (opcjonalnie, sieć)
 - [ ] Kolumny poprawne przy braku Candidate (bez zlewania TSV)
 - [ ] `php help` / `update-php` help
-- [ ] `update-php <ver>` — anulowanie / Installed==Candidate → propozycja refresh
+- [ ] `php` — sekcja „Nowsze PHP dostępne do instalacji” (gdy w repo jest nowsza gałąź, np. 8.6) + kanał stable/niepewna
+- [ ] `update-php <ver>` — anulowanie / Installed==Candidate → propozycja refresh / instalacja nowej gałęzi
 - [ ] W kontekście: `php set` / `php ext` / `php ini` / `php restart` / `php ps` (wg help)
 
 ## MySQL / MariaDB

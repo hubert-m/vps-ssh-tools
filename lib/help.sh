@@ -218,11 +218,12 @@ EOF
     php)
       cat <<'EOF'
 Użycie:
-  php                      Lista LSPHP + Candidate z repo (apt-cache/dnf)
+  php                      Lista LSPHP + Candidate z repo (apt-cache/dnf);
+                           na dole: nowsze gałęzie dostępne do instalacji (stable/niepewna)
   php --refresh | -r       Odśwież indeks pakietów, potem lista
   php check-update         Alias: php --refresh
   php --phpnet             Opcjonalnie: porównanie z php.net (HTTP)
-  php update <ver>         Alias: update-php <ver>
+  php update <ver>         Alias: update-php <ver> (też instalacja nowej gałęzi)
   php set <ver>            W kontekście: przełącz LSPHP strony (vhost/CyberPanel)
   php ext [list] [ver]     Moduły php -m + status kluczowych rozszerzeń
   php ext install <n> [ver] Instalacja lsphpXX-<n> (apt/dnf/yum)

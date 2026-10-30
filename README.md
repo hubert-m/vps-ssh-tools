@@ -1,4 +1,4 @@
-# hmtools — narzędzia SSH dla VPS (OpenLiteSpeed / CyberPanel)
+# hmtools — narzędzia SSH dla VPS
 
 Zestaw narzędzi CLI instalowanych w `/hm-tools`. Po uruchomieniu `hmtools` wchodzisz w interaktywny kontekst: listujesz usługi webowe, wchodzisz w konkretną stronę (`use`), wykonujesz operacje i wracasz przez `exit`.
 

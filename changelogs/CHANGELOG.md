@@ -16,6 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [v0.1.8]
 
+- Feat: `php` — sekcja nowszych gałęzi LSPHP dostępnych w repo do instalacji (kanał stable/niepewna → `update-php`)
 - Docs: `CHANGELOG.md` przeniesiony do `changelogs/CHANGELOG.md`
 - Docs: `docs/FAQ.md` — FAQ z sekcjami toggle; pierwsze Q: mechanizm `update-php <ver>` (pełny przebieg krok po kroku)
 

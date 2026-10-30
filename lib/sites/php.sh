@@ -7,6 +7,133 @@ hm_php_branch_of() {
   printf '%s' "${v}" | grep -oE '^[0-9]+\.[0-9]+' | head -1
 }
 
+hm_php_suffix_to_branch() {
+  # 84 → 8.4 ; 74 → 7.4 (LiteSpeed: zawsze 2 cyfry)
+  local s="$1"
+  if [[ "${s}" =~ ^([0-9])([0-9])$ ]]; then
+    printf '%s.%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+    return 0
+  fi
+  return 1
+}
+
+# Lista bazowych pakietów lsphpNN z lokalnego indeksu: suffix<TAB>candidate_raw
+hm_php_repo_list_available_bases() {
+  local pm name ver sfx
+  pm="$(hm_pkg_manager 2>/dev/null || true)"
+  case "${pm}" in
+    apt)
+      while IFS= read -r name; do
+        [[ "${name}" =~ ^lsphp([0-9]+)$ ]] || continue
+        sfx="${BASH_REMATCH[1]}"
+        ver="$(LC_ALL=C apt-cache policy "${name}" 2>/dev/null | awk '/^[[:space:]]+Candidate:/{print $2; exit}')"
+        [[ -n "${ver}" && "${ver}" != "(none)" ]] || continue
+        printf '%s\t%s\n' "${sfx}" "${ver}"
+      done < <(apt-cache pkgnames 'lsphp' 2>/dev/null | grep -E '^lsphp[0-9]+$' | sort -V || true)
+      ;;
+    dnf|yum)
+      while IFS=$'\t' read -r name ver; do
+        [[ -n "${name}" ]] || continue
+        [[ "${name}" =~ ^lsphp([0-9]+)$ ]] || continue
+        sfx="${BASH_REMATCH[1]}"
+        [[ -n "${ver}" && "${ver}" != "(none)" ]] || continue
+        printf '%s\t%s\n' "${sfx}" "${ver}"
+      done < <(
+        LC_ALL=C "${pm}" -q -C repoquery --qf '%{name}\t%{version}-%{release}' 'lsphp[0-9][0-9]' 2>/dev/null \
+          || true
+      )
+      ;;
+  esac
+}
+
+# Kanał wersji: stable | niepewna (…)
+hm_php_branch_channel() {
+  local branch="$1" pkg_ver="${2:-}"
+  local low remote
+  low="$(printf '%s' "${pkg_ver}" | tr '[:upper:]' '[:lower:]')"
+  if [[ "${low}" =~ (rc[0-9]|-rc|alpha|beta|snapshot|\.dev) ]]; then
+    printf 'niepewna (RC/beta w pakiecie)'
+    return 0
+  fi
+  if remote="$(hm_php_latest_remote "${branch}" 2>/dev/null)" && [[ -n "${remote}" ]]; then
+    printf 'stable'
+    return 0
+  fi
+  printf 'niepewna (brak release na php.net)'
+}
+
+# Sekcja: nowsze gałęzie LSPHP dostępne w repo, jeszcze niezainstalowane.
+# Args: lista zainstalowanych branchy (np. 8.4 8.5); puste → próg 8.0
+hm_php_print_installable_newer() {
+  local -a installed_branches=("$@")
+  local max_branch="7.9" b sfx cand cand_clean channel line
+  local -A have_branch=()
+  local -a avail_lines=() show_branches=()
+
+  for b in "${installed_branches[@]}"; do
+    [[ -n "${b}" && "${b}" != "-" ]] || continue
+    have_branch["${b}"]=1
+    if hm_version_is_newer "${max_branch}" "${b}" 2>/dev/null; then
+      max_branch="${b}"
+    elif [[ "${max_branch}" == "7.9" ]]; then
+      max_branch="${b}"
+    fi
+  done
+
+  local -A best_cand=() best_sfx=()
+  while IFS=$'\t' read -r sfx cand; do
+    [[ -n "${sfx}" ]] || continue
+    b="$(hm_php_suffix_to_branch "${sfx}" 2>/dev/null || true)"
+    [[ -n "${b}" ]] || continue
+    [[ -z "${have_branch[$b]:-}" ]] || continue
+    # tylko nowsze niż najwyższa zainstalowana
+    hm_version_is_newer "${max_branch}" "${b}" 2>/dev/null || continue
+    if [[ -n "${best_cand[$b]:-}" ]]; then
+      hm_version_is_newer "$(hm_php_clean_pkg_ver "${best_cand[$b]}")" "$(hm_php_clean_pkg_ver "${cand}")" 2>/dev/null \
+        || [[ "$(hm_php_clean_pkg_ver "${cand}")" == "$(hm_php_clean_pkg_ver "${best_cand[$b]}")" ]] \
+        || continue
+    fi
+    best_cand["${b}"]="${cand}"
+    best_sfx["${b}"]="${sfx}"
+  done < <(hm_php_repo_list_available_bases | sort -t$'\t' -k1,1V)
+
+  for b in $(printf '%s\n' "${!best_sfx[@]}" | sort -V); do
+    avail_lines+=("${best_sfx[$b]}"$'\t'"${b}"$'\t'"${best_cand[$b]}")
+    show_branches+=("${b}")
+  done
+
+  [[ "${#avail_lines[@]}" -gt 0 ]] || return 0
+
+  if [[ "${#show_branches[@]}" -gt 0 ]]; then
+    hm_status_line "Sprawdzanie kanału nowych gałęzi (php.net)..."
+    hm_php_prefetch_latests "${show_branches[@]}"
+    hm_progress_done
+  fi
+
+  echo
+  echo "  ${C_BOLD}Nowsze PHP dostępne do instalacji${C_RESET} ${C_DIM}(brak lokalnego lsphp*)${C_RESET}"
+  printf '  %s%-12s %-18s %s%s\n' \
+    "${C_DIM}" "LSPHP" "W REPO" "KANAŁ / INSTALACJA" "${C_RESET}"
+  printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..76})" "${C_RESET}"
+
+  for line in "${avail_lines[@]}"; do
+    IFS=$'\t' read -r sfx b cand <<<"${line}"
+    cand_clean="$(hm_php_clean_pkg_ver "${cand}")"
+    channel="$(hm_php_branch_channel "${b}" "${cand}")"
+    if [[ "${channel}" == "stable" ]]; then
+      channel="${C_GREEN}stable${C_RESET} → update-php ${b}"
+    else
+      channel="${C_YELLOW}${channel}${C_RESET} → update-php ${b}"
+    fi
+    printf '  %-12s %-18s %b\n' \
+      "lsphp${sfx}" \
+      "${cand_clean}" \
+      "${channel}"
+  done
+  echo
+  echo "  ${C_DIM}Instalacja nowej gałęzi: update-php <ver> (to samo repo LiteSpeed). Po instalacji: php set <ver> na stronie.${C_RESET}"
+}
+
 hm_php_clean_pkg_ver() {
   # '1:8.3.14-1+noble' → '8.3.14' ; '8.2.27-1.el9' → '8.2.27'
   # Puste / brak → "-" (nigdy pusty string — IFS=$'\t' read zlewa sąsiadujące tabulatory)
@@ -224,10 +351,7 @@ hm_list_available_php() {
   if [[ "${#rows[@]}" -eq 0 ]]; then
     hm_progress_done
     echo "  (brak lsphp* w ${root})"
-    return 0
-  fi
-
-  if [[ "${mode}" == "phpnet" ]]; then
+  elif [[ "${mode}" == "phpnet" ]]; then
     local -A seen_b=()
     local -a uniq=()
     local b
@@ -274,80 +398,91 @@ hm_list_available_php() {
     done
     echo
     echo "  ${C_DIM}Źródło: php.net (cache ~1h). Domyślnie użyj: php (repo lokalne)${C_RESET}"
-    return 0
+  else
+    # Tryb domyślny: lokalny menedżer pakietów (apt-cache / dnf -C)
+    local path base suffix inst_pkg cand_pkg cand_clean upg_count repo_col
+    local -a repo_rows=()
+    di=0
+    dtotal="${#rows[@]}"
+    for row in "${rows[@]}"; do
+      di=$((di + 1))
+      IFS=$'\t' read -r path ver branch <<<"${row}"
+      base="$(basename "${path}")"
+      suffix="${base#lsphp}"
+      hm_progress_bar "${di}" "${dtotal}" "Repo: ${base}..."
+      IFS=$'\t' read -r inst_pkg cand_pkg cand_clean upg_count < <(hm_php_repo_info_for_suffix "${suffix}")
+      [[ -n "${inst_pkg}" ]] || inst_pkg="-"
+      [[ -n "${cand_pkg}" ]] || cand_pkg="-"
+      [[ -n "${cand_clean}" ]] || cand_clean="-"
+      [[ -n "${upg_count}" ]] || upg_count=0
+      [[ -n "${branch}" ]] || branch="-"
+      repo_rows+=("${path}"$'\t'"${ver}"$'\t'"${branch}"$'\t'"${inst_pkg}"$'\t'"${cand_pkg}"$'\t'"${cand_clean}"$'\t'"${upg_count}")
+    done
+    hm_progress_done
+
+    printf '  %s%-12s %-15s %-18s %s%s\n' \
+      "${C_DIM}" "LSPHP" "ZAINSTALOWANA" "W REPO (UPDATE)" "STATUS" "${C_RESET}"
+    printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..76})" "${C_RESET}"
+
+    for row in "${repo_rows[@]}"; do
+      IFS=$'\t' read -r path ver branch inst_pkg cand_pkg cand_clean upg_count <<<"${row}"
+      base="$(basename "${path}")"
+      [[ -n "${upg_count}" ]] || upg_count=0
+      [[ -n "${cand_clean}" ]] || cand_clean="-"
+      [[ -n "${branch}" ]] || branch="-"
+      repo_col="—"
+      if [[ "${cand_clean}" != "-" ]]; then
+        repo_col="${cand_clean}"
+      fi
+      if [[ "${upg_count}" -gt 0 && "${cand_clean}" != "-" && "${cand_clean}" == "${ver}" ]]; then
+        repo_col="${cand_clean} (+${upg_count} pakiety)"
+      fi
+
+      status="${C_GREEN}aktualna${C_RESET}"
+      if [[ "${cand_clean}" == "-" || "${cand_pkg}" == "-" || "${cand_pkg}" == "(none)" ]]; then
+        status="${C_DIM}brak danych repo${C_RESET}"
+        repo_col="—"
+      elif [[ "${cand_clean}" != "-" && "${ver}" != "${cand_clean}" ]] && hm_version_is_newer "${ver}" "${cand_clean}" 2>/dev/null; then
+        if [[ "${branch}" != "-" ]]; then
+          status="${C_YELLOW}dostępna aktualizacja → ${cand_clean} (update-php ${branch})${C_RESET}"
+        else
+          status="${C_YELLOW}dostępna aktualizacja → ${cand_clean}${C_RESET}"
+        fi
+      elif [[ "${upg_count}" -gt 0 && "${inst_pkg}" != "${cand_pkg}" ]]; then
+        status="${C_YELLOW}dostępna aktualizacja pakietów → ${cand_pkg}${C_RESET}"
+      elif [[ "${inst_pkg}" != "-" && "${inst_pkg}" != "(none)" && "${cand_pkg}" != "-" && "${cand_pkg}" != "(none)" && "${inst_pkg}" != "${cand_pkg}" ]]; then
+        if hm_have_cmd dpkg && dpkg --compare-versions "${cand_pkg}" gt "${inst_pkg}" 2>/dev/null; then
+          status="${C_YELLOW}dostępna aktualizacja pakietów → ${cand_pkg}${C_RESET}"
+        fi
+      fi
+
+      printf '  %-12s %-15s %-18s %b\n' \
+        "${base}" \
+        "${ver}" \
+        "${repo_col}" \
+        "${status}"
+      printf '  %s%s%s\n' "${C_DIM}" "${path}" "${C_RESET}"
+    done
+    echo
+    local age_info pm_label
+    age_info="$(hm_pkg_cache_age_info)"
+    pm_label="apt-cache"
+    case "$(hm_pkg_manager 2>/dev/null || true)" in
+      dnf) pm_label="dnf" ;;
+      yum) pm_label="yum" ;;
+    esac
+    echo "  ${C_DIM}Źródło: repozytorium pakietów (${pm_label}, indeks sprzed ${age_info}). Odśwież: php --refresh${C_RESET}"
   fi
 
-  # Tryb domyślny: lokalny menedżer pakietów (apt-cache / dnf -C)
-  local path base suffix inst_pkg cand_pkg cand_clean upg_count repo_col
-  local -a repo_rows=()
-  di=0
-  dtotal="${#rows[@]}"
-  for row in "${rows[@]}"; do
-    di=$((di + 1))
-    IFS=$'\t' read -r path ver branch <<<"${row}"
-    base="$(basename "${path}")"
-    suffix="${base#lsphp}"
-    hm_progress_bar "${di}" "${dtotal}" "Repo: ${base}..."
-    IFS=$'\t' read -r inst_pkg cand_pkg cand_clean upg_count < <(hm_php_repo_info_for_suffix "${suffix}")
-    [[ -n "${inst_pkg}" ]] || inst_pkg="-"
-    [[ -n "${cand_pkg}" ]] || cand_pkg="-"
-    [[ -n "${cand_clean}" ]] || cand_clean="-"
-    [[ -n "${upg_count}" ]] || upg_count=0
-    [[ -n "${branch}" ]] || branch="-"
-    repo_rows+=("${path}"$'\t'"${ver}"$'\t'"${branch}"$'\t'"${inst_pkg}"$'\t'"${cand_pkg}"$'\t'"${cand_clean}"$'\t'"${upg_count}")
+  # Nowsze gałęzie w repo (np. lsphp86), których jeszcze nie ma lokalnie
+  local -a uniq_inst=()
+  local -A seen_inst=()
+  local ib
+  for ib in "${branches[@]}"; do
+    [[ -n "${ib}" && "${ib}" != "-" ]] || continue
+    [[ -z "${seen_inst[$ib]:-}" ]] || continue
+    seen_inst[$ib]=1
+    uniq_inst+=("${ib}")
   done
-  hm_progress_done
-
-  printf '  %s%-12s %-15s %-18s %s%s\n' \
-    "${C_DIM}" "LSPHP" "ZAINSTALOWANA" "W REPO (UPDATE)" "STATUS" "${C_RESET}"
-  printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..76})" "${C_RESET}"
-
-  for row in "${repo_rows[@]}"; do
-    IFS=$'\t' read -r path ver branch inst_pkg cand_pkg cand_clean upg_count <<<"${row}"
-    base="$(basename "${path}")"
-    [[ -n "${upg_count}" ]] || upg_count=0
-    [[ -n "${cand_clean}" ]] || cand_clean="-"
-    [[ -n "${branch}" ]] || branch="-"
-    repo_col="—"
-    if [[ "${cand_clean}" != "-" ]]; then
-      repo_col="${cand_clean}"
-    fi
-    if [[ "${upg_count}" -gt 0 && "${cand_clean}" != "-" && "${cand_clean}" == "${ver}" ]]; then
-      repo_col="${cand_clean} (+${upg_count} pakiety)"
-    fi
-
-    status="${C_GREEN}aktualna${C_RESET}"
-    if [[ "${cand_clean}" == "-" || "${cand_pkg}" == "-" || "${cand_pkg}" == "(none)" ]]; then
-      status="${C_DIM}brak danych repo${C_RESET}"
-      repo_col="—"
-    elif [[ "${cand_clean}" != "-" && "${ver}" != "${cand_clean}" ]] && hm_version_is_newer "${ver}" "${cand_clean}" 2>/dev/null; then
-      if [[ "${branch}" != "-" ]]; then
-        status="${C_YELLOW}dostępna aktualizacja → ${cand_clean} (update-php ${branch})${C_RESET}"
-      else
-        status="${C_YELLOW}dostępna aktualizacja → ${cand_clean}${C_RESET}"
-      fi
-    elif [[ "${upg_count}" -gt 0 && "${inst_pkg}" != "${cand_pkg}" ]]; then
-      status="${C_YELLOW}dostępna aktualizacja pakietów → ${cand_pkg}${C_RESET}"
-    elif [[ "${inst_pkg}" != "-" && "${inst_pkg}" != "(none)" && "${cand_pkg}" != "-" && "${cand_pkg}" != "(none)" && "${inst_pkg}" != "${cand_pkg}" ]]; then
-      if hm_have_cmd dpkg && dpkg --compare-versions "${cand_pkg}" gt "${inst_pkg}" 2>/dev/null; then
-        status="${C_YELLOW}dostępna aktualizacja pakietów → ${cand_pkg}${C_RESET}"
-      fi
-    fi
-
-    printf '  %-12s %-15s %-18s %b\n' \
-      "${base}" \
-      "${ver}" \
-      "${repo_col}" \
-      "${status}"
-    printf '  %s%s%s\n' "${C_DIM}" "${path}" "${C_RESET}"
-  done
-  echo
-  local age_info pm_label
-  age_info="$(hm_pkg_cache_age_info)"
-  pm_label="apt-cache"
-  case "$(hm_pkg_manager 2>/dev/null || true)" in
-    dnf) pm_label="dnf" ;;
-    yum) pm_label="yum" ;;
-  esac
-  echo "  ${C_DIM}Źródło: repozytorium pakietów (${pm_label}, indeks sprzed ${age_info}). Odśwież: php --refresh${C_RESET}"
+  hm_php_print_installable_newer "${uniq_inst[@]}"
 }
