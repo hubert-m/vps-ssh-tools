@@ -1,6 +1,11 @@
 # Konfiguracja hmtools — skopiuj do hmtools.conf i dostosuj.
 # Lokalizacja na serwerze: /hm-tools/config/hmtools.conf
 
+# --- Katalogi stron (opcjonalnie) ---
+# Gdy vhosty nie są w /home/* ani /var/www/*, ustaw root (np. /srv/www).
+# Używane m.in. przez webs delete / ols cache flush.
+# SITES_ROOT="/srv/www"
+
 # --- Google Drive (rclone) ---
 # Root katalogu na kopie zapasowe: remote:ścieżka
 # Ustaw jednorazowo:  hmtools → backup config   lub   backup setup

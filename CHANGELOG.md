@@ -25,6 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `mysql dump --local <katalog>` — zapis `${db}-stamp.sql.gz` w podanym katalogu
 - Fix: `php` — puste pola TSV (`cand_clean`/`branch`) nie zlewają kolumn przy `IFS=tab`
 - Fix: `webs archive` — stdout trybu plików (`>&2`); puste `archive_dbs` bez fałszywej iteracji
+- Fix: `webs delete` — puste tablice bez `[@]:-`; whitelist `SITES_ROOT`
 
 ## [v0.1.6]
 

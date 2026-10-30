@@ -75,6 +75,19 @@ hm_is_safe_site_root_to_delete() {
   if [[ "${p}" =~ ^/var/www/[^/]+(/.*)?$ ]]; then
     return 0
   fi
+  # opcjonalny SITES_ROOT z hmtools.conf (np. /srv/www/<domena>)
+  if [[ -n "${SITES_ROOT:-}" ]]; then
+    local sr
+    sr="$(realpath -m "${SITES_ROOT%/}" 2>/dev/null || echo "${SITES_ROOT%/}")"
+    sr="${sr%/}"
+    if [[ "${p}" == "${sr}" ]]; then
+      return 1
+    fi
+    if [[ "${p}" == "${sr}/"* ]]; then
+      local rest="${p#"${sr}/"}"
+      [[ -n "${rest}" ]] && return 0
+    fi
+  fi
   return 1
 }
 
@@ -107,7 +120,7 @@ LIMIT 1;
     [[ -n "${other}" ]] && return 0
   fi
   local d row root doc user name _u _s origin
-  for d in "${HM_SITES_LIST[@]:-}"; do
+  for d in "${HM_SITES_LIST[@]}"; do
     [[ "${d}" == "${skip_domain}" ]] && continue
     row="$(hm_resolve_site_paths "${d}" 2>/dev/null || true)"
     [[ -n "${row}" ]] || continue
@@ -246,7 +259,8 @@ hm_site_collect_delete_inventory() {
 
   # nested / shared path warnings
   local other oroot odoc orest
-  for other in "${HM_SITES_LIST[@]:-}"; do
+  for other in "${HM_SITES_LIST[@]}"; do
+    [[ -n "${other}" ]] || continue
     [[ "${other}" == "${domain}" ]] && continue
     row="$(hm_resolve_site_paths "${other}" 2>/dev/null || true)"
     [[ -n "${row}" ]] || continue
@@ -298,7 +312,8 @@ hm_site_collect_delete_inventory() {
 
   # DB users exclusive to these DBs
   local u seen_u="|"
-  for name in "${will_drop_dbs[@]:-}"; do
+  for name in "${will_drop_dbs[@]}"; do
+    [[ -n "${name}" ]] || continue
     while IFS= read -r u; do
       [[ -n "${u}" ]] || continue
       [[ "${seen_u}" == *"|${u}|"* ]] && continue
@@ -459,14 +474,17 @@ hm_site_print_delete_inventory() {
   echo "  Bazy      : ${#HM_DEL_DBS[@]} do usunięcia, ${#HM_DEL_SKIP_DBS[@]} pominiętych"
   echo "  SSL paths : ${#HM_DEL_SSL_PATHS[@]}"
   local w
-  for w in "${HM_DEL_NESTED_WARN[@]:-}"; do
+  for w in "${HM_DEL_NESTED_WARN[@]}"; do
+    [[ -n "${w}" ]] || continue
     hm_warn "  ${w}"
   done
-  for w in "${HM_DEL_SKIP_DBS[@]:-}"; do
+  for w in "${HM_DEL_SKIP_DBS[@]}"; do
+    [[ -n "${w}" ]] || continue
     IFS='|' read -r n o r <<<"${w}"
     hm_warn "  Pomijam DB ${n} (${o}${r:+; ${r}})"
   done
-  for w in "${HM_DEL_CRON_NOTES[@]:-}"; do
+  for w in "${HM_DEL_CRON_NOTES[@]}"; do
+    [[ -n "${w}" ]] || continue
     echo "  Cron      : ${w}"
   done
   echo
@@ -549,7 +567,8 @@ hm_site_execute_delete() {
             hm_mysql_exec cyberpanel -e "DELETE FROM databases_databases WHERE dbName=$(hm_sql_quote "${dname}");" 2>/dev/null || true
           fi
         done
-        for duser in "${HM_DEL_DB_USERS[@]:-}"; do
+        for duser in "${HM_DEL_DB_USERS[@]}"; do
+          [[ -n "${duser}" ]] || continue
           uq="$(hm_sql_quote "${duser}")"
           hm_mysql_exec -e "DROP USER IF EXISTS ${uq}@'localhost'; FLUSH PRIVILEGES;" 2>/dev/null \
             && hm_ok "DROP USER '${duser}'@'localhost'" \

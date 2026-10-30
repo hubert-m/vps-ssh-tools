@@ -160,7 +160,8 @@ hm_backup_archive_site() {
 
   local -a archive_dbs=()
   local dline dname
-  for dline in "${HM_DEL_DBS[@]:-}"; do
+  for dline in "${HM_DEL_DBS[@]}"; do
+    [[ -n "${dline}" ]] || continue
     IFS='|' read -r dname _ <<<"${dline}"
     [[ -n "${dname}" ]] && archive_dbs+=("${dname}")
   done
@@ -181,7 +182,8 @@ hm_backup_archive_site() {
 
   hm_site_build_delete_plan
   local s
-  for s in "${HM_DEL_PLAN_STEPS[@]:-}"; do
+  for s in "${HM_DEL_PLAN_STEPS[@]}"; do
+    [[ -n "${s}" ]] || continue
     plan_steps+=("[USUNIĘCIE] ${s}")
   done
 
