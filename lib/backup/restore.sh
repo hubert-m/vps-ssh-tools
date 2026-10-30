@@ -10,7 +10,7 @@ hm_backup_restore_files() {
   case "${mode}" in
     tar)
       hm_info "Odtwarzanie plików (stream files.tar.gz) → ${target_dir}"
-      if ! rclone cat "${remote_base}/files.tar.gz" | gunzip -c | tar -xzf - -C "${target_dir}"; then
+      if ! rclone cat "${remote_base}/files.tar.gz" | tar -xzf - -C "${target_dir}"; then
         hm_err "Rozpakowanie files.tar.gz nieudane."
         return 1
       fi
@@ -30,7 +30,7 @@ hm_backup_restore_files() {
         for part in "${chunk_parts[@]}"; do
           rclone cat "${remote_base}/files.chunks/${part}" || exit 1
         done
-      ) | gunzip -c | tar -xzf - -C "${target_dir}"; then
+      ) | tar -xzf - -C "${target_dir}"; then
         hm_status_clear
         hm_err "Rozpakowanie files.chunks nieudane."
         return 1
@@ -84,6 +84,7 @@ hm_backup_restore_dbs() {
   done
   for db in "${_dbs[@]}"; do
     [[ -n "${db}" ]] || continue
+    hm_is_valid_db_name "${db}" || { hm_warn "Pominięto nieprawidłową nazwę bazy: ${db}"; continue; }
     di=$((di + 1))
     hm_progress_bar "${di}" "${dtotal}" "Import DB: ${db}"
     hm_status_clear
