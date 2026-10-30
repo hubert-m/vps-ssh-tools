@@ -6,6 +6,12 @@
 # Używane m.in. przez webs delete / ols cache flush.
 # SITES_ROOT="/srv/www"
 
+# --- Nadpisanie auto-detekcji stosu (detect) ---
+# Gdy hmtools źle rozpozna panel/WWW/DB — ustaw ręcznie (po hm_detect_all):
+# FORCE_PANEL="cyberpanel"          # cyberpanel|cpanel|plesk|webmin|directadmin|aapanel|unknown
+# FORCE_WEBSERVER="openlitespeed"   # openlitespeed|nginx|apache|litespeed|unknown
+# FORCE_DB_ENGINE="mariadb"         # mariadb|mysql|unknown
+
 # --- Google Drive (rclone) ---
 # Root katalogu na kopie zapasowe: remote:ścieżka
 # Ustaw jednorazowo:  hmtools → backup config   lub   backup setup

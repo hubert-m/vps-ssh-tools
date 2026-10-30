@@ -26,6 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `php` — puste pola TSV (`cand_clean`/`branch`) nie zlewają kolumn przy `IFS=tab`
 - Fix: `webs archive` — stdout trybu plików (`>&2`); puste `archive_dbs` bez fałszywej iteracji
 - Fix: `webs delete` — puste tablice bez `[@]:-`; whitelist `SITES_ROOT`
+- Feat: `detect` — karta stosu (OS/panel/WWW/DB), hinty narzędzi, `FORCE_*` w conf
 
 ## [v0.1.6]
 

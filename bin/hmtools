@@ -261,7 +261,7 @@ hm_log_session_start "interactive"
 hm_setup_readline_complete
 # cache domen na start — Tab nie czeka na discovery (i nie gubi promptu)
 hm_ensure_sites_cached
-hm_ok "hmtools — panel=${PANEL} webserver=${WEBSERVER} db=${DB_ENGINE}"
+hm_detect_banner
 hm_info "Wpisz 'help' aby zobaczyć komendy. 'exit' kończy. Tab — uzupełnianie (np. use <domena>)."
 hm_info "Logi: ${LOG_DIR}/hmtools-$(date +%Y-%m-%d).log"
 hm_welcome_update_notice

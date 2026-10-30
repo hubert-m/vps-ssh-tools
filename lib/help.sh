@@ -273,10 +273,15 @@ EOF
       ;;
     detect)
       cat <<'EOF'
-Użycie: detect
+Użycie: detect | env
 
-Wypisuje wykryty panel (CyberPanel itd.), webserver (OLS),
-silnik DB oraz ważne ścieżki konfiguracji.
+Karta „Wykryty stos”:
+  OS (/etc/os-release), PANEL, WEBSERVER, DB oraz ścieżki OLS/CyberPanel.
+  Panele: cyberpanel, cpanel (UAPI), plesk (CLI), webmin, directadmin, aapanel.
+  WWW: openlitespeed, nginx, apache (+ dodatkowe, jeśli współistnieją).
+
+Sugeruje komendy hmtools dopasowane do stosu.
+Nadpisanie w hmtools.conf: FORCE_PANEL, FORCE_WEBSERVER, FORCE_DB_ENGINE.
 EOF
       ;;
     cron)

@@ -2,7 +2,7 @@
 
 Zestaw narzędzi CLI instalowanych w `/hm-tools`. Po uruchomieniu `hmtools` wchodzisz w interaktywny kontekst: listujesz usługi webowe, wchodzisz w konkretną stronę (`use`), wykonujesz operacje i wracasz przez `exit`.
 
-Panel i webserver **nie są hardcodowane** — skrypt wykrywa CyberPanel, OpenLiteSpeed, MariaDB/MySQL w runtime.
+Panel i webserver **nie są hardcodowane** — przy starcie `detect` rozpoznaje OS oraz stos (OLS/Nginx/Apache, CyberPanel/cPanel/Plesk/Webmin, MariaDB/MySQL) i sugeruje dopasowane komendy; nadpisanie: `FORCE_*` w `hmtools.conf`.
 
 ---
 
