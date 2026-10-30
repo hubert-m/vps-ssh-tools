@@ -9,10 +9,12 @@ hm_php_branch_of() {
 
 hm_php_clean_pkg_ver() {
   # '1:8.3.14-1+noble' → '8.3.14' ; '8.2.27-1.el9' → '8.2.27'
+  # Puste / brak → "-" (nigdy pusty string — IFS=$'\t' read zlewa sąsiadujące tabulatory)
   local raw="${1:-}"
-  [[ -n "${raw}" && "${raw}" != "(none)" && "${raw}" != "-" ]] || { printf ''; return 0; }
+  [[ -n "${raw}" && "${raw}" != "(none)" && "${raw}" != "-" ]] || { printf '-'; return 0; }
   raw="${raw#*:}"
   raw="${raw%%-*}"
+  [[ -n "${raw}" ]] || raw="-"
   printf '%s' "${raw}"
 }
 
@@ -112,7 +114,7 @@ hm_php_repo_info_for_suffix() {
         fi
       fi
 
-      printf '%s\t%s\t%s\t%s\n' "${inst}" "${cand}" "$(hm_php_clean_pkg_ver "${cand}")" "${upg_count}"
+      printf '%s\t%s\t%s\t%s\n' "${inst}" "${cand}" "$(hm_php_clean_pkg_ver "${cand}")" "${upg_count:-0}"
       ;;
     dnf|yum)
       local inst="-" cand="" clean_cand upg_count=0 chk
@@ -127,11 +129,12 @@ hm_php_repo_info_for_suffix() {
       if [[ -z "${cand}" ]]; then
         cand="${inst}"
       fi
+      [[ -n "${cand}" ]] || cand="-"
       clean_cand="$(hm_php_clean_pkg_ver "${cand}")"
-      printf '%s\t%s\t%s\t%s\n' "${inst}" "${cand}" "${clean_cand}" "${upg_count}"
+      printf '%s\t%s\t%s\t%s\n' "${inst}" "${cand}" "${clean_cand}" "${upg_count:-0}"
       ;;
     *)
-      printf -- '-\t-\t\t0\n'
+      printf -- '-\t-\t-\t0\n'
       ;;
   esac
 }
@@ -212,8 +215,9 @@ hm_list_available_php() {
       ver="$(${p}/bin/php -r 'echo PHP_VERSION;' 2>/dev/null || true)"
       [[ -n "${ver}" ]] || ver="?"
       branch="$(hm_php_branch_of "${ver}")"
+      [[ -n "${branch}" ]] || branch="-"
       rows+=("${p}"$'\t'"${ver}"$'\t'"${branch}")
-      [[ -n "${branch}" ]] && branches+=("${branch}")
+      [[ "${branch}" != "-" ]] && branches+=("${branch}")
     fi
   done
 
@@ -248,7 +252,7 @@ hm_list_available_php() {
       IFS=$'\t' read -r path ver branch <<<"${row}"
       latest=""
       status="?"
-      if [[ -n "${branch}" ]]; then
+      if [[ -n "${branch}" && "${branch}" != "-" ]]; then
         latest="$(hm_php_latest_remote "${branch}" 2>/dev/null || true)"
       fi
       if [[ -z "${latest}" ]]; then
@@ -285,6 +289,11 @@ hm_list_available_php() {
     suffix="${base#lsphp}"
     hm_progress_bar "${di}" "${dtotal}" "Repo: ${base}..."
     IFS=$'\t' read -r inst_pkg cand_pkg cand_clean upg_count < <(hm_php_repo_info_for_suffix "${suffix}")
+    [[ -n "${inst_pkg}" ]] || inst_pkg="-"
+    [[ -n "${cand_pkg}" ]] || cand_pkg="-"
+    [[ -n "${cand_clean}" ]] || cand_clean="-"
+    [[ -n "${upg_count}" ]] || upg_count=0
+    [[ -n "${branch}" ]] || branch="-"
     repo_rows+=("${path}"$'\t'"${ver}"$'\t'"${branch}"$'\t'"${inst_pkg}"$'\t'"${cand_pkg}"$'\t'"${cand_clean}"$'\t'"${upg_count}")
   done
   hm_progress_done
@@ -297,17 +306,26 @@ hm_list_available_php() {
     IFS=$'\t' read -r path ver branch inst_pkg cand_pkg cand_clean upg_count <<<"${row}"
     base="$(basename "${path}")"
     [[ -n "${upg_count}" ]] || upg_count=0
-    repo_col="${cand_clean:-—}"
-    if [[ "${upg_count}" -gt 0 && -n "${cand_clean}" && "${cand_clean}" == "${ver}" ]]; then
+    [[ -n "${cand_clean}" ]] || cand_clean="-"
+    [[ -n "${branch}" ]] || branch="-"
+    repo_col="—"
+    if [[ "${cand_clean}" != "-" ]]; then
+      repo_col="${cand_clean}"
+    fi
+    if [[ "${upg_count}" -gt 0 && "${cand_clean}" != "-" && "${cand_clean}" == "${ver}" ]]; then
       repo_col="${cand_clean} (+${upg_count} pakiety)"
     fi
 
     status="${C_GREEN}aktualna${C_RESET}"
-    if [[ -z "${cand_clean}" || "${cand_pkg}" == "-" || "${cand_pkg}" == "(none)" ]]; then
+    if [[ "${cand_clean}" == "-" || "${cand_pkg}" == "-" || "${cand_pkg}" == "(none)" ]]; then
       status="${C_DIM}brak danych repo${C_RESET}"
       repo_col="—"
-    elif [[ -n "${cand_clean}" && "${ver}" != "${cand_clean}" ]] && hm_version_is_newer "${ver}" "${cand_clean}" 2>/dev/null; then
-      status="${C_YELLOW}dostępna aktualizacja → ${cand_clean} (update-php ${branch})${C_RESET}"
+    elif [[ "${cand_clean}" != "-" && "${ver}" != "${cand_clean}" ]] && hm_version_is_newer "${ver}" "${cand_clean}" 2>/dev/null; then
+      if [[ "${branch}" != "-" ]]; then
+        status="${C_YELLOW}dostępna aktualizacja → ${cand_clean} (update-php ${branch})${C_RESET}"
+      else
+        status="${C_YELLOW}dostępna aktualizacja → ${cand_clean}${C_RESET}"
+      fi
     elif [[ "${upg_count}" -gt 0 && "${inst_pkg}" != "${cand_pkg}" ]]; then
       status="${C_YELLOW}dostępna aktualizacja pakietów → ${cand_pkg}${C_RESET}"
     elif [[ "${inst_pkg}" != "-" && "${inst_pkg}" != "(none)" && "${cand_pkg}" != "-" && "${cand_pkg}" != "(none)" && "${inst_pkg}" != "${cand_pkg}" ]]; then
