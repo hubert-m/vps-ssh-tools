@@ -11,6 +11,9 @@
 # FORCE_PANEL="cyberpanel"          # cyberpanel|cpanel|plesk|webmin|directadmin|aapanel|unknown
 # FORCE_WEBSERVER="openlitespeed"   # openlitespeed|nginx|apache|litespeed|unknown
 # FORCE_DB_ENGINE="mariadb"         # mariadb|mysql|unknown
+# Gdy OS nie jest na liście wsparcia (Ubuntu/Debian/Alma/Rocky/CentOS/RHEL),
+# hmtools wchodzi w tryb awaryjny (tylko uninstall-hmtools). Bypass:
+# ALLOW_UNSUPPORTED_OS=1
 
 # --- Google Drive (rclone) ---
 # Root katalogu na kopie zapasowe: remote:ścieżka

@@ -14,6 +14,7 @@ Panel i webserver **nie są hardcodowane** — przy starcie `detect` rozpoznaje 
 | Szybki start | [docs/quickstart.md](docs/quickstart.md) |
 | Mapa komend (globalne / kontekst / PM2) | [docs/commands.md](docs/commands.md) |
 | Auto-detekcja panelu i stron | [docs/detection.md](docs/detection.md) |
+| Wsparcie dystrybucji (apt/dnf, restricted OS) | [docs/os-support.md](docs/os-support.md) |
 | Konfiguracja (`hmtools.conf`) | [docs/configuration.md](docs/configuration.md) |
 | Logi sesji | [docs/logging.md](docs/logging.md) |
 | Backup → Google Drive (rclone) | [docs/backup.md](docs/backup.md) |

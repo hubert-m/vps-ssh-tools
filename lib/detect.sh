@@ -10,8 +10,12 @@ HMTOOLS_DETECT_LOADED=1
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
 OS_ID=""
+OS_ID_LIKE=""
 OS_VERSION=""
 OS_PRETTY=""
+OS_FAMILY="unknown"   # debian | rhel | unknown
+OS_SUPPORTED=0        # 1 = Ubuntu/Debian/Alma/Rocky/CentOS/RHEL
+PKG_MANAGER="unknown" # apt | dnf | yum | unknown
 PANEL="unknown"
 WEBSERVER="unknown"
 DB_ENGINE="unknown"
@@ -26,11 +30,16 @@ CYBERPANEL_ROOT=""
 MYSQL_SOCKET=""
 # dodatkowe sygnały (spacja): np. "nginx apache webmin"
 STACK_EXTRA=""
+# 1 = REPL/dispatch tylko uninstall-hmtools (+ help/exit/detect/version)
+HMTOOLS_RESTRICTED=0
 
 hm_detect_os() {
   OS_ID=""
+  OS_ID_LIKE=""
   OS_VERSION=""
   OS_PRETTY=""
+  OS_FAMILY="unknown"
+  OS_SUPPORTED=0
   if [[ -r /etc/os-release ]]; then
     # jeden odczyt — bez eksportu zmiennych do bieżącej powłoki
     local line
@@ -39,6 +48,10 @@ hm_detect_os() {
         ID=*)
           OS_ID="${line#ID=}"
           OS_ID="${OS_ID#\"}"; OS_ID="${OS_ID%\"}"
+          ;;
+        ID_LIKE=*)
+          OS_ID_LIKE="${line#ID_LIKE=}"
+          OS_ID_LIKE="${OS_ID_LIKE#\"}"; OS_ID_LIKE="${OS_ID_LIKE%\"}"
           ;;
         VERSION_ID=*)
           OS_VERSION="${line#VERSION_ID=}"
@@ -53,6 +66,31 @@ hm_detect_os() {
   fi
   [[ -n "${OS_PRETTY}" ]] || OS_PRETTY="$(uname -s 2>/dev/null || echo unknown)"
   [[ -n "${OS_ID}" ]] || OS_ID="unknown"
+
+  case "${OS_ID}" in
+    ubuntu|debian|linuxmint|pop)
+      OS_FAMILY="debian"
+      OS_SUPPORTED=1
+      ;;
+    almalinux|rocky|centos|rhel|fedora)
+      OS_FAMILY="rhel"
+      OS_SUPPORTED=1
+      ;;
+    *)
+      if [[ " ${OS_ID_LIKE} " == *" debian "* ]] || [[ " ${OS_ID_LIKE} " == *" ubuntu "* ]]; then
+        OS_FAMILY="debian"
+        OS_SUPPORTED=1
+      elif [[ " ${OS_ID_LIKE} " == *" rhel "* ]] || [[ " ${OS_ID_LIKE} " == *" fedora "* ]] || [[ " ${OS_ID_LIKE} " == *" centos "* ]]; then
+        OS_FAMILY="rhel"
+        OS_SUPPORTED=1
+      fi
+      ;;
+  esac
+}
+
+hm_os_is_supported() {
+  [[ "${ALLOW_UNSUPPORTED_OS:-0}" == "1" ]] && return 0
+  [[ "${OS_SUPPORTED:-0}" -eq 1 ]]
 }
 
 hm_detect_ols_paths() {
@@ -229,15 +267,114 @@ hm_detect_apply_overrides() {
   if [[ -n "${FORCE_SITES_ROOT:-}" && -z "${SITES_ROOT:-}" ]]; then
     SITES_ROOT="${FORCE_SITES_ROOT}"
   fi
+  if [[ "${ALLOW_UNSUPPORTED_OS:-0}" == "1" ]]; then
+    OS_SUPPORTED=1
+  fi
+}
+
+hm_detect_pkg_manager() {
+  PKG_MANAGER="unknown"
+  if type hm_pkg_manager >/dev/null 2>&1; then
+    PKG_MANAGER="$(hm_pkg_manager 2>/dev/null || echo unknown)"
+  elif hm_have_cmd apt-get; then
+    PKG_MANAGER="apt"
+  elif hm_have_cmd dnf; then
+    PKG_MANAGER="dnf"
+  elif hm_have_cmd yum; then
+    PKG_MANAGER="yum"
+  fi
+  # spójność z rodziną OS (gdy CLI obecne)
+  if [[ "${PKG_MANAGER}" == "unknown" ]]; then
+    case "${OS_FAMILY}" in
+      debian) PKG_MANAGER="apt" ;;
+      rhel) PKG_MANAGER="dnf" ;;
+    esac
+  fi
 }
 
 hm_detect_all() {
   STACK_EXTRA=""
+  HMTOOLS_RESTRICTED=0
   hm_detect_os
   hm_detect_webserver
   hm_detect_panel
   hm_detect_db
+  hm_detect_pkg_manager
   hm_detect_apply_overrides
+  if ! hm_os_is_supported; then
+    HMTOOLS_RESTRICTED=1
+  fi
+}
+
+# --- Ścieżki / usługi zależne od dystrybucji i WWW -------------------------
+
+hm_web_error_log_guess() {
+  # typowa ścieżka error loga (pierwsza istniejąca)
+  case "${WEBSERVER}" in
+    openlitespeed|litespeed)
+      [[ -n "${OLS_ROOT}" && -f "${OLS_ROOT}/logs/error.log" ]] && { echo "${OLS_ROOT}/logs/error.log"; return 0; }
+      ;;
+    nginx)
+      [[ -f /var/log/nginx/error.log ]] && { echo /var/log/nginx/error.log; return 0; }
+      ;;
+    apache)
+      [[ -f /var/log/apache2/error.log ]] && { echo /var/log/apache2/error.log; return 0; }
+      [[ -f /var/log/httpd/error_log ]] && { echo /var/log/httpd/error_log; return 0; }
+      ;;
+  esac
+  return 1
+}
+
+hm_service_unit_for_web() {
+  case "${WEBSERVER}" in
+    openlitespeed|litespeed) echo "lsws" ;;
+    nginx) echo "nginx" ;;
+    apache)
+      if [[ "${OS_FAMILY}" == "rhel" ]] || [[ -d /etc/httpd ]]; then
+        echo "httpd"
+      else
+        echo "apache2"
+      fi
+      ;;
+    *) echo "" ;;
+  esac
+}
+
+hm_service_reload() {
+  # uniwersalny reload: OLS → lswsctrl; inaczej systemctl/service
+  local unit="${1:-}"
+  [[ -n "${unit}" ]] || unit="$(hm_service_unit_for_web)"
+  case "${unit}" in
+    lsws|lshttpd|openlitespeed)
+      hm_ols_reload_soft && return 0
+      ;;
+  esac
+  [[ -n "${unit}" ]] || return 1
+  if hm_have_cmd systemctl; then
+    systemctl reload "${unit}" 2>/dev/null && return 0
+    systemctl restart "${unit}" 2>/dev/null && return 0
+  fi
+  if hm_have_cmd service; then
+    service "${unit}" reload 2>/dev/null && return 0
+    service "${unit}" restart 2>/dev/null && return 0
+  fi
+  return 1
+}
+
+hm_pkg_install() {
+  # hm_pkg_install <pakiet…> — apt vs dnf/yum
+  local pm
+  pm="${PKG_MANAGER:-}"
+  [[ -n "${pm}" && "${pm}" != "unknown" ]] || pm="$(hm_pkg_manager 2>/dev/null || true)"
+  case "${pm}" in
+    apt) hm_run apt-get install -y "$@" ;;
+    dnf) hm_run dnf install -y "$@" ;;
+    yum) hm_run yum install -y "$@" ;;
+    *)
+      hm_err "Brak wspieranego menedżera pakietów (apt/dnf/yum)."
+      return 1
+      ;;
+  esac
 }
 
 hm_detect_tool_hints() {
@@ -284,7 +421,11 @@ hm_detect_print() {
   printf '%s%s%s\n' "${C_BOLD}" "══════════════════════════════════════════════════════════════" "${C_RESET}"
   printf '%s%s%s\n' "${C_BOLD}" "  Wykryty stos oprogramowania VPS" "${C_RESET}"
   printf '%s%s%s\n' "${C_BOLD}" "══════════════════════════════════════════════════════════════" "${C_RESET}"
+  local os_ok="nie"
+  [[ "${OS_SUPPORTED}" -eq 1 ]] && os_ok="tak"
   echo "  OS          : ${OS_PRETTY}${OS_ID:+ (${OS_ID}${OS_VERSION:+ ${OS_VERSION}})}"
+  echo "  OS_FAMILY   : ${OS_FAMILY}  (wsparcie: ${os_ok})"
+  echo "  PKG_MANAGER : ${PKG_MANAGER}"
   echo "  PANEL       : ${PANEL}${PANEL_SOURCE:+  [${PANEL_SOURCE}]}"
   echo "  WEBSERVER   : ${WEBSERVER}${WEBSERVER_SOURCE:+  [${WEBSERVER_SOURCE}]}"
   [[ -n "${extra_line}" ]] && echo "${extra_line}"
@@ -295,11 +436,16 @@ hm_detect_print() {
   echo "  CYBERPANEL  : ${CYBERPANEL_ROOT:--}"
   echo "  MYSQL_SOCK  : ${MYSQL_SOCKET:--}"
   echo
-  echo "  ${C_DIM}Sugerowane narzędzia hmtools:${C_RESET}"
-  echo "    ${hints}"
+  if [[ "${HMTOOLS_RESTRICTED}" -eq 1 ]]; then
+    hm_warn "  System nieobsługiwany — dozwolone: uninstall-hmtools, help, version, detect, exit"
+    echo "  ${C_DIM}Wymuszenie: ALLOW_UNSUPPORTED_OS=1 w hmtools.conf${C_RESET}"
+  else
+    echo "  ${C_DIM}Sugerowane narzędzia hmtools:${C_RESET}"
+    echo "    ${hints}"
+  fi
   echo
   echo "  ${C_DIM}Nadpisanie (gdy auto się myli) w ${HMTOOLS_CONF:-hmtools.conf}:${C_RESET}"
-  echo "    FORCE_PANEL=…   FORCE_WEBSERVER=…   FORCE_DB_ENGINE=…"
+  echo "    FORCE_PANEL=…   FORCE_WEBSERVER=…   FORCE_DB_ENGINE=…   ALLOW_UNSUPPORTED_OS=1"
   echo
 }
 
@@ -307,9 +453,23 @@ hm_detect_banner() {
   # krótka karta na start REPL
   local hints
   hints="$(hm_detect_tool_hints)"
-  hm_ok "Wykryty stos — OS: ${OS_PRETTY:-?} · panel=${PANEL} · www=${WEBSERVER} · db=${DB_ENGINE}"
-  hm_info "Narzędzia: ${hints}"
-  hm_info "Szczegóły: detect   | nadpisanie: FORCE_* w hmtools.conf"
+  hm_ok "Wykryty stos — OS: ${OS_PRETTY:-?} [${OS_FAMILY}/${PKG_MANAGER}] · panel=${PANEL} · www=${WEBSERVER} · db=${DB_ENGINE}"
+  if [[ "${HMTOOLS_RESTRICTED:-0}" -eq 1 ]]; then
+    hm_err "Niewspierany lub nierozpoznany system (${OS_ID:-unknown})."
+    hm_warn "Dozwolone komendy: uninstall-hmtools | help | version | detect | exit"
+    hm_info "Lista OS: Ubuntu, Debian, AlmaLinux, Rocky Linux, CentOS, RHEL. Bypass: ALLOW_UNSUPPORTED_OS=1"
+  else
+    hm_info "Narzędzia: ${hints}"
+    hm_info "Szczegóły: detect   | nadpisanie: FORCE_* w hmtools.conf"
+  fi
+}
+
+hm_dispatch_allowed_when_restricted() {
+  # 0 = dozwolone w trybie HMTOOLS_RESTRICTED
+  case "${1:-}" in
+    ""|uninstall-hmtools|help|h|\?|exit|quit|q|version|ver|detect|env) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 hm_ols_reload_soft() {

@@ -276,12 +276,16 @@ EOF
 Użycie: detect | env
 
 Karta „Wykryty stos”:
-  OS (/etc/os-release), PANEL, WEBSERVER, DB oraz ścieżki OLS/CyberPanel.
+  OS (/etc/os-release) + rodzina (debian/rhel) + pkg (apt/dnf/yum),
+  PANEL, WEBSERVER, DB oraz ścieżki OLS/CyberPanel.
+  Wspierane OS: Ubuntu, Debian, AlmaLinux, Rocky Linux, CentOS, RHEL.
   Panele: cyberpanel, cpanel (UAPI), plesk (CLI), webmin, directadmin, aapanel.
   WWW: openlitespeed, nginx, apache (+ dodatkowe, jeśli współistnieją).
 
 Sugeruje komendy hmtools dopasowane do stosu.
-Nadpisanie w hmtools.conf: FORCE_PANEL, FORCE_WEBSERVER, FORCE_DB_ENGINE.
+Niewspierany OS → tylko uninstall-hmtools / help / version / detect / exit
+  (bypass: ALLOW_UNSUPPORTED_OS=1).
+Nadpisanie: FORCE_PANEL, FORCE_WEBSERVER, FORCE_DB_ENGINE.
 EOF
       ;;
     cron)

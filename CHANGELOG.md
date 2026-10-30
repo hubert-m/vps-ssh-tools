@@ -27,6 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `webs archive` — stdout trybu plików (`>&2`); puste `archive_dbs` bez fałszywej iteracji
 - Fix: `webs delete` — puste tablice bez `[@]:-`; whitelist `SITES_ROOT`
 - Feat: `detect` — karta stosu (OS/panel/WWW/DB), hinty narzędzi, `FORCE_*` w conf
+- Feat: wsparcie OS (Ubuntu/Debian/Alma/Rocky/CentOS) + tryb restricted → `uninstall-hmtools`
 
 ## [v0.1.6]
 

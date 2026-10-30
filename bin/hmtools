@@ -71,6 +71,13 @@ hm_dispatch() {
     hm_log_cmd "${cmd}${*:+ $*}"
   fi
 
+  # Niewspierany OS — tylko uninstall / help / version / detect / exit
+  if [[ "${HMTOOLS_RESTRICTED:-0}" -eq 1 ]] && ! hm_dispatch_allowed_when_restricted "${cmd}"; then
+    hm_err "System nieobsługiwany (${OS_PRETTY:-${OS_ID:-unknown}}). Dozwolone: uninstall-hmtools, help, version, detect, exit."
+    hm_info "Bypass (na własne ryzyko): ALLOW_UNSUPPORTED_OS=1 w ${HMTOOLS_CONF:-hmtools.conf}"
+    return 1
+  fi
+
   # W kontekście strony — lokalne komendy
   if [[ -n "${HM_SITE_DOMAIN}" ]]; then
     case "${cmd}" in
@@ -259,18 +266,27 @@ fi
 
 hm_log_session_start "interactive"
 hm_setup_readline_complete
-# cache domen na start — Tab nie czeka na discovery (i nie gubi promptu)
-hm_ensure_sites_cached
 hm_detect_banner
-hm_info "Wpisz 'help' aby zobaczyć komendy. 'exit' kończy. Tab — uzupełnianie (np. use <domena>)."
-hm_info "Logi: ${LOG_DIR}/hmtools-$(date +%Y-%m-%d).log"
-hm_welcome_update_notice
+if [[ "${HMTOOLS_RESTRICTED:-0}" -eq 1 ]]; then
+  hm_info "Tryb awaryjny — możesz odinstalować: uninstall-hmtools"
+  hm_info "Logi: ${LOG_DIR}/hmtools-$(date +%Y-%m-%d).log"
+else
+  # cache domen na start — Tab nie czeka na discovery (i nie gubi promptu)
+  hm_ensure_sites_cached
+  hm_info "Wpisz 'help' aby zobaczyć komendy. 'exit' kończy. Tab — uzupełnianie (np. use <domena>)."
+  hm_info "Logi: ${LOG_DIR}/hmtools-$(date +%Y-%m-%d).log"
+  hm_welcome_update_notice
+fi
 # welcome przez tee — potem TTY na prompt (bez wyścigu z asynchronicznym tee)
 hm_log_detach_output_capture
 
 while true; do
   # Prompt na prawdziwym TTY (po detach) — Tab/readline działają poprawnie
-  if ! read -r -e -p "$(hm_prompt_for_read)" line; then
+  _prompt="$(hm_prompt_for_read)"
+  if [[ "${HMTOOLS_RESTRICTED:-0}" -eq 1 ]]; then
+    _prompt="hmtools[unsupported]> "
+  fi
+  if ! read -r -e -p "${_prompt}" line; then
     echo
     break
   fi

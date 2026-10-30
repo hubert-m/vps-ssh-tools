@@ -6,7 +6,7 @@
 
 | Warstwa | Sygnały (kolejność) | Wynik |
 |---------|---------------------|--------|
-| **OS** | `/etc/os-release` (`ID`, `VERSION_ID`, `PRETTY_NAME`) | `OS_*` |
+| **OS** | `/etc/os-release` (`ID`, `ID_LIKE`, `VERSION_ID`, `PRETTY_NAME`) | `OS_*`, `OS_FAMILY` (debian/rhel), `OS_SUPPORTED`, `PKG_MANAGER` |
 | **Panel** | cPanel (`/usr/local/cpanel` + `uapi`/`whmapi1`), Plesk (`/usr/local/psa` + `plesk`), CyberPanel, DirectAdmin, aaPanel, Webmin | `PANEL`, `PANEL_SOURCE` |
 | **WWW** | OLS (`/usr/local/lsws`), Nginx (`/etc/nginx`), Apache (`/etc/apache2`\|`/etc/httpd`), potem proces/systemd | `WEBSERVER`, `WEBSERVER_SOURCE`; dodatkowe w `STACK_EXTRA` |
 | **DB** | socket MySQL + `mariadb`/`mysql` / unit systemd | `DB_ENGINE`, `MYSQL_SOCKET` |
@@ -32,9 +32,12 @@ W `/hm-tools/config/hmtools.conf` (patrz `config/hmtools.conf.example`):
 FORCE_PANEL="cyberpanel"
 FORCE_WEBSERVER="openlitespeed"
 FORCE_DB_ENGINE="mariadb"
+ALLOW_UNSUPPORTED_OS=1   # tylko gdy świadomie obchodzisz blokadę OS
 ```
 
 Ustawiane **po** auto-detekcji (`hm_detect_apply_overrides`).
+
+Niewspierany OS → tryb awaryjny (tylko `uninstall-hmtools` itd.): [os-support.md](os-support.md).
 
 ## Discovery stron (kolejność)
 
