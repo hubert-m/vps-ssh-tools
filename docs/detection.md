@@ -10,8 +10,12 @@
 | **Panel** | cPanel (`/usr/local/cpanel` + `uapi`/`whmapi1`), Plesk (`/usr/local/psa` + `plesk`), CyberPanel, DirectAdmin, aaPanel, Webmin | `PANEL`, `PANEL_SOURCE` |
 | **WWW** | OLS (`/usr/local/lsws`), Nginx (`/etc/nginx`), Apache (`/etc/apache2`\|`/etc/httpd`), potem proces/systemd | `WEBSERVER`, `WEBSERVER_SOURCE`; dodatkowe w `STACK_EXTRA` |
 | **DB** | socket MySQL + `mariadb`/`mysql` / unit systemd | `DB_ENGINE`, `MYSQL_SOCKET` |
+| **Supervisor** | `supervisorctl` / conf (`/etc/supervisor/…`) / unit `supervisord`\|`supervisor` | `SUPERVISOR`, `SUPERVISOR_CTL`, `SUPERVISOR_CONF`, `SUPERVISOR_SOURCE` |
+| **Chrome** | `google-chrome-stable` → `chromium` → … (+ `--version`) | `CHROME`, `CHROME_BIN`, `CHROME_VERSION`, `CHROME_SOURCE` |
 
 cPanel / Plesk: preferowany sygnał to obecność narzędzi API/CLI (UAPI, `plesk`), nie samo zgadywanie po layoutcie plików.
+
+Gdy wykryto Supervisor / Chrome, hinty `detect` dopisują komendy `supervisor` / `chrome` (diagnostyka REPL).
 
 ## Karta i sugestie narzędzi
 
@@ -32,6 +36,8 @@ W `/hm-tools/config/hmtools.conf` (patrz `config/hmtools.conf.example`):
 FORCE_PANEL="cyberpanel"
 FORCE_WEBSERVER="openlitespeed"
 FORCE_DB_ENGINE="mariadb"
+FORCE_SUPERVISOR="yes"                          # yes|no
+FORCE_CHROME_BIN="/usr/bin/google-chrome-stable"
 ALLOW_UNSUPPORTED_OS=1   # tylko gdy świadomie obchodzisz blokadę OS
 ```
 

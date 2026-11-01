@@ -6,7 +6,7 @@ _hm_cmd_help health <<'EOF'
 Użycie: health
 
 Szybki przegląd: load, RAM, dysk, status OLS i MySQL,
-certyfikaty wygasające w ciągu 14 dni.
+Supervisor / Chrome, certyfikaty wygasające w ciągu 14 dni.
 EOF
 
 cmd_health() {
@@ -32,6 +32,7 @@ cmd_health() {
 
   echo
   local ols_ok="down" mysql_ok="down"
+  local sup_ok="absent" chrome_ok="absent"
   if pgrep -x lshttpd >/dev/null 2>&1 || pgrep -x openlitespeed >/dev/null 2>&1; then
     ols_ok="up"
   elif [[ -x "${OLS_CTRL}" ]] && "${OLS_CTRL}" status 2>/dev/null | grep -qi running; then
@@ -40,8 +41,22 @@ cmd_health() {
   if hm_mysql_exec -e "SELECT 1;" >/dev/null 2>&1; then
     mysql_ok="up"
   fi
+  if [[ "${SUPERVISOR:-no}" == "yes" ]]; then
+    if pgrep -x supervisord >/dev/null 2>&1 \
+      || { hm_have_cmd systemctl && systemctl is-active --quiet supervisord 2>/dev/null; } \
+      || { hm_have_cmd systemctl && systemctl is-active --quiet supervisor 2>/dev/null; }; then
+      sup_ok="up"
+    else
+      sup_ok="down"
+    fi
+  fi
+  if [[ "${CHROME:-no}" == "yes" && -n "${CHROME_BIN:-}" ]]; then
+    chrome_ok="${CHROME_BIN}"
+  fi
   echo "OLS      : ${ols_ok}"
   echo "MySQL    : ${mysql_ok}"
+  echo "Supervisor: ${sup_ok}"
+  echo "Chrome   : ${chrome_ok}"
 
   echo
   echo "${C_BOLD}Certyfikaty wygasające < 14 dni${C_RESET}"

@@ -28,6 +28,15 @@ OLS_CONF=""
 OLS_VHOSTS=""
 CYBERPANEL_ROOT=""
 MYSQL_SOCKET=""
+# Supervisor / Chrome (headless)
+SUPERVISOR="no"
+SUPERVISOR_SOURCE=""
+SUPERVISOR_CTL=""
+SUPERVISOR_CONF=""
+CHROME="no"
+CHROME_BIN=""
+CHROME_SOURCE=""
+CHROME_VERSION=""
 # dodatkowe sygnały (spacja): np. "nginx apache webmin"
 STACK_EXTRA=""
 # 1 = REPL/dispatch tylko uninstall-hmtools (+ help/exit/detect/version)
@@ -251,6 +260,103 @@ hm_detect_db() {
   fi
 }
 
+hm_detect_supervisor() {
+  SUPERVISOR="no"
+  SUPERVISOR_SOURCE=""
+  SUPERVISOR_CTL=""
+  SUPERVISOR_CONF=""
+
+  if hm_have_cmd supervisorctl; then
+    SUPERVISOR_CTL="$(command -v supervisorctl)"
+    SUPERVISOR="yes"
+    SUPERVISOR_SOURCE="bin:supervisorctl"
+  elif [[ -x /usr/bin/supervisorctl ]]; then
+    SUPERVISOR_CTL="/usr/bin/supervisorctl"
+    SUPERVISOR="yes"
+    SUPERVISOR_SOURCE="bin:/usr/bin/supervisorctl"
+  elif hm_have_cmd supervisord; then
+    SUPERVISOR="yes"
+    SUPERVISOR_SOURCE="bin:supervisord"
+  fi
+
+  local conf
+  for conf in \
+    /etc/supervisor/supervisord.conf \
+    /etc/supervisord.conf \
+    /etc/supervisor.conf
+  do
+    if [[ -f "${conf}" ]]; then
+      SUPERVISOR_CONF="${conf}"
+      if [[ "${SUPERVISOR}" != "yes" ]]; then
+        SUPERVISOR="yes"
+        SUPERVISOR_SOURCE="path:${conf}"
+      elif [[ -z "${SUPERVISOR_SOURCE}" ]]; then
+        SUPERVISOR_SOURCE="path:${conf}"
+      fi
+      break
+    fi
+  done
+
+  if hm_have_cmd systemctl; then
+    local unit
+    for unit in supervisord supervisor; do
+      if systemctl is-active --quiet "${unit}" 2>/dev/null \
+        || systemctl is-enabled --quiet "${unit}" 2>/dev/null; then
+        if [[ "${SUPERVISOR}" != "yes" ]]; then
+          SUPERVISOR="yes"
+        fi
+        if [[ -z "${SUPERVISOR_SOURCE}" || "${SUPERVISOR_SOURCE}" == path:* ]]; then
+          SUPERVISOR_SOURCE="systemd:${unit}"
+        fi
+        break
+      fi
+    done
+  fi
+
+  if [[ "${SUPERVISOR}" == "yes" && -z "${SUPERVISOR_CTL}" ]]; then
+    if hm_have_cmd supervisorctl; then
+      SUPERVISOR_CTL="$(command -v supervisorctl)"
+    elif [[ -x /usr/bin/supervisorctl ]]; then
+      SUPERVISOR_CTL="/usr/bin/supervisorctl"
+    fi
+  fi
+}
+
+hm_detect_chrome() {
+  CHROME="no"
+  CHROME_BIN=""
+  CHROME_SOURCE=""
+  CHROME_VERSION=""
+
+  local name bin
+  for name in google-chrome-stable google-chrome chromium chromium-browser chrome; do
+    if hm_have_cmd "${name}"; then
+      bin="$(command -v "${name}")"
+      CHROME="yes"
+      CHROME_BIN="${bin}"
+      CHROME_SOURCE="bin:${name}"
+      CHROME_VERSION="$("${bin}" --version 2>/dev/null | head -1 | tr -s ' ' || true)"
+      return 0
+    fi
+  done
+
+  for bin in \
+    /usr/bin/google-chrome-stable \
+    /usr/bin/google-chrome \
+    /usr/bin/chromium \
+    /usr/bin/chromium-browser \
+    /opt/google/chrome/chrome
+  do
+    if [[ -x "${bin}" ]]; then
+      CHROME="yes"
+      CHROME_BIN="${bin}"
+      CHROME_SOURCE="path:${bin}"
+      CHROME_VERSION="$("${bin}" --version 2>/dev/null | head -1 | tr -s ' ' || true)"
+      return 0
+    fi
+  done
+}
+
 hm_detect_apply_overrides() {
   # Ręczne nadpisanie z hmtools.conf (gdy auto-detekcja się myli)
   if [[ -n "${FORCE_PANEL:-}" ]]; then
@@ -271,6 +377,24 @@ hm_detect_apply_overrides() {
     case "${FORCE_PKG_MANAGER}" in
       apt|dnf|yum) PKG_MANAGER="${FORCE_PKG_MANAGER}" ;;
     esac
+  fi
+  if [[ -n "${FORCE_SUPERVISOR:-}" ]]; then
+    case "${FORCE_SUPERVISOR}" in
+      yes|no)
+        SUPERVISOR="${FORCE_SUPERVISOR}"
+        SUPERVISOR_SOURCE="override:FORCE_SUPERVISOR"
+        ;;
+    esac
+  fi
+  if [[ -n "${FORCE_CHROME_BIN:-}" ]]; then
+    if [[ -x "${FORCE_CHROME_BIN}" ]]; then
+      CHROME="yes"
+      CHROME_BIN="${FORCE_CHROME_BIN}"
+      CHROME_SOURCE="override:FORCE_CHROME_BIN"
+      CHROME_VERSION="$("${CHROME_BIN}" --version 2>/dev/null | head -1 | tr -s ' ' || true)"
+    else
+      hm_warn "FORCE_CHROME_BIN nie jest wykonywalne: ${FORCE_CHROME_BIN}"
+    fi
   fi
   if [[ "${ALLOW_UNSUPPORTED_OS:-0}" == "1" ]]; then
     OS_SUPPORTED=1
@@ -313,6 +437,8 @@ hm_detect_all() {
   hm_detect_panel
   hm_detect_db
   hm_detect_pkg_manager
+  hm_detect_supervisor
+  hm_detect_chrome
   hm_detect_apply_overrides
   if ! hm_os_is_supported; then
     HMTOOLS_RESTRICTED=1
@@ -392,36 +518,40 @@ hm_service_reload() {
 
 hm_detect_tool_hints() {
   # Sugerowane komendy hmtools pod wykryty stos (stdout, jedna linia / punkt)
+  local base extra=""
   case "${PANEL}" in
     cyberpanel)
-      echo "webs, use, ols, php, update-php, backup, perms, ssl, mysql"
+      base="webs, use, ols, php, update-php, backup, perms, ssl, mysql"
       ;;
     cpanel)
-      echo "mysql, backup (list/restore), health — natywne webs/ols OLS ograniczone; cPanel UAPI poza zakresem hmtools"
+      base="mysql, backup (list/restore), health — natywne webs/ols OLS ograniczone; cPanel UAPI poza zakresem hmtools"
       ;;
     plesk)
-      echo "mysql, backup, health — Plesk CLI/API poza zakresem; webs/ols tylko przy OLS"
+      base="mysql, backup, health — Plesk CLI/API poza zakresem; webs/ols tylko przy OLS"
       ;;
     webmin|directadmin|aapanel)
-      echo "mysql, backup, health, disk — panel-specific: ograniczona auto-konfiguracja vhostów"
+      base="mysql, backup, health, disk — panel-specific: ograniczona auto-konfiguracja vhostów"
       ;;
     *)
       case "${WEBSERVER}" in
         openlitespeed|litespeed)
-          echo "ols, webs, php, backup, perms, htaccess, cache, proxy"
+          base="ols, webs, php, backup, perms, htaccess, cache, proxy"
           ;;
         nginx)
-          echo "mysql, backup, health, disk — brak natywnego ols; webs jeśli vhosty w znanym layoutcie"
+          base="mysql, backup, health, disk — brak natywnego ols; webs jeśli vhosty w znanym layoutcie"
           ;;
         apache)
-          echo "mysql, backup, health, disk — brak natywnego ols; webs jeśli vhosty w znanym layoutcie"
+          base="mysql, backup, health, disk — brak natywnego ols; webs jeśli vhosty w znanym layoutcie"
           ;;
         *)
-          echo "health, disk, mysql, backup — uzupełnij FORCE_PANEL / FORCE_WEBSERVER w hmtools.conf"
+          base="health, disk, mysql, backup — uzupełnij FORCE_PANEL / FORCE_WEBSERVER w hmtools.conf"
           ;;
       esac
       ;;
   esac
+  [[ "${SUPERVISOR:-no}" == "yes" ]] && extra="${extra}, supervisor"
+  [[ "${CHROME:-no}" == "yes" ]] && extra="${extra}, chrome"
+  echo "${base}${extra}"
 }
 
 hm_detect_print() {
@@ -448,6 +578,12 @@ hm_detect_print() {
   echo "  OLS_VHOSTS  : ${OLS_VHOSTS:--}"
   echo "  CYBERPANEL  : ${CYBERPANEL_ROOT:--}"
   echo "  MYSQL_SOCK  : ${MYSQL_SOCKET:--}"
+  echo "  SUPERVISOR  : ${SUPERVISOR}${SUPERVISOR_SOURCE:+  [${SUPERVISOR_SOURCE}]}"
+  [[ -n "${SUPERVISOR_CTL}" ]] && echo "  SUPERV_CTL  : ${SUPERVISOR_CTL}"
+  [[ -n "${SUPERVISOR_CONF}" ]] && echo "  SUPERV_CONF : ${SUPERVISOR_CONF}"
+  echo "  CHROME      : ${CHROME}${CHROME_SOURCE:+  [${CHROME_SOURCE}]}"
+  [[ -n "${CHROME_BIN}" ]] && echo "  CHROME_BIN  : ${CHROME_BIN}"
+  [[ -n "${CHROME_VERSION}" ]] && echo "  CHROME_VER  : ${CHROME_VERSION}"
   echo
   if [[ "${HMTOOLS_RESTRICTED}" -eq 1 ]]; then
     hm_warn "  System nieobsługiwany — dozwolone: uninstall-hmtools, help, version, detect, exit"
@@ -458,7 +594,8 @@ hm_detect_print() {
   fi
   echo
   echo "  ${C_DIM}Nadpisanie (gdy auto się myli) w ${HMTOOLS_CONF:-hmtools.conf}:${C_RESET}"
-  echo "    FORCE_PANEL=…   FORCE_WEBSERVER=…   FORCE_DB_ENGINE=…   FORCE_PKG_MANAGER=…   ALLOW_UNSUPPORTED_OS=1"
+  echo "    FORCE_PANEL=…   FORCE_WEBSERVER=…   FORCE_DB_ENGINE=…   FORCE_PKG_MANAGER=…"
+  echo "    FORCE_SUPERVISOR=yes|no   FORCE_CHROME_BIN=/ścieżka   ALLOW_UNSUPPORTED_OS=1"
   echo
 }
 
@@ -466,7 +603,7 @@ hm_detect_banner() {
   # krótka karta na start REPL
   local hints
   hints="$(hm_detect_tool_hints)"
-  hm_ok "Wykryty stos — OS: ${OS_PRETTY:-?} [${OS_FAMILY}/${PKG_MANAGER}] · panel=${PANEL} · www=${WEBSERVER} · db=${DB_ENGINE}"
+  hm_ok "Wykryty stos — OS: ${OS_PRETTY:-?} [${OS_FAMILY}/${PKG_MANAGER}] · panel=${PANEL} · www=${WEBSERVER} · db=${DB_ENGINE} · supervisor=${SUPERVISOR:-no} · chrome=${CHROME:-no}"
   if [[ "${HMTOOLS_RESTRICTED:-0}" -eq 1 ]]; then
     hm_err "Niewspierany lub nierozpoznany system (${OS_ID:-unknown})."
     hm_warn "Dozwolone komendy: uninstall-hmtools | help | version | detect | exit"

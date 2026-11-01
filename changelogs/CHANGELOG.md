@@ -27,6 +27,8 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Feat: pluginowy dispatch (`_dispatch.sh`) — aliasy / restricted / site bez centralnego `case`
 - Docs: `structure.md` + `architecture-commands.md` (kontrakt rejestru modułów)
 - Refactor: `help <polecenie>` — treści w `commands/*/main.sh` (`_hm_cmd_help` / `HM_CMD_HELP`); brak wpisu → „Brak podpowiedzi dla tego polecenia”
+- Feat: detect — Supervisor + Chrome/Chromium (headless); `FORCE_SUPERVISOR` / `FORCE_CHROME_BIN`
+- Feat: komendy `supervisor` (status/ctl/logs) i `chrome` (info/which/version/test headless); skrót w `health`
 
 ## [v0.1.7]
 
