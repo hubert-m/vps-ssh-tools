@@ -365,22 +365,55 @@ hm_detect_chrome() {
 hm_detect_apply_overrides() {
   # Ręczne nadpisanie z hmtools.conf (gdy auto-detekcja się myli)
   if [[ -n "${FORCE_PANEL:-}" ]]; then
-    PANEL="${FORCE_PANEL}"
-    PANEL_SOURCE="override:FORCE_PANEL"
+    case "${FORCE_PANEL}" in
+      cyberpanel|cpanel|plesk|webmin|directadmin|aapanel|unknown)
+        PANEL="${FORCE_PANEL}"
+        PANEL_SOURCE="override:FORCE_PANEL"
+        if [[ "${PANEL}" != "cyberpanel" ]]; then
+          CYBERPANEL_ROOT=""
+        elif [[ -z "${CYBERPANEL_ROOT}" && -d /usr/local/CyberCP ]]; then
+          CYBERPANEL_ROOT="/usr/local/CyberCP"
+        fi
+        ;;
+      *)
+        hm_warn "FORCE_PANEL='${FORCE_PANEL}' spoza listy (cyberpanel|cpanel|plesk|webmin|directadmin|aapanel|unknown) — ignoruję."
+        ;;
+    esac
   fi
   if [[ -n "${FORCE_WEBSERVER:-}" ]]; then
-    WEBSERVER="${FORCE_WEBSERVER}"
-    WEBSERVER_SOURCE="override:FORCE_WEBSERVER"
+    case "${FORCE_WEBSERVER}" in
+      openlitespeed|litespeed|nginx|apache|unknown)
+        WEBSERVER="${FORCE_WEBSERVER}"
+        WEBSERVER_SOURCE="override:FORCE_WEBSERVER"
+        ;;
+      *)
+        hm_warn "FORCE_WEBSERVER='${FORCE_WEBSERVER}' spoza listy (openlitespeed|litespeed|nginx|apache|unknown) — ignoruję."
+        ;;
+    esac
   fi
   if [[ -n "${FORCE_DB_ENGINE:-}" ]]; then
-    DB_ENGINE="${FORCE_DB_ENGINE}"
+    case "${FORCE_DB_ENGINE}" in
+      mariadb|mysql|unknown) DB_ENGINE="${FORCE_DB_ENGINE}" ;;
+      *) hm_warn "FORCE_DB_ENGINE='${FORCE_DB_ENGINE}' spoza listy (mariadb|mysql|unknown) — ignoruję." ;;
+    esac
   fi
   if [[ -n "${FORCE_SITES_ROOT:-}" && -z "${SITES_ROOT:-}" ]]; then
     SITES_ROOT="${FORCE_SITES_ROOT}"
   fi
   if [[ -n "${FORCE_PKG_MANAGER:-}" ]]; then
     case "${FORCE_PKG_MANAGER}" in
-      apt|dnf|yum) PKG_MANAGER="${FORCE_PKG_MANAGER}" ;;
+      apt|dnf|yum)
+        PKG_MANAGER="${FORCE_PKG_MANAGER}"
+        # ostrzeż gdy wymuszono CLI, którego nie ma w PATH
+        case "${FORCE_PKG_MANAGER}" in
+          apt) hm_have_cmd apt-get || hm_warn "FORCE_PKG_MANAGER=apt, ale brak apt-get w PATH." ;;
+          dnf) hm_have_cmd dnf || hm_warn "FORCE_PKG_MANAGER=dnf, ale brak dnf w PATH." ;;
+          yum) hm_have_cmd yum || hm_warn "FORCE_PKG_MANAGER=yum, ale brak yum w PATH." ;;
+        esac
+        ;;
+      *)
+        hm_warn "FORCE_PKG_MANAGER='${FORCE_PKG_MANAGER}' spoza listy (apt|dnf|yum) — ignoruję."
+        ;;
     esac
   fi
   if [[ -n "${FORCE_SUPERVISOR:-}" ]]; then

@@ -348,7 +348,11 @@ hm_list_available_php() {
     local age_info pm_label
     age_info="$(hm_pkg_cache_age_info)"
     pm_label="$(hm_pkg_label)"
-    echo "  ${C_DIM}Źródło: repozytorium pakietów (${pm_label}, indeks sprzed ${age_info}). Odśwież: php --refresh${C_RESET}"
+    if [[ "${age_info}" == "nieznany" || "${age_info}" == "wiek indeksu: nieznany" ]]; then
+      echo "  ${C_DIM}Źródło: repozytorium pakietów (${pm_label}, wiek indeksu: nieznany). Odśwież: php --refresh${C_RESET}"
+    else
+      echo "  ${C_DIM}Źródło: repozytorium pakietów (${pm_label}, indeks sprzed ${age_info}). Odśwież: php --refresh${C_RESET}"
+    fi
   fi
 
   # Nowsze gałęzie w repo (np. lsphp86), których jeszcze nie ma lokalnie

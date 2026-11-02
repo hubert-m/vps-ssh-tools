@@ -16,7 +16,44 @@ EOF
 
 hm_is_valid_ip() {
   local ip="${1:-}"
-  [[ "${ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || [[ "${ip}" =~ ^[0-9a-fA-F:]+$ ]]
+  [[ -n "${ip}" ]] || return 1
+  # IPv4 — oktety 0–255
+  if [[ "${ip}" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
+    local o
+    for o in "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"; do
+      [[ "${o}" =~ ^[0-9]+$ ]] || return 1
+      ((10#${o} <= 255)) || return 1
+    done
+    return 0
+  fi
+  # IPv6 — musi zawierać hex i ':', nie sam ':' / puste
+  [[ "${ip}" == *:* ]] || return 1
+  [[ "${ip}" =~ ^[0-9a-fA-F:]+$ ]] || return 1
+  [[ "${ip}" =~ [0-9a-fA-F] ]] || return 1
+  [[ "${ip}" != : && "${ip}" != :: ]] || return 1
+  return 0
+}
+
+hm_session_ssh_ip() {
+  local tip=""
+  if [[ -n "${SSH_CLIENT:-}" ]]; then
+    tip="${SSH_CLIENT%% *}"
+  elif [[ -n "${SSH_CONNECTION:-}" ]]; then
+    tip="${SSH_CONNECTION%% *}"
+  fi
+  [[ -n "${tip}" ]] || return 1
+  printf '%s' "${tip}"
+}
+
+hm_security_warn_if_self_ip() {
+  local ip="${1:-}" mine
+  mine="$(hm_session_ssh_ip 2>/dev/null || true)"
+  [[ -n "${mine}" && "${mine}" == "${ip}" ]] || return 0
+  hm_warn "To jest IP Twojej bieżącej sesji SSH (${mine}) — możesz się odciąć od serwera."
+  if ! hm_confirm "Na pewno zablokować własne IP ${ip}?"; then
+    return 1
+  fi
+  return 0
 }
 
 cmd_security() {
@@ -184,7 +221,7 @@ cmd_security_unban() {
   if ! hm_confirm_plan "security unban — ${ip}" \
     "Odblokowanie adresu IP." \
     "Usunięcie blokady adresu IP ${ip} we wszystkich aktywnych jailach Fail2Ban" \
-    "Usunięcie reguły firewall (ufw / firewalld / iptables) dla ${ip}"; then
+    "Usunięcie reguły firewall (ufw / firewalld / iptables|ip6tables) dla ${ip}"; then
     return 0
   fi
 
@@ -206,7 +243,7 @@ cmd_security_unban() {
   if hm_os_firewall_unban "${ip}"; then
     hm_ok "Firewall: usunięto blokadę ${ip}"
   else
-    hm_warn "Firewall: brak reguły do usunięcia (lub brak ufw/firewalld/iptables)."
+    hm_warn "Firewall: brak reguły do usunięcia (lub błąd usuwania / brak ufw/firewalld/iptables)."
   fi
 }
 
@@ -214,26 +251,29 @@ cmd_security_ban() {
   local ip="${1:-}"
   [[ -n "${ip}" ]] || { hm_err "Użycie: security ban <IP>"; return 1; }
   hm_is_valid_ip "${ip}" || { hm_err "Nieprawidłowe IP: ${ip}"; return 1; }
+  hm_security_warn_if_self_ip "${ip}" || { hm_info "Anulowano ban."; return 0; }
+
   if ! hm_confirm_plan "security ban — ${ip}" \
     "Blokada adresu IP na firewallu i w Fail2Ban." \
     "Dodanie blokady adresu IP ${ip} we wszystkich aktywnych jailach Fail2Ban" \
-    "Dodanie reguły firewall (ufw / firewalld / iptables) dla ${ip}"; then
+    "Dodanie reguły firewall (ufw / firewalld / iptables|ip6tables) dla ${ip}"; then
     return 0
   fi
 
   local ok=0
   if hm_have_cmd fail2ban-client; then
-    local jails jail
+    local jails jail f2b_any=0
     jails="$(fail2ban-client status 2>/dev/null | awk -F: '/Jail list/{print $2}' | tr ',' ' ')"
     for jail in ${jails}; do
       jail="$(echo "${jail}" | tr -d ' ')"
       [[ -n "${jail}" ]] || continue
       if fail2ban-client set "${jail}" banip "${ip}" 2>/dev/null; then
         hm_ok "Ban ${ip} w jail ${jail}"
+        f2b_any=1
         ok=1
-        break
       fi
     done
+    [[ "${f2b_any}" -eq 1 ]] || hm_warn "Fail2Ban: nie udało się dodać bana w żadnym jailu (lub brak jaili)."
   fi
   if hm_os_firewall_ban "${ip}"; then
     hm_ok "Firewall: zablokowano ${ip}"

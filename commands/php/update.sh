@@ -78,6 +78,13 @@ cmd_update_php() {
     fi
   fi
 
+  # Brak kandydata w repo i brak lokalnych pakietów → nie udawaj instalacji
+  if [[ "${#pkgs[@]}" -eq 0 && ( -z "${cand_pkg}" || "${cand_pkg}" == "-" || "${cand_pkg}" == "(none)" ) ]]; then
+    hm_err "Brak pakietów lsphp${suffix} w lokalnym indeksie repozytorium."
+    hm_info "Odśwież indeks: php --refresh   | sprawdź LiteSpeed repo (repo.litespeed.sh)."
+    return 1
+  fi
+
   if ! hm_confirm_plan "update-php — LSPHP ${branch}" \
     "Aktualizacja pakietów z repozytorium LiteSpeed." \
     "Odświeżenie repozytorium pakietów" \
@@ -93,6 +100,13 @@ cmd_update_php() {
 
   set +e
   hm_pkg_refresh
+  local refresh_rc=$?
+  set -e
+  if [[ "${refresh_rc}" -ne 0 ]]; then
+    hm_warn "Odświeżenie indeksu zakończyło się kodem ${refresh_rc} — kontynuuję ostrożnie."
+  fi
+
+  set +e
   if [[ "${#pkgs[@]}" -gt 0 ]]; then
     hm_info "Aktualizacja pakietów lsphp${suffix}* (${#pkgs[@]})…"
     hm_pkg_upgrade "${pkgs[@]}"
@@ -126,7 +140,9 @@ cmd_update_php() {
   echo "  Było : ${cur} (${inst_pkg:-—})"
   echo "  Jest : ${newv} (${new_inst:-—})"
   echo "  Repo : ${new_clean:-—} (${new_cand:-—})"
-  if [[ -n "${new_cand}" && "${new_cand}" != "-" && "${new_inst}" == "${new_cand}" ]]; then
+  if [[ "${cur}" == "${newv}" && ( "${inst_pkg}" == "${new_inst}" || -z "${new_inst}" ) ]]; then
+    hm_ok "Brak zmian — wersja PHP ${branch} bez różnicy względem stanu sprzed operacji."
+  elif [[ -n "${new_cand}" && "${new_cand}" != "-" && "${new_inst}" == "${new_cand}" ]]; then
     hm_ok "PHP ${branch} jest aktualne względem repozytorium."
   else
     hm_ok "Aktualizacja zakończona."

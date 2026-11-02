@@ -3,7 +3,13 @@
 
 _hm_pkg_do_refresh() {
   hm_info "Odświeżanie list pakietów (apt-get update)…"
-  hm_run apt-get update
+  local rc=0
+  hm_run apt-get update || rc=$?
+  if [[ "${rc}" -ne 0 ]]; then
+    hm_warn "apt-get update zakończyło się kodem ${rc} — indeks może być niekompletny."
+    return "${rc}"
+  fi
+  return 0
 }
 
 _hm_pkg_do_install() {
@@ -112,7 +118,7 @@ _hm_pkg_do_cache_age_info() {
   elif [[ -d /var/lib/apt/lists ]]; then
     f="$(find /var/lib/apt/lists -type f 2>/dev/null | head -1 || true)"
   fi
-  [[ -n "${f}" && -e "${f}" ]] || { printf 'nieznany'; return 0; }
+  [[ -n "${f}" && -e "${f}" ]] || { printf 'wiek indeksu: nieznany'; return 0; }
   mtime="$(stat -c %Y "${f}" 2>/dev/null || echo 0)"
   age_s=$((now - mtime))
   [[ "${age_s}" -lt 0 ]] && age_s=0

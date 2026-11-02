@@ -32,6 +32,8 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `hm_detect_chrome` — bez `--version` na starcie (timeout 3s / leniwie); `/snap/bin/chromium`; trim wersji; 1× warn FORCE
 - Fix: `help` / Tab z rejestru `HM_CMD_*` (w tym chrome/supervisor + podkomendy Tab)
 - Fix: `supervisor` — logs = linie (nie bajty); `all` w kontekście = tylko strona + confirm; `FORCE_SUPERVISOR=no`; detect bez false-yes na samym conf; filtr user dokładny
+- Fix: `security ban/unban` — dokładny match ufw; IPv6 (firewalld/ip6tables); ban we wszystkich jailach; walidacja IP; ostrzeżenie self-ban
+- Fix: rpm candidate = dokładna nazwa pakietu; walidacja FORCE_*; komunikaty update-php / wiek indeksu
 
 ## [v0.1.7]
 

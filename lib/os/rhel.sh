@@ -42,17 +42,30 @@ _hm_os_do_firewall_status() {
   return 1
 }
 
+_hm_os_firewall_family() {
+  local ip="${1:-}"
+  if [[ "${ip}" == *:* ]]; then
+    printf 'ipv6'
+  else
+    printf 'ipv4'
+  fi
+}
+
 _hm_os_do_firewall_ban() {
   local ip="${1:-}"
   [[ -n "${ip}" ]] || return 1
+  local family
+  family="$(_hm_os_firewall_family "${ip}")"
   if hm_have_cmd firewall-cmd; then
-    # permanent + runtime
-    firewall-cmd --permanent --add-rich-rule="rule family=ipv4 source address=${ip} drop" 2>/dev/null \
+    firewall-cmd --permanent --add-rich-rule="rule family=${family} source address=${ip} drop" 2>/dev/null \
       && firewall-cmd --reload 2>/dev/null \
       && return 0
-    firewall-cmd --add-rich-rule="rule family=ipv4 source address=${ip} drop" 2>/dev/null && return 0
+    firewall-cmd --add-rich-rule="rule family=${family} source address=${ip} drop" 2>/dev/null && return 0
   fi
-  if hm_have_cmd iptables; then
+  if [[ "${family}" == "ipv6" ]] && hm_have_cmd ip6tables; then
+    ip6tables -I INPUT -s "${ip}" -j DROP && return 0
+  fi
+  if [[ "${family}" == "ipv4" ]] && hm_have_cmd iptables; then
     iptables -I INPUT -s "${ip}" -j DROP && return 0
   fi
   return 1
@@ -61,15 +74,21 @@ _hm_os_do_firewall_ban() {
 _hm_os_do_firewall_unban() {
   local ip="${1:-}"
   [[ -n "${ip}" ]] || return 1
-  local ok=0
+  local ok=0 family
+  family="$(_hm_os_firewall_family "${ip}")"
   if hm_have_cmd firewall-cmd; then
-    if firewall-cmd --permanent --remove-rich-rule="rule family=ipv4 source address=${ip} drop" 2>/dev/null; then
+    if firewall-cmd --permanent --remove-rich-rule="rule family=${family} source address=${ip} drop" 2>/dev/null; then
       firewall-cmd --reload 2>/dev/null || true
       ok=1
     fi
-    firewall-cmd --remove-rich-rule="rule family=ipv4 source address=${ip} drop" 2>/dev/null && ok=1
+    firewall-cmd --remove-rich-rule="rule family=${family} source address=${ip} drop" 2>/dev/null && ok=1
   fi
-  if hm_have_cmd iptables; then
+  if [[ "${family}" == "ipv6" ]] && hm_have_cmd ip6tables; then
+    while ip6tables -D INPUT -s "${ip}" -j DROP 2>/dev/null; do
+      ok=1
+    done
+  fi
+  if [[ "${family}" == "ipv4" ]] && hm_have_cmd iptables; then
     while iptables -D INPUT -s "${ip}" -j DROP 2>/dev/null; do
       ok=1
     done

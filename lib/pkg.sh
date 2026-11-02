@@ -22,6 +22,13 @@ hm_pkg_id() {
         printf '%s' "${forced}"
         return 0
         ;;
+      *)
+        # ostrzeżenie raz na proces (detect też waliduje)
+        if [[ "${_HM_FORCE_PKG_WARNED:-0}" != "1" ]]; then
+          _HM_FORCE_PKG_WARNED=1
+          hm_warn "FORCE_PKG_MANAGER='${forced}' spoza listy (apt|dnf|yum) — używam auto-detekcji." 2>/dev/null || true
+        fi
+        ;;
     esac
   fi
   if [[ -n "${PKG_MANAGER:-}" && "${PKG_MANAGER}" != "unknown" ]]; then

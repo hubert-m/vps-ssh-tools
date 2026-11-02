@@ -47,7 +47,8 @@ _hm_pkg_do_candidate() {
     [[ "${inst}" == *"not installed"* ]] && inst="-"
   fi
   chk="$(LC_ALL=C "${cli}" -q -C check-update "${name}" 2>/dev/null || true)"
-  cand="$(printf '%s\n' "${chk}" | awk -v p="^${name}" '$1 ~ p { print $2; exit }')"
+  # dokładna nazwa pakietu — nie prefix (lsphp83 ≠ lsphp83-bcmath)
+  cand="$(printf '%s\n' "${chk}" | awk -v main="${name}" '$1 == main { print $2; exit }')"
   if [[ -z "${cand}" ]]; then
     cand="${inst}"
   fi
@@ -81,12 +82,19 @@ _hm_pkg_do_status_for() {
     inst="$(rpm -q --qf '%{VERSION}-%{RELEASE}' "${main}" 2>/dev/null || echo '-')"
     [[ "${inst}" == *"not installed"* ]] && inst="-"
   fi
-  chk="$(LC_ALL=C "${cli}" -q -C check-update "${main}*" 2>/dev/null || true)"
-  cand="$(printf '%s\n' "${chk}" | awk -v p="^${main}" '$1 ~ p { print $2; exit }')"
-  upg_count="$(printf '%s\n' "${chk}" | awk -v p="^${main}" '$1 ~ p { c++ } END { print c+0 }')"
+  # tylko dokładny pakiet main (+ opcjonalnie policz subpakiety osobno po prefiksie main-)
+  chk="$(LC_ALL=C "${cli}" -q -C check-update "${main}" 2>/dev/null || true)"
+  cand="$(printf '%s\n' "${chk}" | awk -v main="${main}" '$1 == main { print $2; exit }')"
+  upg_count="$(printf '%s\n' "${chk}" | awk -v main="${main}" '$1 == main { c++ } END { print c+0 }')"
   if [[ -z "${cand}" ]]; then
     cand="${inst}"
   fi
+  # subpakiety: osobne check-update main-* (nie myli wersji głównego)
+  local sub_chk
+  sub_chk="$(LC_ALL=C "${cli}" -q -C check-update "${main}-*" 2>/dev/null || true)"
+  local sub_n
+  sub_n="$(printf '%s\n' "${sub_chk}" | awk -v p="^${main}-" '$1 ~ p { c++ } END { print c+0 }')"
+  upg_count=$((upg_count + sub_n))
   [[ -n "${cand}" ]] || cand="-"
   printf '%s\t%s\t%s\n' "${inst}" "${cand}" "${upg_count:-0}"
 }
