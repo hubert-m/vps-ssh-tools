@@ -260,8 +260,21 @@ hm_backup_restore_ols_from_archive() {
       if rclone cat "${remote_base}/ols-vhost-dir.tar.gz" | tar -xzf - -C "${vhosts}"; then
         hm_ok "Katalog vhost ${vhosts}/${domain} odtworzony."
         did=1
-        if [[ -z "${HM_SITE_VHOST:-}" && -f "${vhosts}/${domain}/vhconf.conf" ]]; then
-          HM_SITE_VHOST="${vhosts}/${domain}/vhconf.conf"
+        if [[ -z "${HM_SITE_VHOST:-}" ]] && declare -F hm_vhost_conf_path >/dev/null 2>&1; then
+          HM_SITE_VHOST="$(hm_vhost_conf_path "${domain}" 2>/dev/null || true)"
+        fi
+        if [[ -z "${HM_SITE_VHOST:-}" ]]; then
+          local _cand
+          for _cand in \
+            "${vhosts}/${domain}/vhost.conf" \
+            "${vhosts}/${domain}/vhconf.conf" \
+            "${vhosts}/${domain}/httpd.conf"
+          do
+            if [[ -f "${_cand}" ]]; then
+              HM_SITE_VHOST="${_cand}"
+              break
+            fi
+          done
         fi
       else
         hm_err "Rozpakowanie ols-vhost-dir.tar.gz nieudane."
@@ -270,23 +283,27 @@ hm_backup_restore_ols_from_archive() {
     fi
   fi
 
-  # 2) pojedynczy vhost.conf → vhconf — tylko gdy ols-vhost-dir nie dał już vhconf
+  # 2) osobny vhost.conf z Drive — tylko gdy ols-vhost-dir nie dał już żadnego conf
+  #    (nie twórz zbędnego vhconf.conf, gdy configFile wskazuje vhost.conf)
   if rclone cat "${remote_base}/vhost.conf" >/dev/null 2>&1; then
     local dest_vh="${HM_SITE_VHOST:-}"
-    if [[ -z "${dest_vh}" && -n "${vhosts}" ]]; then
-      mkdir -p "${vhosts}/${domain}"
-      dest_vh="${vhosts}/${domain}/vhconf.conf"
-      HM_SITE_VHOST="${dest_vh}"
-    fi
-    if [[ -n "${dest_vh}" && -f "${dest_vh}" && "${did}" -eq 1 ]]; then
-      hm_info "vhconf już z ols-vhost-dir (${dest_vh}) — pomijam osobny vhost.conf"
-    elif [[ -n "${dest_vh}" ]]; then
-      mkdir -p "$(dirname "${dest_vh}")"
-      if rclone cat "${remote_base}/vhost.conf" > "${dest_vh}"; then
-        hm_ok "Przywrócono vhost.conf → ${dest_vh}"
-        did=1
-      else
-        hm_warn "Nie udało się zapisać vhost.conf → ${dest_vh}"
+    if [[ "${did}" -eq 1 && -n "${dest_vh}" && -f "${dest_vh}" ]]; then
+      hm_info "vhost już z ols-vhost-dir (${dest_vh}) — pomijam osobny vhost.conf"
+    else
+      if [[ -z "${dest_vh}" && -n "${vhosts}" ]]; then
+        mkdir -p "${vhosts}/${domain}"
+        # OLS/CyberPanel: zwykle configFile → vhost.conf (nie inventuj vhconf.conf)
+        dest_vh="${vhosts}/${domain}/vhost.conf"
+        HM_SITE_VHOST="${dest_vh}"
+      fi
+      if [[ -n "${dest_vh}" ]]; then
+        mkdir -p "$(dirname "${dest_vh}")"
+        if rclone cat "${remote_base}/vhost.conf" > "${dest_vh}"; then
+          hm_ok "Przywrócono vhost.conf → ${dest_vh}"
+          did=1
+        else
+          hm_warn "Nie udało się zapisać vhost.conf → ${dest_vh}"
+        fi
       fi
     fi
   fi

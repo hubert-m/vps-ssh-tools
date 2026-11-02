@@ -46,6 +46,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `security ban` / ufw — `ufw insert 1 deny from IP` (DENY przed ALLOW 22/80/443); komunikat gdy f2b OK a firewall nie
 - Fix: `pm2 list` — puste pola TSV (script/porthint) jako `-` w jq; bez przesunięcia RST→PORT; ols/db hardening; test-tsv-fields
 - Fix: `backup full` — błędy plików/konfig → status `partial` + rc≠0 (nie „zakończony”); restore OLS mapy per-listener (`# listener:`) bez dublowania
+- Fix: `backup restore` — po ols-vhost-dir nie dokłada zbędnego `vhconf.conf` (używa istniejącego `vhost.conf` / `hm_vhost_conf_path`; standalone → `vhost.conf`)
 
 ## [v0.1.7]
 
