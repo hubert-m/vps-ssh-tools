@@ -145,6 +145,11 @@ _hm_pkg_do_cache_age_info() {
   elif [[ "${age_s}" -lt 86400 ]]; then
     printf '%s godz. temu' "$((age_s / 3600))"
   else
-    printf '%s dni temu' "$((age_s / 86400))"
+    local d=$((age_s / 86400))
+    if [[ "${d}" -eq 1 ]]; then
+      printf '1 dzień temu'
+    else
+      printf '%s dni temu' "${d}"
+    fi
   fi
 }

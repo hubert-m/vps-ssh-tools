@@ -106,9 +106,28 @@ cmd_renew_ssl() {
     echo "  Cert   : ${cert}"
     echo "  Expiry : ${expiry}"
     case "${status}" in
-      expired) hm_err "  Status : WYGASŁ (${days} dni temu)" ;;
-      soon)    hm_warn "  Status : wygasa za ${days} dni" ;;
-      ok)      hm_ok "  Status : ważny (jeszcze ${days} dni)" ;;
+      expired)
+        local ago="${days#-}"
+        if [[ "${ago}" == "1" ]]; then
+          hm_err "  Status : WYGASŁ (1 dzień temu)"
+        else
+          hm_err "  Status : WYGASŁ (${ago} dni temu)"
+        fi
+        ;;
+      soon)
+        if [[ "${days}" == "1" ]]; then
+          hm_warn "  Status : wygasa za 1 dzień"
+        else
+          hm_warn "  Status : wygasa za ${days} dni"
+        fi
+        ;;
+      ok)
+        if [[ "${days}" == "1" ]]; then
+          hm_ok "  Status : ważny (jeszcze 1 dzień)"
+        else
+          hm_ok "  Status : ważny (jeszcze ${days} dni)"
+        fi
+        ;;
       *)       echo "  Status : ${status}" ;;
     esac
   else

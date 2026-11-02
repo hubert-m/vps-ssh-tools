@@ -121,9 +121,14 @@ hm_print_site_ssl() {
   echo "Expiry : $(hm_ssl_expiry "${cert}")"
   case "${status}" in
     expired)
+      local ago="${days#-}"
       echo
       hm_err "════════════════════════════════════════════"
-      hm_err "  CERTYFIKAT WYGASŁ (${days} dni temu)"
+      if [[ "${ago}" == "1" ]]; then
+        hm_err "  CERTYFIKAT WYGASŁ (1 dzień temu)"
+      else
+        hm_err "  CERTYFIKAT WYGASŁ (${ago} dni temu)"
+      fi
       hm_err "  Domena: ${domain}"
       hm_err "  Odnów:  renew-ssl   lub   ssl renew"
       hm_err "════════════════════════════════════════════"
@@ -131,11 +136,19 @@ hm_print_site_ssl() {
       ;;
     soon)
       echo
-      hm_warn "Certyfikat wygasa za ${days} dni — rozważ: renew-ssl"
+      if [[ "${days}" == "1" ]]; then
+        hm_warn "Certyfikat wygasa za 1 dzień — rozważ: renew-ssl"
+      else
+        hm_warn "Certyfikat wygasa za ${days} dni — rozważ: renew-ssl"
+      fi
       echo
       ;;
     ok)
-      hm_ok "Certyfikat ważny (jeszcze ${days} dni)."
+      if [[ "${days}" == "1" ]]; then
+        hm_ok "Certyfikat ważny (jeszcze 1 dzień)."
+      else
+        hm_ok "Certyfikat ważny (jeszcze ${days} dni)."
+      fi
       ;;
     *)
       hm_warn "Nie udało się ocenić ważności certyfikatu."
