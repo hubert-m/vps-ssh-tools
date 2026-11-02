@@ -8,6 +8,27 @@ hm_rclone_file_nonempty() {
   [[ -n "${sz}" && "${sz}" =~ ^[0-9]+$ && "${sz}" -gt 0 ]]
 }
 
+# Usuń niepełny/osierocony katalog snapshotu z Drive (po przerwanej archiwizacji).
+hm_archive_purge_remote() {
+  local remote_base="${1:-}"
+  [[ -n "${remote_base}" ]] || return 0
+  hm_warn "Sprzątam niepełny snapshot na Drive: ${remote_base}"
+  if rclone purge "${remote_base}" 2>/dev/null; then
+    hm_ok "Usunięto niepełny snapshot ${remote_base}"
+  else
+    rclone delete "${remote_base}" --rmdirs 2>/dev/null || true
+    hm_warn "Nie udało się w pełni usunąć ${remote_base} — sprawdź ręcznie na Drive."
+  fi
+}
+
+hm_archive_abort() {
+  local msg="$1"
+  local remote_base="${2:-}"
+  hm_err "${msg}"
+  hm_archive_purge_remote "${remote_base}"
+  return 1
+}
+
 hm_backup_verify_remote_archive() {
   local remote_base="$1"
   local files_mode="$2"
@@ -214,7 +235,7 @@ hm_backup_archive_site() {
   for name in "${archive_dbs[@]}"; do
     [[ -n "${name}" ]] || continue
     if ! hm_stream_mysqldump "${name}" "${remote_base}/db/${name}.sql.gz"; then
-      hm_err "Archiwizacja przerwana — błąd zrzutu/uploadu bazy ${name}. Nic nie usunięto z VPS."
+      hm_archive_abort "Archiwizacja przerwana — błąd zrzutu/uploadu bazy ${name}. Nic nie usunięto z VPS." "${remote_base}"
       return 1
     fi
   done
@@ -224,13 +245,13 @@ hm_backup_archive_site() {
     backup_root="${HM_DEL_DOCROOT}"
   fi
   if [[ -z "${backup_root}" || ! -d "${backup_root}" ]]; then
-    hm_err "Brak katalogu strony do archiwizacji. Nic nie usunięto z VPS."
+    hm_archive_abort "Brak katalogu strony do archiwizacji. Nic nie usunięto z VPS." "${remote_base}"
     return 1
   fi
 
   local files_mode="none" chunks_count=0 report
   report="$(hm_archive_upload_site_files "${backup_root}" "${remote_base}")" || {
-    hm_err "Archiwizacja przerwana — błąd wysyłki plików. Nic nie usunięto z VPS."
+    hm_archive_abort "Archiwizacja przerwana — błąd wysyłki plików. Nic nie usunięto z VPS." "${remote_base}"
     return 1
   }
   # ostatnia linia = tryb (tar|chunks); ignoruj ewentualne śmieci na stdout
@@ -239,7 +260,7 @@ hm_backup_archive_site() {
   case "${files_mode}" in
     tar|chunks) ;;
     *)
-      hm_err "Nie udało się odczytać trybu archiwum plików (otrzymano: ${files_mode:-puste}). Nic nie usunięto z VPS."
+      hm_archive_abort "Nie udało się odczytać trybu archiwum plików (otrzymano: ${files_mode:-puste}). Nic nie usunięto z VPS." "${remote_base}"
       return 1
       ;;
   esac
@@ -248,14 +269,14 @@ hm_backup_archive_site() {
   if [[ -n "${HM_SITE_VHOST:-}" && -f "${HM_SITE_VHOST}" ]]; then
     hm_rclone_copyto "${HM_SITE_VHOST}" "${remote_base}/vhost.conf" 2>/dev/null \
       || cat "${HM_SITE_VHOST}" | hm_rclone_rcat "${remote_base}/vhost.conf" \
-      || { hm_err "Nie udało się wysłać vhost.conf. Nic nie usunięto z VPS."; return 1; }
+      || { hm_archive_abort "Nie udało się wysłać vhost.conf. Nic nie usunięto z VPS." "${remote_base}"; return 1; }
   fi
   if [[ -n "${HM_DEL_VHOST_DIR}" && -d "${HM_DEL_VHOST_DIR}" ]]; then
     local vtar="${TMP_DIR}/ols-vhost-${domain}-${stamp}.tar.gz"
     if tar -C "$(dirname "${HM_DEL_VHOST_DIR}")" -czf "${vtar}" "$(basename "${HM_DEL_VHOST_DIR}")" 2>/dev/null; then
       hm_rclone_copyto "${vtar}" "${remote_base}/ols-vhost-dir.tar.gz" || {
-        hm_err "Upload ols-vhost-dir.tar.gz nieudany. Nic nie usunięto z VPS."
         rm -f "${vtar}"
+        hm_archive_abort "Upload ols-vhost-dir.tar.gz nieudany. Nic nie usunięto z VPS." "${remote_base}"
         return 1
       }
       rm -f "${vtar}"
@@ -276,8 +297,8 @@ hm_backup_archive_site() {
   local ssl_tar="${TMP_DIR}/ssl-${domain}-${stamp}.tar.gz"
   if hm_archive_pack_ssl "${domain}" "${ssl_tar}"; then
     hm_rclone_copyto "${ssl_tar}" "${remote_base}/ssl.tar.gz" || {
-      hm_err "Upload ssl.tar.gz nieudany. Nic nie usunięto z VPS."
       rm -f "${ssl_tar}"
+      hm_archive_abort "Upload ssl.tar.gz nieudany. Nic nie usunięto z VPS." "${remote_base}"
       return 1
     }
     rm -f "${ssl_tar}"
@@ -344,15 +365,15 @@ hm_backup_archive_site() {
 }
 EOF
   if ! hm_write_manifest_and_upload "${remote_base}" "${manifest}"; then
-    hm_err "Upload manifest.json nieudany. Nic nie usunięto z VPS."
     rm -f "${manifest}"
+    hm_archive_abort "Upload manifest.json nieudany. Nic nie usunięto z VPS." "${remote_base}"
     return 1
   fi
   rm -f "${manifest}"
 
   # --- Weryfikacja ---
   if ! hm_backup_verify_remote_archive "${remote_base}" "${files_mode}" "${chunks_count}" "${archive_dbs[@]}"; then
-    hm_err "Archiwizacja przerwana po nieudanej weryfikacji. Nic nie usunięto z VPS."
+    hm_archive_abort "Archiwizacja przerwana po nieudanej weryfikacji. Nic nie usunięto z VPS." "${remote_base}"
     return 1
   fi
 

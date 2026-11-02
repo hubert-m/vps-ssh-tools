@@ -143,6 +143,46 @@ else
   echo "OK   archive snippet has virtualHost cam.pl"
 fi
 
+# --- apply snippet (restore path): lowercase virtualhost + map into listeners ---
+# shellcheck disable=SC1091
+source commands/backup/restore.sh
+cat > "${conf}" <<'EOF'
+listener Default {
+  address *:80
+  map keep.pl *
+}
+virtualHost keep.pl {
+  vhRoot /home/keep.pl
+}
+EOF
+snip="${tmpdir}/restore-snip.conf"
+cat > "${snip}" <<'EOF'
+virtualhost rest.pl {
+  vhRoot /home/rest.pl
+}
+map rest.pl *
+EOF
+OLS_CONF="${conf}"
+hm_ols_apply_httpd_snippet "rest.pl" "${snip}"
+if ! grep -Eqi 'virtualhost[[:space:]]+rest\.pl' "${conf}"; then
+  echo "FAIL apply snippet: virtualhost rest.pl missing"
+  fail=1
+else
+  echo "OK   apply snippet: virtualhost rest.pl"
+fi
+if ! grep -Eq 'map[[:space:]]+rest\.pl' "${conf}"; then
+  echo "FAIL apply snippet: map rest.pl missing in listener"
+  fail=1
+else
+  echo "OK   apply snippet: map rest.pl in listener"
+fi
+if ! grep -Eqi 'virtualhost[[:space:]]+keep\.pl' "${conf}"; then
+  echo "FAIL apply snippet: keep.pl lost"
+  fail=1
+else
+  echo "OK   apply snippet: keep.pl retained"
+fi
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"
   exit 1

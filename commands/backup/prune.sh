@@ -29,16 +29,26 @@ hm_backup_prune_scope() {
 
   local total="${#stamps[@]}"
   local i=0 epoch remote_base
+  local -a complete=()
+  # 1) niepełne/osierocone (brak manifestu / status partial|failed) — zawsze do purge, nie liczą się do keep_min
   for s in "${stamps[@]}"; do
+    remote_base="$(hm_rclone_dest "${rel}/${s}")"
+    if hm_backup_snapshot_is_incomplete "${remote_base}"; then
+      hm_warn "Niepełny/osierocony snapshot → do usunięcia: ${rel}/${s}"
+      printf '%s\n' "${remote_base}"
+      continue
+    fi
+    complete+=("${s}")
+  done
+  # 2) kompletne: keep_min najnowszych + retencja dni; archive chronione
+  for s in "${complete[@]}"; do
     i=$((i + 1))
-    # najnowsze keep_min zawsze zostawiamy (lista jest sort -r)
     if [[ "${i}" -le "${keep_min}" ]]; then
       continue
     fi
     epoch="$(hm_backup_stamp_epoch "${s}")"
     if [[ "${epoch}" -gt 0 && "${epoch}" -lt "${cutoff}" ]]; then
       remote_base="$(hm_rclone_dest "${rel}/${s}")"
-      # chronione snapshoty archive (webs archive) — nigdy nie prune
       local json type archived
       json="$(hm_backup_cat_manifest "${remote_base}")"
       type="$(hm_backup_json_str "${json}" "type")"
@@ -50,7 +60,6 @@ hm_backup_prune_scope() {
       printf '%s\n' "${remote_base}"
     fi
   done
-  # unused total silences shellcheck in some contexts
   : "${total}"
 }
 

@@ -20,4 +20,7 @@
 - Fix: rpm candidate = dokładna nazwa pakietu; walidacja FORCE_*; komunikaty update-php / wiek indeksu
 - Fix: `php` / php.net — `{"error":"Unknown version"}` nie cache’owane; kanał „brak danych” zamiast false-stable (`hm_php_parse_phpnet_json`)
 - Fix: `webs delete` / archive — `virtualhost` case-insensitive w httpd_config; denylista `SITES_ROOT`; bez `pkill` na współdzielonym userze; inwentarz `--keep-db`; hardening `uninstall-hmtools`
+- Fix: `backup restore` z archive — odtwarza ols-vhost-dir + snippet httpd_config/map; `webs archive` czyści niepełny snapshot na Drive (`hm_archive_purge_remote`)
+- Fix: `backup full --yes` (cron); anulowanie bez TTY → rc≠0; walidacja stamp; niepełne snapshoty: purge/list BAD/prune; `backup site` rc≠0 przy błędzie plików
+- Fix: polish `php` (kolumny ASCII, subpakiety w statusie, nieparsowalna wersja); `ols cache` bez global cachedata per-domena; walidacja nazwy proxy przed confirm
 

@@ -108,6 +108,191 @@ hm_backup_ols_reload() {
   return 0
 }
 
+# Wstaw linie map <domain> do każdego bloku listener { } (case-insensitive).
+hm_ols_insert_maps_into_listeners() {
+  local conf="$1"
+  shift
+  local -a maps=("$@")
+  [[ "${#maps[@]}" -gt 0 && -f "${conf}" ]] || return 0
+  local tmp maps_file
+  tmp="$(mktemp)"
+  maps_file="$(mktemp)"
+  printf '%s\n' "${maps[@]}" > "${maps_file}"
+  awk -v mf="${maps_file}" '
+    BEGIN {
+      while ((getline m < mf) > 0) {
+        if (m != "") maps[++nmap] = m
+      }
+      close(mf)
+      in_listener=0; depth=0
+    }
+    {
+      first=tolower($1)
+      if (!in_listener && first=="listener") {
+        in_listener=1; depth=0
+        if ($0 ~ /\{/) depth=1
+        print
+        next
+      }
+      if (in_listener) {
+        if ($0 ~ /\{/) depth++
+        if ($0 ~ /\}/) {
+          depth--
+          if (depth <= 0) {
+            for (i=1; i<=nmap; i++) print "  " maps[i]
+            in_listener=0; depth=0
+          }
+        }
+        print
+        next
+      }
+      print
+    }
+  ' "${conf}" > "${tmp}" && mv "${tmp}" "${conf}" || rm -f "${tmp}"
+  rm -f "${maps_file}"
+}
+
+# Scal ols-httpd-snippet (virtualhost + map) do OLS_CONF — z kopią .hmtools.bak.
+hm_ols_apply_httpd_snippet() {
+  local domain="$1"
+  local snip="$2"
+  local conf="${OLS_CONF:-}"
+  [[ -n "${conf}" && -f "${conf}" && -s "${snip}" ]] || return 1
+
+  cp -a "${conf}" "${conf}.hmtools.bak" 2>/dev/null || true
+
+  # usuń stary blok/mapy domeny (case-insensitive), potem wstaw snippet
+  if declare -F hm_ols_remove_domain_from_conf >/dev/null 2>&1; then
+    hm_ols_remove_domain_from_conf "${domain}"
+  fi
+
+  local vh_tmp maps_tmp line in_vh=0 depth=0
+  vh_tmp="$(mktemp)"
+  maps_tmp="$(mktemp)"
+  : > "${vh_tmp}"
+  : > "${maps_tmp}"
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    local first second
+    first="$(printf '%s' "${line}" | awk '{print tolower($1)}')"
+    second="$(printf '%s' "${line}" | awk '{print $2}' | tr -d '{')"
+    if [[ "${in_vh}" -eq 0 && "${first}" == "virtualhost" ]]; then
+      in_vh=1
+      depth=0
+      [[ "${line}" == *"{"* ]] && depth=1
+      printf '%s\n' "${line}" >> "${vh_tmp}"
+      continue
+    fi
+    if [[ "${in_vh}" -eq 1 ]]; then
+      printf '%s\n' "${line}" >> "${vh_tmp}"
+      [[ "${line}" == *"{"* ]] && depth=$((depth + 1))
+      if [[ "${line}" == *"}"* ]]; then
+        depth=$((depth - 1))
+        if [[ "${depth}" -le 0 ]]; then
+          in_vh=0
+          depth=0
+        fi
+      fi
+      continue
+    fi
+    if [[ "${first}" == "map" && "${second}" == "${domain}" ]]; then
+      printf '%s\n' "${line}" >> "${maps_tmp}"
+    fi
+  done < "${snip}"
+
+  if [[ -s "${vh_tmp}" ]]; then
+    {
+      echo
+      echo "# hmtools restore — ${domain}"
+      cat "${vh_tmp}"
+    } >> "${conf}"
+  fi
+
+  local -a map_lines=()
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ -n "${line}" ]] && map_lines+=("${line}")
+  done < "${maps_tmp}"
+  rm -f "${vh_tmp}" "${maps_tmp}"
+
+  if [[ "${#map_lines[@]}" -gt 0 ]]; then
+    hm_ols_insert_maps_into_listeners "${conf}" "${map_lines[@]}"
+  fi
+  return 0
+}
+
+# Odtwórz vhost OLS + snippet httpd_config z snapshota archive (także gdy strona już nie istnieje lokalnie).
+hm_backup_restore_ols_from_archive() {
+  local domain="$1"
+  local remote_base="$2"
+  local did=0
+  local conf="${OLS_CONF:-}"
+  local vhosts="${OLS_VHOSTS:-}"
+
+  # 1) katalog vhosta (ols-vhost-dir.tar.gz)
+  if rclone cat "${remote_base}/ols-vhost-dir.tar.gz" >/dev/null 2>&1; then
+    if [[ -z "${vhosts}" ]]; then
+      hm_warn "OLS_VHOSTS nieustawione — nie mogę rozpakować ols-vhost-dir.tar.gz. Ręcznie: rclone cat ${remote_base}/ols-vhost-dir.tar.gz | tar -tzf -"
+    else
+      mkdir -p "${vhosts}"
+      hm_info "Odtwarzanie katalogu vhost OLS → ${vhosts}/${domain}"
+      if rclone cat "${remote_base}/ols-vhost-dir.tar.gz" | tar -xzf - -C "${vhosts}"; then
+        hm_ok "Katalog vhost ${vhosts}/${domain} odtworzony."
+        did=1
+        if [[ -z "${HM_SITE_VHOST:-}" && -f "${vhosts}/${domain}/vhconf.conf" ]]; then
+          HM_SITE_VHOST="${vhosts}/${domain}/vhconf.conf"
+        fi
+      else
+        hm_err "Rozpakowanie ols-vhost-dir.tar.gz nieudane."
+        return 1
+      fi
+    fi
+  fi
+
+  # 2) pojedynczy vhost.conf → vhconf / HM_SITE_VHOST
+  if rclone cat "${remote_base}/vhost.conf" >/dev/null 2>&1; then
+    local dest_vh="${HM_SITE_VHOST:-}"
+    if [[ -z "${dest_vh}" && -n "${vhosts}" ]]; then
+      mkdir -p "${vhosts}/${domain}"
+      dest_vh="${vhosts}/${domain}/vhconf.conf"
+      HM_SITE_VHOST="${dest_vh}"
+    fi
+    if [[ -n "${dest_vh}" ]]; then
+      mkdir -p "$(dirname "${dest_vh}")"
+      if rclone cat "${remote_base}/vhost.conf" > "${dest_vh}"; then
+        hm_ok "Przywrócono vhost.conf → ${dest_vh}"
+        did=1
+      else
+        hm_warn "Nie udało się zapisać vhost.conf → ${dest_vh}"
+      fi
+    fi
+  fi
+
+  # 3) snippet httpd_config (virtualhost + map)
+  if rclone cat "${remote_base}/ols-httpd-snippet.conf" >/dev/null 2>&1; then
+    if [[ -z "${conf}" || ! -f "${conf}" ]]; then
+      hm_warn "OLS_CONF niedostępny — zapisz ręcznie ols-httpd-snippet.conf z Drive do httpd_config.conf."
+    else
+      local snip
+      snip="$(mktemp)"
+      if rclone cat "${remote_base}/ols-httpd-snippet.conf" > "${snip}" && [[ -s "${snip}" ]]; then
+        hm_info "Scalanie ols-httpd-snippet → ${conf} (kopia .hmtools.bak)"
+        if hm_ols_apply_httpd_snippet "${domain}" "${snip}"; then
+          hm_ok "Blok virtualhost / map dla ${domain} wstawiony do httpd_config."
+          did=1
+        else
+          hm_warn "Nie udało się scalić ols-httpd-snippet.conf"
+        fi
+      fi
+      rm -f "${snip}"
+    fi
+  fi
+
+  if [[ "${did}" -eq 0 ]]; then
+    hm_warn "Snapshot bez artefaktów OLS (ols-vhost-dir / vhost.conf / ols-httpd-snippet) — pomijam restore vhosta."
+  fi
+  return 0
+}
+
 hm_backup_restore() {
   local domain="${1:-}"
   shift || true
@@ -175,6 +360,11 @@ hm_backup_restore() {
     hm_info "Wybrano najnowszy: ${stamp}"
   fi
 
+  if [[ ! "${stamp}" =~ ^[0-9]{8}-[0-9]{6}$ ]]; then
+    hm_err "Nieprawidłowy stamp: '${stamp}' (oczekiwano YYYYMMDD-HHMMSS)."
+    return 1
+  fi
+
   local remote_base target_dir
   remote_base="$(hm_backup_dest_site "${domain}" "${stamp}")"
   if ! rclone lsd "${remote_base}" >/dev/null 2>&1 && ! rclone ls "${remote_base}" >/dev/null 2>&1; then
@@ -182,6 +372,11 @@ hm_backup_restore() {
       hm_err "Snapshot nie istnieje: ${remote_base}"
       return 1
     fi
+  fi
+
+  if hm_backup_snapshot_is_incomplete "${remote_base}"; then
+    hm_err "Snapshot ${stamp} jest niepełny/osierocony (brak poprawnego manifestu) — odmowa restore. Usuń: backup prune lub rclone purge."
+    return 1
   fi
 
   target_dir="${HM_SITE_ROOT:-}"
@@ -207,13 +402,18 @@ hm_backup_restore() {
   hm_backup_check_space || return 1
 
   local -a plan_steps=()
-  local restore_vhost=0
+  local restore_ols=0
   local db_list=""
+  local snap_type=""
+  snap_type="$(hm_backup_json_str "$(hm_backup_cat_manifest "${remote_base}")" "type")"
+
   if [[ "${db_only}" -eq 0 ]]; then
     plan_steps+=("Pobranie i rozpakowanie archiwum plików z ${remote_base} do ${target_dir} (nadpisanie plików strony)")
-    if [[ -n "${HM_SITE_VHOST:-}" ]] && rclone cat "${remote_base}/vhost.conf" >/dev/null 2>&1; then
-      restore_vhost=1
-      plan_steps+=("Przywrócenie pliku vhost.conf → ${HM_SITE_VHOST}")
+    if rclone cat "${remote_base}/ols-vhost-dir.tar.gz" >/dev/null 2>&1 \
+      || rclone cat "${remote_base}/ols-httpd-snippet.conf" >/dev/null 2>&1 \
+      || rclone cat "${remote_base}/vhost.conf" >/dev/null 2>&1; then
+      restore_ols=1
+      plan_steps+=("Odtworzenie vhosta OLS (katalog ${OLS_VHOSTS:-vhosts}/${domain}, blok virtualhost + map w ${OLS_CONF:-httpd_config.conf})")
     fi
     if [[ -n "${HM_SITE_USER:-}" ]] && id "${HM_SITE_USER}" >/dev/null 2>&1; then
       plan_steps+=("Ustawienie właściciela plików chown -R ${HM_SITE_USER}:${HM_SITE_USER} na ${target_dir}")
@@ -226,18 +426,23 @@ hm_backup_restore() {
   fi
   plan_steps+=("Przeładowanie OpenLiteSpeed (ols reload)")
 
+  local warn_extra=""
+  [[ "${snap_type}" == "archive" ]] && warn_extra=" Snapshot typu archive — odtwarzanie po usunięciu strony z VPS (vhost OLS + pliki + DB)."
+
   if ! hm_confirm_plan_critical "${domain}" \
     "backup restore — ${domain} (${stamp})" \
-    "Nadpisanie danych strony i/lub baz — operacja trudna do cofnięcia." \
+    "Nadpisanie danych strony i/lub baz — operacja trudna do cofnięcia.${warn_extra}" \
     "${plan_steps[@]}"; then
     return 0
   fi
 
   if [[ "${db_only}" -eq 0 ]]; then
     hm_backup_restore_files "${remote_base}" "${target_dir}" || return 1
-    if [[ "${restore_vhost}" -eq 1 ]]; then
-      rclone cat "${remote_base}/vhost.conf" > "${HM_SITE_VHOST}" \
-        || hm_warn "Nie udało się zapisać vhost.conf"
+    if [[ "${restore_ols}" -eq 1 ]]; then
+      hm_backup_restore_ols_from_archive "${domain}" "${remote_base}" || {
+        hm_err "Restore OLS nieudany — pliki/DB mogą być już odtworzone; dokończ vhost ręcznie."
+        return 1
+      }
     fi
     if [[ -n "${HM_SITE_USER:-}" ]] && id "${HM_SITE_USER}" >/dev/null 2>&1; then
       hm_info "chown -R ${HM_SITE_USER}: → ${target_dir}"

@@ -7,7 +7,7 @@ Użycie:
   backup setup              Instalacja/konfiguracja rclone + Google Drive
   backup config             Ustaw katalog root na Drive (jednorazowo)
   backup show               Pokaż aktualny root i strukturę
-  backup full               Pełna kopia serwera → Drive/full/<stamp>/
+  backup full [--yes]       Pełna kopia serwera → Drive/full/<stamp>/ (--yes = cron)
   backup site <domena>      Kopia strony → Drive/<domena>/<stamp>/
   backup archive <domena>   Archiwum (type=archive) → weryfikacja Drive → usunięcie z VPS
   backup list [domena|full] Snapshoty + manifest (w kontekście: bieżąca domena)
@@ -122,12 +122,39 @@ cmd_backup() {
       hm_backup_schedule "${1:-status}"
       ;;
     full|server)
+      local full_yes=0 a
+      for a in "$@"; do
+        case "${a}" in
+          --yes|-y) full_yes=1 ;;
+          --help|-h)
+            cat <<'EOF'
+Użycie: backup full [--yes|-y]
+
+Pełna kopia serwera → Drive/full/<stamp>/.
+--yes pomija potwierdzenie (wymagane w cronie: backup schedule).
+EOF
+            return 0
+            ;;
+          -*)
+            hm_err "Nieznana flaga: ${a} (backup full [--yes])"
+            return 1
+            ;;
+        esac
+      done
       hm_load_config
       echo "Root Drive: ${RCLONE_REMOTE}"
       echo "Cel:       ${RCLONE_REMOTE}/full/<stamp>/"
-      if ! hm_confirm "Uruchomić pełny backup serwera na Google Drive"; then
-        hm_info "Anulowano."
-        return 0
+      if [[ "${full_yes}" -eq 1 ]]; then
+        hm_info "(--yes: pomijam potwierdzenie backup full)"
+      else
+        if [[ ! -t 0 ]]; then
+          hm_err "Brak TTY — odmowa backup full bez --yes (cron: użyj „backup full --yes”)."
+          return 1
+        fi
+        if ! hm_confirm "Uruchomić pełny backup serwera na Google Drive"; then
+          hm_info "Anulowano."
+          return 1
+        fi
       fi
       hm_backup_full
       ;;

@@ -54,14 +54,16 @@ hm_backup_schedule_enable() {
     return 0
   fi
 
+  # Linia crona MUSI mieć --yes (brak TTY); zgodne z opisem w plan_steps / status.
   cat > "${f}" <<EOF
 # hmtools — automatyczny backup (zarządzane przez: backup schedule)
+# Codzienny full o ${hour}:00 (+ opcjonalny prune) — zawsze z --yes (non-interactive).
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 MAILTO=""
 
-# codzienny pełny backup
-0 ${hour} * * * root ${bin} -c "backup full" >> ${logf} 2>&1
+# codzienny pełny backup (--yes: bez TTY w cronie)
+0 ${hour} * * * root ${bin} -c "backup full --yes" >> ${logf} 2>&1
 EOF
   if [[ -n "${prune_line}" ]]; then
     echo "" >> "${f}"

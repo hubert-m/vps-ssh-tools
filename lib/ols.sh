@@ -342,14 +342,13 @@ hm_ols_cache_paths_for_domain() {
   local domain="$1"
   local root="${2:-}"
   local p
+  # tylko ścieżki domeny — globalne ${OLS_ROOT}/cachedata jest w ols cache flush all
   for p in \
     "/home/${domain}/lscache" \
     "${root}/lscache" \
-    "${OLS_ROOT}/cachedata/${domain}" \
-    "${OLS_ROOT}/cachedata"
+    "${OLS_ROOT}/cachedata/${domain}"
   do
     [[ -n "${p}" && -d "${p}" ]] || continue
-    # unikaj duplikatów
     printf '%s\n' "${p}"
   done | awk '!seen[$0]++'
 }
@@ -464,8 +463,12 @@ hm_ols_cache_flush() {
     total=$((total + bytes))
     plan_steps+=("Usunięcie zawartości ${t} ($(hm_human_size "${bytes}")) z zachowaniem pustego katalogu")
   done
+  local warn_cache="Razem do usunięcia: $(hm_human_size "${total}")."
+  if [[ "${scope}" == "all" || "${scope}" == "--all" || "${scope}" == "global" ]]; then
+    warn_cache="${warn_cache} Uwaga: tryb all czyści też globalne katalogi cachedata OLS (wszystkie domeny)."
+  fi
   if ! hm_confirm_plan "ols cache flush — ${scope:-${domain:-all}}" \
-    "Razem do usunięcia: $(hm_human_size "${total}")." \
+    "${warn_cache}" \
     "${plan_steps[@]}"; then
     return 0
   fi
@@ -609,6 +612,14 @@ hm_ols_proxy_set_port() {
       return 1
     fi
     name_filter="$(printf '%s\n' "${blocks}" | head -1 | cut -d'|' -f1)"
+  else
+    # walidacja nazwy PRZED potwierdzeniem planu
+    if ! printf '%s\n' "${blocks}" | awk -F'|' -v n="${name_filter}" '$1 == n { found=1 } END { exit !found }'; then
+      echo "Dostępne proxy:"
+      printf '%s\n' "${blocks}" | while IFS='|' read -r n a p; do echo "  ${n}  ${a}"; done
+      hm_err "Nieznana nazwa proxy: „${name_filter}”."
+      return 1
+    fi
   fi
 
   if ! hm_confirm_plan "proxy set-port — ${domain}" \

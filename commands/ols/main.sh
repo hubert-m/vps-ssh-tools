@@ -3,7 +3,9 @@
 
 
 _hm_cmd_help ols <<'EOF'
-Użycie: ols [status|reload|restart|log|stats|top|htaccess|cache|proxy|admin]
+Użycie:
+  ols [status|reload|restart|log|stats|top|htaccess|cache|proxy|admin]
+  ols cache flush [domena|all]   (all = też globalne cachedata)
 
 Zarządzanie OpenLiteSpeed:
   status              Stan / wersja / proces (domyślne)

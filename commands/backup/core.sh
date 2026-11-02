@@ -280,8 +280,17 @@ hm_backup_site() {
     hm_err "Brak katalogu strony do backupu."
     return 1
   fi
+  local files_ok=1
   if ! hm_upload_files_smart "${backup_root}" "${remote_base}"; then
-    hm_warn "Błąd podczas wysyłania plików dla ${domain} — kontynuuję (vhost/manifest)."
+    files_ok=0
+    hm_err "Błąd podczas wysyłania plików dla ${domain}."
+  fi
+
+  if [[ "${files_ok}" -ne 1 ]]; then
+    hm_err "Backup ${domain} niekompletny — usuwam niepełny snapshot z Drive (${remote_base})."
+    rclone purge "${remote_base}" 2>/dev/null || rclone delete "${remote_base}" --rmdirs 2>/dev/null || true
+    rm -f "${manifest}"
+    return 1
   fi
 
   # Vhost conf (jeśli jest)
@@ -293,6 +302,7 @@ hm_backup_site() {
   cat > "${manifest}" <<EOF
 {
   "type": "site",
+  "status": "ok",
   "domain": "${domain}",
   "host": "${BACKUP_HOST_LABEL}",
   "stamp": "${stamp}",
@@ -304,7 +314,12 @@ hm_backup_site() {
   "created_at": "$(date -Iseconds)"
 }
 EOF
-  hm_write_manifest_and_upload "${remote_base}" "${manifest}"
+  if ! hm_write_manifest_and_upload "${remote_base}" "${manifest}"; then
+    rm -f "${manifest}"
+    hm_err "Upload manifest.json nieudany — usuwam niepełny snapshot ${remote_base}."
+    rclone purge "${remote_base}" 2>/dev/null || true
+    return 1
+  fi
   rm -f "${manifest}"
 
   hm_ok "Backup strony ${domain} zakończony → ${remote_base}"

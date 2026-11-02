@@ -62,12 +62,33 @@ hm_backup_list_stamps() {
   hm_rclone_lsd_names "${base}" | grep -E '^[0-9]{8}-[0-9]{6}$' | sort -r
 }
 
+# 0 = kompletny (ma manifest, status≠partial/failed); 1 = niepełny/osierocony
+hm_backup_snapshot_is_incomplete() {
+  local remote_base="$1"
+  local json status type
+  json="$(hm_backup_cat_manifest "${remote_base}")"
+  if [[ -z "${json}" ]]; then
+    return 0
+  fi
+  status="$(hm_backup_json_str "${json}" "status")"
+  case "${status}" in
+    partial|failed) return 0 ;;
+  esac
+  type="$(hm_backup_json_str "${json}" "type")"
+  [[ -z "${type}" ]] && return 0
+  return 1
+}
+
 hm_backup_print_snapshot_row() {
   local stamp="$1" remote_base="$2"
-  local json type php dbs mode size_b size_h created
+  local json type php dbs mode size_b size_h created status
   json="$(hm_backup_cat_manifest "${remote_base}")"
   type="$(hm_backup_json_str "${json}" "type")"
+  status="$(hm_backup_json_str "${json}" "status")"
   [[ -z "${type}" ]] && type="?"
+  if hm_backup_snapshot_is_incomplete "${remote_base}"; then
+    type="${type}/BAD"
+  fi
   php="$(hm_backup_json_str "${json}" "php")"
   [[ -z "${php}" ]] && php="-"
   created="$(hm_backup_json_str "${json}" "created_at")"
@@ -83,10 +104,14 @@ hm_backup_print_snapshot_row() {
   esac
   size_b="$(hm_rclone_remote_size_bytes "${remote_base}")"
   size_h="$(hm_human_size "${size_b:-0}")"
-  printf '  %-18s %-6s %10s  %-14s  %s\n' "${stamp}" "${type}" "${size_h}" "${mode}" "php=${php}  db=[${dbs}]"
+  printf '  %-18s %-8s %10s  %-14s  %s\n' "${stamp}" "${type}" "${size_h}" "${mode}" "php=${php}  db=[${dbs}]"
+  if [[ "${type}" == *"/BAD"* ]]; then
+    printf '  %-18s %s\n' "" "${C_YELLOW}niepełny/osierocony — prune usunie; nie używaj w restore${C_RESET}"
+  fi
   if [[ "${created}" != "-" ]]; then
     printf '  %-18s %s\n' "" "${C_DIM}created: ${created}${C_RESET}"
   fi
+  : "${status}"
 }
 
 hm_backup_list() {

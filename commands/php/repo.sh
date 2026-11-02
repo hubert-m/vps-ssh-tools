@@ -39,22 +39,24 @@ hm_php_branch_channel() {
 }
 
 # Sekcja: nowsze gałęzie LSPHP dostępne w repo, jeszcze niezainstalowane.
-# Args: lista zainstalowanych branchy (np. 8.4 8.5); puste → próg 8.0
+# Args: lista zainstalowanych branchy (np. 8.4 8.5); puste → próg poniżej 8.0 (pokazuj ≥8.0)
 hm_php_print_installable_newer() {
   local -a installed_branches=("$@")
-  local max_branch="7.9" b sfx cand cand_clean channel line
+  local max_branch="" b sfx cand cand_clean channel line
   local -A have_branch=()
   local -a avail_lines=() show_branches=()
 
   for b in "${installed_branches[@]}"; do
     [[ -n "${b}" && "${b}" != "-" ]] || continue
     have_branch["${b}"]=1
-    if hm_version_is_newer "${max_branch}" "${b}" 2>/dev/null; then
+    if [[ -z "${max_branch}" ]]; then
       max_branch="${b}"
-    elif [[ "${max_branch}" == "7.9" ]]; then
+    elif hm_version_is_newer "${max_branch}" "${b}" 2>/dev/null; then
       max_branch="${b}"
     fi
   done
+  # brak lokalnych gałęzi → pokaż dostępne od 8.0 wzwyż (nie sugeruj 7.x)
+  [[ -n "${max_branch}" ]] || max_branch="7.9"
 
   local -A best_cand=() best_sfx=()
   while IFS=$'\t' read -r sfx cand; do
@@ -251,7 +253,10 @@ hm_list_available_php() {
     hm_progress_bar "${di}" "${dtotal}" "Sprawdzanie $(basename "${p}")..."
     if [[ -x "${p}/bin/php" ]]; then
       ver="$(${p}/bin/php -r 'echo PHP_VERSION;' 2>/dev/null || true)"
-      [[ -n "${ver}" ]] || ver="?"
+      # nieparsowalna / śmieci → nie pokazuj surowo w tabeli
+      if [[ ! "${ver}" =~ ^[0-9]+\.[0-9]+([.][0-9]+)*([+-].*)?$ ]]; then
+        ver="?"
+      fi
       branch="$(hm_php_branch_of "${ver}")"
       [[ -n "${branch}" ]] || branch="-"
       rows+=("${p}"$'\t'"${ver}"$'\t'"${branch}")
@@ -291,7 +296,7 @@ hm_list_available_php() {
         latest="$(hm_php_latest_remote "${branch}" 2>/dev/null || true)"
       fi
       if [[ -z "${latest}" ]]; then
-        latest="—"
+        latest="-"
         status="${C_DIM}brak danych php.net${C_RESET}"
       elif [[ "${ver}" == "${latest}" ]]; then
         status="${C_GREEN}aktualna${C_RESET}"
@@ -300,6 +305,7 @@ hm_list_available_php() {
       else
         status="${C_GREEN}aktualna${C_RESET}"
       fi
+      # ASCII "-" zamiast "—" — wielobajtowy em dash psuje printf %-Ns
       printf '  %-28s %-14s %-14s %b\n' \
         "$(basename "${path}")" \
         "${ver}" \
@@ -341,24 +347,24 @@ hm_list_available_php() {
       [[ -n "${upg_count}" ]] || upg_count=0
       [[ -n "${cand_clean}" ]] || cand_clean="-"
       [[ -n "${branch}" ]] || branch="-"
-      repo_col="—"
+      repo_col="-"
       if [[ "${cand_clean}" != "-" ]]; then
         repo_col="${cand_clean}"
-      fi
-      if [[ "${upg_count}" -gt 0 && "${cand_clean}" != "-" && "${cand_clean}" == "${ver}" ]]; then
-        repo_col="${cand_clean} (+${upg_count} pakiety)"
       fi
 
       status="${C_GREEN}aktualna${C_RESET}"
       if [[ "${cand_clean}" == "-" || "${cand_pkg}" == "-" || "${cand_pkg}" == "(none)" ]]; then
         status="${C_DIM}brak danych repo${C_RESET}"
-        repo_col="—"
+        repo_col="-"
       elif [[ "${cand_clean}" != "-" && "${ver}" != "${cand_clean}" ]] && hm_version_is_newer "${ver}" "${cand_clean}" 2>/dev/null; then
         if [[ "${branch}" != "-" ]]; then
           status="${C_YELLOW}dostępna aktualizacja → ${cand_clean} (update-php ${branch})${C_RESET}"
         else
           status="${C_YELLOW}dostępna aktualizacja → ${cand_clean}${C_RESET}"
         fi
+      elif [[ "${upg_count}" -gt 0 && "${cand_clean}" == "${ver}" ]]; then
+        # główny pakiet aktualny, ale subpakiety mają update — nie mylić z „(+N)” w kolumnie wersji
+        status="${C_YELLOW}aktualna (subpakiety: +${upg_count})${C_RESET}"
       elif [[ "${upg_count}" -gt 0 && "${inst_pkg}" != "${cand_pkg}" ]]; then
         status="${C_YELLOW}dostępna aktualizacja pakietów → ${cand_pkg}${C_RESET}"
       elif [[ "${inst_pkg}" != "-" && "${inst_pkg}" != "(none)" && "${cand_pkg}" != "-" && "${cand_pkg}" != "(none)" && "${inst_pkg}" != "${cand_pkg}" ]]; then
