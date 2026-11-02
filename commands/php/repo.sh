@@ -147,8 +147,44 @@ hm_php_repo_info_for_suffix() {
   printf '%s\t%s\t%s\t%s\n' "${inst}" "${cand}" "$(hm_php_clean_pkg_ver "${cand}")" "${upg_count}"
 }
 
+# Parsuj JSON z php.net releases/?json&version=X.
+# stdout: numer wersji; rc≠0 przy error / pustym / HTML / bez version.
+hm_php_parse_phpnet_json() {
+  local json="${1:-}"
+  local ver=""
+  [[ -n "${json}" ]] || return 1
+  # HTML / nie-JSON
+  case "${json}" in
+    *\<html*|*\<HTML*|*\<!DOCTYPE*|*\<!doctype*) return 1 ;;
+    "[]"|"{}") return 1 ;;
+  esac
+  # {"error":"Unknown version"} i podobne — nigdy nie traktuj klucza "error" jako wersji
+  if printf '%s' "${json}" | grep -qiE '"error"[[:space:]]*:'; then
+    return 1
+  fi
+  if hm_have_cmd jq; then
+    ver="$(printf '%s' "${json}" | jq -r '
+      if type != "object" then
+        empty
+      elif has("error") then
+        empty
+      elif has("version") and (.version|type=="string") then
+        .version
+      else
+        (keys_unsorted[0] // keys[0] // empty)
+      end
+    ' 2>/dev/null || true)"
+  else
+    ver="$(printf '%s' "${json}" | grep -oE '"[0-9]+\.[0-9]+(\.[0-9]+)?"' | head -1 | tr -d '"' || true)"
+  fi
+  [[ -n "${ver}" && "${ver}" != "null" && "${ver}" != "error" ]] || return 1
+  # tylko wyglądająca na numer wersji PHP (nie dowolny klucz JSON)
+  [[ "${ver}" =~ ^[0-9]+\.[0-9]+([.][0-9]+)?([+-][A-Za-z0-9._-]+)?$ ]] || return 1
+  printf '%s' "${ver}"
+}
+
 hm_php_latest_remote() {
-  # najnowszy patch dla gałęzi (np. 8.4 → 8.4.27) z php.net; cache 1h
+  # najnowszy patch dla gałęzi (np. 8.4 → 8.4.27) z php.net; cache 1h (tylko poprawne wersje)
   local branch="$1"
   [[ -n "${branch}" ]] || return 1
   local cache_dir="${TMP_DIR:-/tmp}/hmtools-php-cache"
@@ -157,31 +193,25 @@ hm_php_latest_remote() {
   local cache="${cache_dir}/latest-${branch}.txt"
   local max_age=3600
   if [[ -f "${cache}" ]]; then
-    local age mtime now
+    local age mtime now cached
     mtime="$(stat -c %Y "${cache}" 2>/dev/null || echo 0)"
     now="$(date +%s)"
     age=$((now - mtime))
-    if [[ "${age}" -ge 0 && "${age}" -lt "${max_age}" ]]; then
-      tr -d '[:space:]' < "${cache}"
+    cached="$(tr -d '[:space:]' < "${cache}" 2>/dev/null || true)"
+    # zignoruj zepsuty cache (np. stare „error” z bugowanego parsera)
+    if [[ "${age}" -ge 0 && "${age}" -lt "${max_age}" \
+      && "${cached}" =~ ^[0-9]+\.[0-9]+ ]]; then
+      printf '%s' "${cached}"
       return 0
     fi
   fi
   local json ver
   json="$(curl -fsSL --connect-timeout 2 --max-time 6 --retry 0 \
     "https://www.php.net/releases/index.php?json&version=${branch}&max=1" 2>/dev/null || true)"
-  if [[ -z "${json}" || "${json}" == "[]" || "${json}" == "{}" ]]; then
-    if [[ -f "${cache}" ]]; then
-      tr -d '[:space:]' < "${cache}"
-      return 0
-    fi
+  if ! ver="$(hm_php_parse_phpnet_json "${json}")"; then
+    # nie cache’uj błędów / unknown — przy następnym wywołaniu spróbuj ponownie
     return 1
   fi
-  if hm_have_cmd jq; then
-    ver="$(printf '%s' "${json}" | jq -r 'keys_unsorted[0] // keys[0] // empty' 2>/dev/null || true)"
-  else
-    ver="$(printf '%s' "${json}" | grep -oE '"[0-9]+\.[0-9]+\.[0-9]+"' | head -1 | tr -d '"' || true)"
-  fi
-  [[ -n "${ver}" && "${ver}" != "null" ]] || return 1
   printf '%s\n' "${ver}" > "${cache}" 2>/dev/null || true
   printf '%s' "${ver}"
 }

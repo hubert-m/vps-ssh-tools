@@ -34,6 +34,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `supervisor` — logs = linie (nie bajty); `all` w kontekście = tylko strona + confirm; `FORCE_SUPERVISOR=no`; detect bez false-yes na samym conf; filtr user dokładny
 - Fix: `security ban/unban` — dokładny match ufw; IPv6 (firewalld/ip6tables); ban we wszystkich jailach; walidacja IP; ostrzeżenie self-ban
 - Fix: rpm candidate = dokładna nazwa pakietu; walidacja FORCE_*; komunikaty update-php / wiek indeksu
+- Fix: `php` / php.net — `{"error":"Unknown version"}` nie cache’owane; kanał „brak danych” zamiast false-stable (`hm_php_parse_phpnet_json`)
 
 ## [v0.1.7]
 
