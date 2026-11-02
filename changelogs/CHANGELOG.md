@@ -39,6 +39,8 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `backup restore` z archive — odtwarza ols-vhost-dir + snippet httpd_config/map; `webs archive` czyści niepełny snapshot na Drive (`hm_archive_purge_remote`)
 - Fix: `backup full --yes` (cron); anulowanie bez TTY → rc≠0; walidacja stamp; niepełne snapshoty: purge/list BAD/prune; `backup site` rc≠0 przy błędzie plików
 - Fix: polish `php` (kolumny ASCII, subpakiety w statusie, nieparsowalna wersja); `ols cache` bez global cachedata per-domena; walidacja nazwy proxy przed confirm
+- Fix: `help`/`use` — kontekst z perms/htaccess/proxy/archive/supervisor; `logs` bez surowego `ls -la` przy braku plików
+- Fix: `mysql dump-local` — walidacja ścieżki przed mkdir, umask 077; `mysql create` — hasło przez stdin (nie `-e`); install.sh `${DEST:?}`
 
 ## [v0.1.7]
 

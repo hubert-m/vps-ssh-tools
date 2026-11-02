@@ -6,8 +6,8 @@ _hm_cmd_help mysql <<'EOF'
 Użycie:
   mysql | dbs                 Lista baz (globalnie / w kontekście strony)
   mysql dump <db>             Zrzut → Google Drive
-  mysql dump <db> --local [p] Lokalny .sql.gz (domyślnie ~/backups/)
-  mysql dump-local [db] [p]   Alias lokalnego dumpa
+  mysql dump <db> --local [p] Lokalny .sql.gz (domyślnie <site>/backups/ lub /tmp/hmtools-db/)
+  mysql dump-local [db] [p]   Alias lokalnego dumpa (p = plik lub katalog absolutny)
   mysql import <db> <plik>    Import .sql / .sql.gz (z potwierdzeniem)
   mysql cli [db]              Interaktywna konsola (dbs cli w kontekście)
   mysql top | processlist     Threads / Slow_queries / PROCESSLIST

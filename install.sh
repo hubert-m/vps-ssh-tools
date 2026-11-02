@@ -425,7 +425,7 @@ install_tree() {
 
   for d in bin lib commands scripts changelogs; do
     if [[ -d "${from}/${d}" ]]; then
-      rm -rf "${DEST}/${d}"
+      rm -rf "${DEST:?}/${d}"
       "${HM_CP[@]}" -a "${from}/${d}" "${DEST}/"
     fi
   done

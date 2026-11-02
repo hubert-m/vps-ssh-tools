@@ -352,12 +352,13 @@ hm_is_safe_fs_path() {
 hm_mysql_dump_local() {
   local dbname="$1"
   local outpath="${2:-}"
-  local dumpcli sock_args=() stamp dest dir
+  local dumpcli sock_args=() stamp dir old_umask
   hm_is_valid_db_name "${dbname}" || { hm_err "Nieprawidłowa nazwa bazy: ${dbname}"; return 1; }
   hm_mysql_db_exists "${dbname}" || { hm_err "Baza nie istnieje: ${dbname}"; return 1; }
   dumpcli="$(hm_mysqldump_cli)" || { hm_err "Brak mysqldump/mariadb-dump."; return 1; }
 
   stamp="$(date +%Y%m%d-%H%M%S)"
+  # Najpierw ustal ścieżkę pliku — BEZ mkdir (walidacja przed tworzeniem katalogu)
   if [[ -z "${outpath}" ]]; then
     if [[ -n "${HM_SITE_ROOT:-}" && -d "${HM_SITE_ROOT}" ]]; then
       dir="${HM_SITE_ROOT}/backups"
@@ -366,30 +367,33 @@ hm_mysql_dump_local() {
     else
       dir="${TMP_DIR:-/tmp}/hmtools-db"
     fi
-    mkdir -p "${dir}"
-    chmod 0700 "${dir}" 2>/dev/null || true
     outpath="${dir}/${dbname}-${stamp}.sql.gz"
   elif [[ -d "${outpath}" || "${outpath}" == */ ]]; then
-    # katalog docelowy (np. --local /root/backups lub ścieżka z /)
-    mkdir -p "${outpath}"
-    chmod 0700 "${outpath}" 2>/dev/null || true
     outpath="${outpath%/}/${dbname}-${stamp}.sql.gz"
-  else
-    dir="$(dirname "${outpath}")"
-    mkdir -p "${dir}"
   fi
+  if [[ "${outpath}" != /* ]]; then
+    outpath="$(pwd)/${outpath}"
+  fi
+  outpath="$(realpath -m "${outpath}" 2>/dev/null || echo "${outpath}")"
 
   if ! hm_is_safe_fs_path "${outpath}"; then
     hm_err "Niebezpieczna/nieprawidłowa ścieżka: ${outpath}"
     return 1
   fi
   dir="$(dirname "${outpath}")"
-  mkdir -p "${dir}"
 
   [[ -n "${MYSQL_SOCKET:-}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
 
   hm_info "Lokalny dump ${dbname} → ${outpath}"
   hm_status_line "mysqldump ${dbname}..."
+  old_umask="$(umask)"
+  umask 077
+  if ! mkdir -p "${dir}"; then
+    umask "${old_umask}"
+    hm_status_clear
+    hm_err "Nie można utworzyć katalogu: ${dir}"
+    return 1
+  fi
   set +e
   set +o pipefail
   "${dumpcli}" "${sock_args[@]}" --single-transaction --quick --routines --triggers \
@@ -398,6 +402,7 @@ hm_mysql_dump_local() {
   local dump_rc=${_ps[0]:-1} gzip_rc=${_ps[1]:-1}
   set -o pipefail
   set -e
+  umask "${old_umask}"
   hm_status_clear
   if [[ "${dump_rc}" -ne 0 || "${gzip_rc}" -ne 0 || ! -s "${outpath}" ]]; then
     rm -f "${outpath}"
@@ -585,17 +590,23 @@ hm_mysql_create() {
   fi
 
   # nazwy już na białej liście — backtick / quote bezpieczne
-  local uq pq
+  # Hasło NIE przez mysql -e (widoczne w ps/cmdline) — SQL przez plik tymczasowy 600 + stdin
+  local uq pq sqlf
   uq="$(hm_sql_quote "${dbuser}")"
   pq="$(hm_sql_quote "${pass}")"
   hm_mysql_exec -e "CREATE DATABASE \`${dbname}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" || {
     hm_err "CREATE DATABASE nieudany."
     return 1
   }
-  hm_mysql_exec -e "CREATE USER ${uq}@'localhost' IDENTIFIED BY ${pq};" || {
+  sqlf="$(mktemp "${TMP_DIR:-/tmp}/hmtools-create-user.XXXXXX.sql")"
+  chmod 600 "${sqlf}"
+  printf 'CREATE USER %s@'\''localhost'\'' IDENTIFIED BY %s;\n' "${uq}" "${pq}" > "${sqlf}"
+  if ! hm_mysql_exec < "${sqlf}"; then
+    rm -f "${sqlf}"
     hm_err "CREATE USER nieudany (baza ${dbname} już istnieje — usuń ręcznie jeśli trzeba)."
     return 1
-  }
+  fi
+  rm -f "${sqlf}"
   hm_mysql_exec -e "GRANT ALL PRIVILEGES ON \`${dbname}\`.* TO ${uq}@'localhost'; FLUSH PRIVILEGES;" || {
     hm_err "GRANT nieudany."
     return 1

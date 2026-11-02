@@ -51,7 +51,7 @@ hm_help_global() {
   for s in "${!HM_CMD_SITE_ENTRY[@]}"; do
     site_cmds+=("${s}")
   done
-  site_cmds+=(php backup cron pm2 htaccess proxy renew-ssl delete-site archive supervisor exit)
+  site_cmds+=(php backup cron pm2 htaccess proxy perms renew-ssl delete-site archive supervisor exit)
   echo "  $(printf '%s\n' "${site_cmds[@]}" | sort -u | paste -sd ', ' -)"
   echo
   echo "Szczegóły: help <polecenie>"

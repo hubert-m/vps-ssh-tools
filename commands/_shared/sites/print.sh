@@ -187,8 +187,16 @@ hm_print_site_logs() {
     echo
   done < <(hm_site_log_candidates "${domain}" all)
   if [[ "${found}" -eq 0 ]]; then
-    hm_warn "Nie znaleziono plików logów."
-    [[ -n "${HM_SITE_LOGS}" ]] && ls -la "${HM_SITE_LOGS}" 2>/dev/null || true
+    hm_warn "Nie znaleziono plików logów dla ${domain}."
+    if [[ -n "${HM_SITE_LOGS:-}" ]]; then
+      if [[ -d "${HM_SITE_LOGS}" ]]; then
+        local nfiles
+        nfiles="$(find "${HM_SITE_LOGS}" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+        hm_info "Katalog logów: ${HM_SITE_LOGS} (${nfiles:-0} plików)."
+      else
+        hm_info "Oczekiwany katalog logów nie istnieje: ${HM_SITE_LOGS}"
+      fi
+    fi
   fi
 }
 
