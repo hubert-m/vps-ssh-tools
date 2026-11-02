@@ -183,6 +183,67 @@ else
   echo "OK   apply snippet: keep.pl retained"
 fi
 
+# --- map per listener (2 listenery, bez dublowania) ---
+cat > "${conf}" <<'EOF'
+listener Default {
+  address *:80
+  map shop.pl shop.pl
+}
+listener SSL {
+  address *:443
+  map shop.pl shop.pl
+}
+EOF
+hm_archive_write_ols_snippet "shop.pl" "${snip}"
+map_tags="$(grep -c '^# listener:' "${snip}" || true)"
+map_lines="$(grep -cE '^[[:space:]]*map[[:space:]]+shop\.pl' "${snip}" || true)"
+if [[ "${map_tags}" -ne 2 || "${map_lines}" -ne 2 ]]; then
+  echo "FAIL archive snippet listener tags (tags=${map_tags} maps=${map_lines})"
+  fail=1
+else
+  echo "OK   archive snippet: 2× # listener: + 2× map"
+fi
+# conf bez shop (jak po Phase II archive)
+cat > "${conf}" <<'EOF'
+listener Default {
+  address *:80
+}
+listener SSL {
+  address *:443
+}
+EOF
+hm_ols_apply_httpd_snippet "shop.pl" "${snip}"
+map_count="$(grep -cE '^[[:space:]]*map[[:space:]]+shop\.pl' "${conf}" || true)"
+if [[ "${map_count}" -ne 2 ]]; then
+  echo "FAIL restore maps duplicated or missing (count=${map_count}, want 2)"
+  cat "${conf}"
+  fail=1
+else
+  echo "OK   restore maps: 1 per listener (count=2)"
+fi
+# legacy snippet (bez tagów) + 2 listenery → dedup → też 2
+cat > "${conf}" <<'EOF'
+listener Default {
+  address *:80
+}
+listener SSL {
+  address *:443
+}
+EOF
+cat > "${snip}" <<'EOF'
+map legacy.pl *
+map legacy.pl *
+EOF
+hm_ols_apply_httpd_snippet "legacy.pl" "${snip}"
+map_count="$(grep -cE '^[[:space:]]*map[[:space:]]+legacy\.pl' "${conf}" || true)"
+if [[ "${map_count}" -ne 2 ]]; then
+  echo "FAIL legacy map dedup (count=${map_count}, want 2)"
+  cat "${conf}"
+  fail=1
+else
+  echo "OK   legacy snippet: dedup → 1 map per listener"
+fi
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"
   exit 1

@@ -111,9 +111,9 @@ hm_archive_write_ols_snippet() {
   local conf="${OLS_CONF:-}"
   : > "${out_file}"
   [[ -n "${conf}" && -f "${conf}" ]] || return 0
-  # virtualHost / virtualhost — case-insensitive (OLS WebAdmin / CyberPanel)
+  # virtualHost / virtualhost — case-insensitive; map z tagiem listenera (restore 1:1)
   awk -v dom="${domain}" '
-    BEGIN { skip=0; depth=0 }
+    BEGIN { skip=0; depth=0; in_lis=0; ldepth=0; cur_listener="" }
     {
       line=$0
       first=$1
@@ -136,7 +136,24 @@ hm_archive_write_ols_snippet() {
       }
       next
     }
-    tolower(first)=="map" && second == dom { print }
+    tolower(first)=="listener" {
+      cur_listener=second
+      in_lis=1; ldepth=0
+      if (line ~ /\{/) ldepth=1
+      next
+    }
+    in_lis {
+      if (tolower(first)=="map" && second == dom) {
+        print "# listener:" cur_listener
+        print
+      }
+      if (line ~ /\{/) ldepth++
+      if (line ~ /\}/) {
+        ldepth--
+        if (ldepth <= 0) { in_lis=0; ldepth=0; cur_listener="" }
+      }
+      next
+    }
   ' "${conf}" > "${out_file}" 2>/dev/null || true
 }
 

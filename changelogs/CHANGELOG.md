@@ -45,6 +45,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: drobne UX/walidacja (retest v0.1.8) — chrome FORCE etykieta + timeout version; supervisor/cache/delete/restore cancel → rc≠0; detect FORCE warn 1×; IP (0.0.0.0, IPv6); port 99999; PHP `?` poza Nowsze; pkg OS_FAMILY przed apt-get; php.net negative-cache 10 min; cache flush bez podwójnego liczenia/„Uwaga”; webs `--keep-db` banner; restore bez pustego `/home` i bez duplikatu vhconf; list bez pustej tabeli; snapshot bez files* = BAD; mysql help `${TMP_DIR}/hmtools-db`; update-check tylko semver
 - Fix: `security ban` / ufw — `ufw insert 1 deny from IP` (DENY przed ALLOW 22/80/443); komunikat gdy f2b OK a firewall nie
 - Fix: `pm2 list` — puste pola TSV (script/porthint) jako `-` w jq; bez przesunięcia RST→PORT; ols/db hardening; test-tsv-fields
+- Fix: `backup full` — błędy plików/konfig → status `partial` + rc≠0 (nie „zakończony”); restore OLS mapy per-listener (`# listener:`) bez dublowania
 
 ## [v0.1.7]
 

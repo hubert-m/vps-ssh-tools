@@ -108,28 +108,40 @@ hm_backup_ols_reload() {
   return 0
 }
 
-# Wstaw linie map <domain> do każdego bloku listener { } (case-insensitive).
+# Wstaw mapy do listenerów. Plik maps: linie „listener<TAB>mapline”
+# (listener=* → wszystkie listenery; deduplikacja per listener).
 hm_ols_insert_maps_into_listeners() {
   local conf="$1"
-  shift
-  local -a maps=("$@")
-  [[ "${#maps[@]}" -gt 0 && -f "${conf}" ]] || return 0
-  local tmp maps_file
+  local maps_file="${2:-}"
+  [[ -n "${maps_file}" && -f "${maps_file}" && -s "${maps_file}" && -f "${conf}" ]] || return 0
+  local tmp
   tmp="$(mktemp)"
-  maps_file="$(mktemp)"
-  printf '%s\n' "${maps[@]}" > "${maps_file}"
   awk -v mf="${maps_file}" '
     BEGIN {
-      while ((getline m < mf) > 0) {
-        if (m != "") maps[++nmap] = m
+      while ((getline line < mf) > 0) {
+        if (line == "") continue
+        tab = index(line, "\t")
+        if (tab > 0) {
+          lis = substr(line, 1, tab - 1)
+          map = substr(line, tab + 1)
+        } else {
+          lis = "*"
+          map = line
+        }
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", map)
+        if (map == "") continue
+        if (lis == "" || lis == "-") lis = "*"
+        n = ++nmap[lis]
+        maps[lis, n] = map
       }
       close(mf)
-      in_listener=0; depth=0
+      in_listener=0; depth=0; cur=""
     }
     {
       first=tolower($1)
       if (!in_listener && first=="listener") {
         in_listener=1; depth=0
+        cur=$2; gsub(/\{/,"",cur)
         if ($0 ~ /\{/) depth=1
         print
         next
@@ -139,8 +151,16 @@ hm_ols_insert_maps_into_listeners() {
         if ($0 ~ /\}/) {
           depth--
           if (depth <= 0) {
-            for (i=1; i<=nmap; i++) print "  " maps[i]
-            in_listener=0; depth=0
+            # mapy dla tego listenera + legacy "*"
+            for (pass = 1; pass <= 2; pass++) {
+              key = (pass == 1) ? cur : "*"
+              for (i = 1; i <= nmap[key]; i++) {
+                m = maps[key, i]
+                if (seen[cur, m]++) continue
+                print "  " m
+              }
+            }
+            in_listener=0; depth=0; cur=""
           }
         }
         print
@@ -149,7 +169,6 @@ hm_ols_insert_maps_into_listeners() {
       print
     }
   ' "${conf}" > "${tmp}" && mv "${tmp}" "${conf}" || rm -f "${tmp}"
-  rm -f "${maps_file}"
 }
 
 # Scal ols-httpd-snippet (virtualhost + map) do OLS_CONF — z kopią .hmtools.bak.
@@ -166,7 +185,7 @@ hm_ols_apply_httpd_snippet() {
     hm_ols_remove_domain_from_conf "${domain}"
   fi
 
-  local vh_tmp maps_tmp line in_vh=0 depth=0
+  local vh_tmp maps_tmp line in_vh=0 depth=0 cur_listener="*"
   vh_tmp="$(mktemp)"
   maps_tmp="$(mktemp)"
   : > "${vh_tmp}"
@@ -176,6 +195,11 @@ hm_ols_apply_httpd_snippet() {
     local first second
     first="$(printf '%s' "${line}" | awk '{print tolower($1)}')"
     second="$(printf '%s' "${line}" | awk '{print $2}' | tr -d '{')"
+    # tag z archive: "# listener:Default"
+    if [[ "${line}" =~ ^[[:space:]]*#[[:space:]]*listener:([[:alnum:]_.-]+) ]]; then
+      cur_listener="${BASH_REMATCH[1]}"
+      continue
+    fi
     if [[ "${in_vh}" -eq 0 && "${first}" == "virtualhost" ]]; then
       in_vh=1
       depth=0
@@ -196,7 +220,10 @@ hm_ols_apply_httpd_snippet() {
       continue
     fi
     if [[ "${first}" == "map" && "${second}" == "${domain}" ]]; then
-      printf '%s\n' "${line}" >> "${maps_tmp}"
+      # znormalizuj wcięcie — insert doda własne
+      local map_line
+      map_line="$(printf '%s' "${line}" | sed -E 's/^[[:space:]]+//')"
+      printf '%s\t%s\n' "${cur_listener}" "${map_line}" >> "${maps_tmp}"
     fi
   done < "${snip}"
 
@@ -208,15 +235,10 @@ hm_ols_apply_httpd_snippet() {
     } >> "${conf}"
   fi
 
-  local -a map_lines=()
-  while IFS= read -r line || [[ -n "${line}" ]]; do
-    [[ -n "${line}" ]] && map_lines+=("${line}")
-  done < "${maps_tmp}"
-  rm -f "${vh_tmp}" "${maps_tmp}"
-
-  if [[ "${#map_lines[@]}" -gt 0 ]]; then
-    hm_ols_insert_maps_into_listeners "${conf}" "${map_lines[@]}"
+  if [[ -s "${maps_tmp}" ]]; then
+    hm_ols_insert_maps_into_listeners "${conf}" "${maps_tmp}"
   fi
+  rm -f "${vh_tmp}" "${maps_tmp}"
   return 0
 }
 

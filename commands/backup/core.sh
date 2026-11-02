@@ -365,9 +365,10 @@ hm_backup_system_configs() {
   rm -f "${tar_err}"
   if [[ "${gzip_rc}" -eq 0 && "${rcat_rc}" -eq 0 ]] && hm_tar_pipe_ok "${tar_rc}"; then
     hm_ok "Konfiguracje systemowe OK."
-  else
-    hm_warn "Częściowy błąd przy archiwum konfiguracji (tar=${tar_rc} gzip=${gzip_rc} rcat=${rcat_rc})."
+    return 0
   fi
+  hm_err "Błąd archiwum konfiguracji systemowych (tar=${tar_rc} gzip=${gzip_rc} rcat=${rcat_rc})."
+  return 1
 }
 
 hm_backup_all_databases() {
@@ -405,7 +406,11 @@ hm_backup_full() {
   hm_rclone_ensure_backup_layout
   hm_rclone_mkdir "${remote_base}"
 
-  hm_backup_system_configs "${remote_base}"
+  local cfg_ok=1 sites_fail=0
+  local -a failed_sites=()
+  if ! hm_backup_system_configs "${remote_base}"; then
+    cfg_ok=0
+  fi
   hm_backup_all_databases "${remote_base}"
 
   hm_discover_sites
@@ -424,6 +429,8 @@ hm_backup_full() {
     if [[ -n "${backup_root}" && -d "${backup_root}" ]]; then
       if ! hm_upload_files_smart "${backup_root}" "${site_remote}"; then
         hm_warn "Błąd wysyłania plików dla ${domain} — kontynuuję kolejne strony."
+        sites_fail=$((sites_fail + 1))
+        failed_sites+=("${domain}")
       fi
     else
       hm_warn "Brak plików dla ${domain}."
@@ -431,22 +438,45 @@ hm_backup_full() {
   done
   hm_progress_done
 
+  local status="ok"
+  if [[ "${cfg_ok}" -ne 1 || "${sites_fail}" -gt 0 ]]; then
+    status="partial"
+  fi
+
+  local fail_json="[]"
+  if [[ "${#failed_sites[@]}" -gt 0 ]]; then
+    fail_json="$(printf '%s\n' "${failed_sites[@]}" | awk 'BEGIN{printf "["} {printf sep "\"" $0 "\""; sep=","} END{printf "]"}')"
+  fi
+
   local manifest="${TMP_DIR}/manifest-full-${stamp}.json"
   mkdir -p "${TMP_DIR}"
   cat > "${manifest}" <<EOF
 {
   "type": "full",
+  "status": "${status}",
   "host": "${BACKUP_HOST_LABEL}",
   "stamp": "${stamp}",
   "panel": "${PANEL}",
   "webserver": "${WEBSERVER}",
   "sites": $(printf '%s\n' "${HM_SITES_LIST[@]}" | awk 'BEGIN{printf "["} {printf sep "\"" $0 "\""; sep=","} END{printf "]"}'),
+  "failed_sites": ${fail_json},
+  "config_ok": ${cfg_ok},
   "remote": "${remote_base}",
   "created_at": "$(date -Iseconds)"
 }
 EOF
-  hm_write_manifest_and_upload "${remote_base}" "${manifest}"
+  if ! hm_write_manifest_and_upload "${remote_base}" "${manifest}"; then
+    rm -f "${manifest}"
+    hm_err "Upload manifest.json nieudany — usuwam niepełny full ${remote_base}."
+    rclone purge "${remote_base}" 2>/dev/null || true
+    return 1
+  fi
   rm -f "${manifest}"
 
+  if [[ "${status}" != "ok" ]]; then
+    hm_err "Pełny backup NIEKOMPLETNY → ${remote_base} (status=${status}; config_ok=${cfg_ok}; strony z błędem plików: ${sites_fail})."
+    [[ "${#failed_sites[@]}" -gt 0 ]] && hm_warn "Nieudane strony: ${failed_sites[*]}"
+    return 1
+  fi
   hm_ok "Pełny backup zakończony → ${remote_base}"
 }
