@@ -299,7 +299,7 @@ cmd_security_ban() {
     return 0
   fi
 
-  local ok=0
+  local ok=0 f2b_ok=0 fw_ok=0
   if hm_have_cmd fail2ban-client; then
     local jails jail f2b_any=0
     jails="$(fail2ban-client status 2>/dev/null | awk -F: '/Jail list/{print $2}' | tr ',' ' ')"
@@ -309,6 +309,7 @@ cmd_security_ban() {
       if fail2ban-client set "${jail}" banip "${ip}" 2>/dev/null; then
         hm_ok "Ban ${ip} w jail ${jail}"
         f2b_any=1
+        f2b_ok=1
         ok=1
       fi
     done
@@ -316,9 +317,18 @@ cmd_security_ban() {
   fi
   if hm_os_firewall_ban "${ip}"; then
     hm_ok "Firewall: zablokowano ${ip}"
+    fw_ok=1
     ok=1
+  else
+    if [[ "${f2b_ok}" -eq 1 ]]; then
+      hm_warn "Fail2Ban OK, ale firewall (ufw/firewalld/iptables) nie zablokował ${ip} — sprawdź reguły (DENY musi być przed ALLOW)."
+    fi
   fi
   [[ "${ok}" -eq 1 ]] || hm_err "Nie udało się zablokować (brak fail2ban / firewall OS)."
+  # częściowy sukces (tylko f2b) — rc≠0, żeby nie wyglądało na pełny ban
+  if [[ "${f2b_ok}" -eq 1 && "${fw_ok}" -eq 0 ]]; then
+    return 1
+  fi
 }
 
 cmd_security_ssh() {

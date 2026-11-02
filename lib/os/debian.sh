@@ -43,7 +43,20 @@ _hm_os_do_firewall_ban() {
   local ip="${1:-}"
   [[ -n "${ip}" ]] || return 1
   if hm_have_cmd ufw; then
-    ufw deny from "${ip}" && return 0
+    # Już zbanowane → OK (idempotent)
+    if _hm_os_ufw_status_has_ip "${ip}"; then
+      return 0
+    fi
+    # ufw = first match: DENY musi być PRZED ALLOW 22/80/443 (deny na końcu = martwy ban)
+    # insert 1 działa dla v4 i v6 (osobne listy numerowane w „ufw status numbered”)
+    if ufw insert 1 deny from "${ip}" >/dev/null 2>&1; then
+      return 0
+    fi
+    # starsze ufw bez insert / błąd — spróbuj deny (z ostrzeżeniem o kolejności)
+    hm_warn "ufw insert 1 nieudane dla ${ip} — fallback „ufw deny” (reguła może wylądować za ALLOW)."
+    if ufw deny from "${ip}"; then
+      return 0
+    fi
   fi
   if [[ "${ip}" == *:* ]] && hm_have_cmd ip6tables; then
     ip6tables -I INPUT -s "${ip}" -j DROP && return 0
