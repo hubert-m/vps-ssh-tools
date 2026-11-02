@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# access — CyberPanel FTP (CLI + MySQL ftp_ftp)
+
+# stdout: website id w cyberpanel (websiteFunctions_websites.id) lub pusto
+hm_access_cp_website_id() {
+  local domain="$1"
+  local q id
+  q="$(hm_sql_quote "${domain}")"
+  id="$(hm_mysql_exec cyberpanel -N -e \
+    "SELECT id FROM websiteFunctions_websites WHERE domain=${q} LIMIT 1;" 2>/dev/null | tr -d '[:space:]')"
+  if [[ -z "${id}" ]]; then
+    id="$(hm_mysql_exec cyberpanel -N -e \
+      "SELECT id FROM websites_website WHERE domainName=${q} LIMIT 1;" 2>/dev/null | tr -d '[:space:]')"
+  fi
+  printf '%s' "${id}"
+}
+
+# Czy tabela ftp_ftp istnieje
+hm_access_cp_ftp_table_ok() {
+  local n
+  n="$(hm_mysql_exec cyberpanel -N -e \
+    "SELECT COUNT(*) FROM information_schema.TABLES
+     WHERE table_schema='cyberpanel' AND table_name='ftp_ftp';" 2>/dev/null | tr -d '[:space:]')"
+  [[ "${n}" == "1" ]]
+}
+
+# List: user<TAB>path (konta FTP domeny)
+hm_access_cp_ftp_list() {
+  local domain="$1"
+  local wid q
+  wid="$(hm_access_cp_website_id "${domain}")"
+  [[ -n "${wid}" ]] || return 0
+  hm_access_cp_ftp_table_ok || return 0
+  hm_mysql_exec cyberpanel -N -e \
+    "SELECT user, path FROM ftp_ftp WHERE owner_id=${wid} ORDER BY user;" 2>/dev/null \
+    | awk -F'\t' 'NF{print}'
+}
+
+hm_access_cp_ftp_exists() {
+  local ftp_user="$1"
+  local n q
+  q="$(hm_sql_quote "${ftp_user}")"
+  n="$(hm_mysql_exec cyberpanel -N -e \
+    "SELECT COUNT(*) FROM ftp_ftp WHERE user=${q};" 2>/dev/null | tr -d '[:space:]')"
+  [[ "${n}" =~ ^[1-9] ]]
+}
+
+# Utwórz konto FTP — CLI CyberPanel, fallback INSERT (hasło plaintext jak CP przy create; CP hashuje przy CLI)
+hm_access_cp_ftp_create() {
+  local domain="$1"
+  local ftp_user="$2"
+  local pass="$3"
+  local path="${4:-/}"
+  local wid
+
+  if hm_have_cmd cyberpanel; then
+    if hm_run cyberpanel createFTPAccount \
+      --domainName "${domain}" \
+      --userName "${ftp_user}" \
+      --password "${pass}" \
+      --path "${path}" 2>/dev/null; then
+      return 0
+    fi
+    hm_warn "cyberpanel createFTPAccount nieudane — próbuję SQL."
+  fi
+
+  wid="$(hm_access_cp_website_id "${domain}")"
+  [[ -n "${wid}" ]] || {
+    hm_err "Brak website id CyberPanel dla ${domain}."
+    return 1
+  }
+  hm_access_cp_ftp_table_ok || {
+    hm_err "Brak tabeli cyberpanel.ftp_ftp."
+    return 1
+  }
+  if hm_access_cp_ftp_exists "${ftp_user}"; then
+    hm_err "Konto FTP już istnieje: ${ftp_user}"
+    return 1
+  fi
+  # Uwaga: bezpośredni INSERT z plaintext może nie działać z Pure-FTPd (oczekuje hash) —
+  # dlatego CLI jest preferowane. SQL jako ostatnia deska.
+  local uq pq pq_path
+  uq="$(hm_sql_quote "${ftp_user}")"
+  pq="$(hm_sql_quote "${pass}")"
+  pq_path="$(hm_sql_quote "${path}")"
+  hm_mysql_exec cyberpanel -e \
+    "INSERT INTO ftp_ftp (user, password, path, owner_id) VALUES (${uq}, ${pq}, ${pq_path}, ${wid});" \
+    || return 1
+  return 0
+}
+
+hm_access_cp_ftp_set_password() {
+  local ftp_user="$1"
+  local pass="$2"
+
+  if hm_have_cmd cyberpanel; then
+    # nowsze CP: changeFTPPassword; starsze mogą nie mieć — wtedy SQL
+    if cyberpanel changeFTPPassword --ftpUserName "${ftp_user}" --password "${pass}" >/dev/null 2>&1 \
+      || cyberpanel changeFTPPass --ftpUserName "${ftp_user}" --password "${pass}" >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+  local uq pq
+  uq="$(hm_sql_quote "${ftp_user}")"
+  pq="$(hm_sql_quote "${pass}")"
+  hm_mysql_exec cyberpanel -e \
+    "UPDATE ftp_ftp SET password=${pq} WHERE user=${uq};" || return 1
+}
+
+hm_access_cp_ftp_delete() {
+  local ftp_user="$1"
+
+  if hm_have_cmd cyberpanel; then
+    if hm_run cyberpanel deleteFTPAccount --ftpUserName "${ftp_user}" 2>/dev/null; then
+      return 0
+    fi
+    hm_warn "cyberpanel deleteFTPAccount nieudane — próbuję SQL."
+  fi
+  local uq
+  uq="$(hm_sql_quote "${ftp_user}")"
+  hm_mysql_exec cyberpanel -e "DELETE FROM ftp_ftp WHERE user=${uq};" || return 1
+}
+
+# Konto należy do domeny?
+hm_access_cp_ftp_belongs_to_domain() {
+  local ftp_user="$1"
+  local domain="$2"
+  local wid q n
+  wid="$(hm_access_cp_website_id "${domain}")"
+  [[ -n "${wid}" ]] || return 1
+  q="$(hm_sql_quote "${ftp_user}")"
+  n="$(hm_mysql_exec cyberpanel -N -e \
+    "SELECT COUNT(*) FROM ftp_ftp WHERE user=${q} AND owner_id=${wid};" 2>/dev/null | tr -d '[:space:]')"
+  [[ "${n}" =~ ^[1-9] ]]
+}

@@ -300,6 +300,33 @@ hm_tab_complete() {
         done
         eval "${oldnull}" 2>/dev/null || shopt -u nullglob
         ;;
+      access)
+        local re_access_ssh_keys='access[[:space:]]+ssh[[:space:]]+keys[[:space:]]'
+        local re_access_ssh='access[[:space:]]+ssh[[:space:]]'
+        local re_access_ftp='access[[:space:]]+ftp[[:space:]]'
+        local re_access_shell='access[[:space:]]+ssh[[:space:]]+shell[[:space:]]'
+        if [[ "${prefix}" =~ $re_access_ssh_keys ]]; then
+          for m in list ls add remove rm del help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ $re_access_shell ]]; then
+          for m in enable disable on off help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ $re_access_ssh ]]; then
+          for m in status passwd password shell keys help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ $re_access_ftp ]]; then
+          for m in list ls add create passwd password delete del rm help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in status ssh ftp help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
       chrome|chromium|headless)
         for m in info status which version test help; do
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")

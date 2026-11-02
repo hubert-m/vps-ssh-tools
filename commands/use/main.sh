@@ -24,7 +24,7 @@ cmd_use() {
   domain="$(hm_find_site_by_arg "${arg}")" || return 1
   hm_set_site_context "${domain}"
   hm_ok "Kontekst: ${domain}"
-  hm_info "Komendy: info size dbs ssl renew-ssl php logs cron pm2 backup clean perms htaccess proxy delete-site archive supervisor help exit"
+  hm_info "Komendy: info size dbs ssl renew-ssl php logs cron pm2 backup clean perms htaccess proxy delete-site archive supervisor access help exit"
 }
 
 _hm_cmd_register use cmd_use 0 enter cd

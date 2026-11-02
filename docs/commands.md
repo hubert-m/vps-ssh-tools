@@ -32,6 +32,7 @@
 | `update-php <ver>` | Aktualizacja / instalacja LSPHP (np. `8.4`, `8.6`) z potwierdzeniem |
 | `health` | Load, RAM, dysk, OLS/MySQL, certy &lt;14 dni, wrażliwe porty |
 | `security …` | Audyt: `ports`, `ssh`, Fail2Ban `ban`/`unban`, `scan` docroot |
+| `access …` | SSH/FTP strony: `ssh` (passwd/shell/keys), `ftp` (list/add/passwd/delete) |
 | `detect` | Wypisz wykryty panel / webserver / DB |
 | `help [polecenie]` | Lista komend lub pomoc do wybranej (np. `help use`) |
 | `exit` | Wyjście |
@@ -56,6 +57,7 @@
 | `perms [check\|fix]` | Uprawnienia pod OLS/CyberPanel (`nogroup` 750) |
 | `delete-site […]` | Usuń bieżącą stronę (inwentaryzacja + plan critical) |
 | `archive` | Archiwum Drive → verify → usunięcie tej strony |
+| `access …` | SSH/FTP bieżącej strony (`status` / `ssh` / `ftp`) |
 | `exit` | Wyjście z kontekstu |
 
 ## PM2 / Node / Next
