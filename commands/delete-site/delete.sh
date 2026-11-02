@@ -52,20 +52,45 @@ hm_del_reset_inventory() {
   HM_DEL_PLAN_KEYS=()
 }
 
+hm_is_safe_sites_root_config() {
+  # SITES_ROOT musi mieć głębokość ≥ 2 i nie może być katalogiem systemowym.
+  local raw="${1:-}" sr rest
+  [[ -n "${raw}" ]] || return 1
+  sr="$(realpath -m "${raw}" 2>/dev/null || echo "${raw}")"
+  sr="${sr%/}"
+  [[ -n "${sr}" && "${sr}" != "/" ]] || return 1
+  case "${sr}" in
+    /bin|/boot|/dev|/etc|/lib|/lib32|/lib64|/libx32|/proc|/root|/run|/sbin|/sys|/usr|/var|/home|/opt|/srv|/tmp|/media|/mnt|/hm-tools)
+      return 1
+      ;;
+  esac
+  case "${sr}" in
+    /bin/*|/boot/*|/dev/*|/etc/*|/lib/*|/lib32/*|/lib64/*|/libx32/*|/proc/*|/root/*|/run/*|/sbin/*|/sys/*|/usr/*)
+      return 1
+      ;;
+  esac
+  rest="${sr#/}"
+  [[ "${rest}" == */* && "${rest}" != */ ]] || return 1
+  return 0
+}
+
 hm_is_safe_site_root_to_delete() {
   # Ścieżka musi być /home/<cos>… lub /var/www/<cos>…; blokada katalogów systemowych.
   local raw="${1:-}"
   local p
   [[ -n "${raw}" ]] || return 1
   p="$(realpath -m "${raw}" 2>/dev/null || echo "${raw}")"
+  p="${p%/}"
+  [[ -n "${p}" && "${p}" != "/" ]] || return 1
   case "${p}" in
-    /|/home|/var|/var/www|/usr|/etc|/root|/tmp|/hm-tools)
+    /|/home|/var|/var/www|/usr|/etc|/root|/tmp|/hm-tools|/bin|/boot|/dev|/lib|/lib64|/proc|/run|/sbin|/sys|/opt|/srv|/media|/mnt)
       return 1
       ;;
   esac
   if [[ -n "${OLS_ROOT:-}" ]]; then
     local ols
     ols="$(realpath -m "${OLS_ROOT}" 2>/dev/null || echo "${OLS_ROOT}")"
+    ols="${ols%/}"
     [[ "${p}" == "${ols}" || "${p}" == "${ols}"/* ]] && return 1
   fi
   # co najmniej /home/X lub /var/www/X (2+ segmenty po leading /)
@@ -75,8 +100,8 @@ hm_is_safe_site_root_to_delete() {
   if [[ "${p}" =~ ^/var/www/[^/]+(/.*)?$ ]]; then
     return 0
   fi
-  # opcjonalny SITES_ROOT z hmtools.conf (np. /srv/www/<domena>)
-  if [[ -n "${SITES_ROOT:-}" ]]; then
+  # opcjonalny SITES_ROOT z hmtools.conf (np. /srv/www/<domena>) — tylko gdy sam SITES_ROOT jest bezpieczny
+  if [[ -n "${SITES_ROOT:-}" ]] && hm_is_safe_sites_root_config "${SITES_ROOT}"; then
     local sr
     sr="$(realpath -m "${SITES_ROOT%/}" 2>/dev/null || echo "${SITES_ROOT%/}")"
     sr="${sr%/}"
@@ -85,7 +110,8 @@ hm_is_safe_site_root_to_delete() {
     fi
     if [[ "${p}" == "${sr}/"* ]]; then
       local rest="${p#"${sr}/"}"
-      [[ -n "${rest}" ]] && return 0
+      # wymaga co najmniej jednego segmentu pod SITES_ROOT (nie sam SITES_ROOT)
+      [[ -n "${rest}" && "${rest}" != *".."* ]] && return 0
     fi
   fi
   return 1
@@ -199,8 +225,9 @@ hm_del_ols_mentions_domain() {
   local domain="$1"
   local conf="${OLS_CONF:-}"
   [[ -n "${conf}" && -f "${conf}" ]] || return 1
-  grep -Eq "(^|[[:space:]])virtualHost[[:space:]]+${domain}([[:space:]]|\{|$)" "${conf}" 2>/dev/null \
-    || grep -Eq "^[[:space:]]*map[[:space:]]+${domain}([[:space:]]|$)" "${conf}" 2>/dev/null
+  # OLS/CyberPanel: virtualHost / virtualhost (case-insensitive)
+  grep -Eiq "(^|[[:space:]])virtualhost[[:space:]]+${domain}([[:space:]]|\{|$)" "${conf}" 2>/dev/null \
+    || grep -Eiq "^[[:space:]]*map[[:space:]]+${domain}([[:space:]]|$)" "${conf}" 2>/dev/null
 }
 
 hm_del_cyberpanel_has_domain() {
@@ -411,7 +438,8 @@ hm_site_build_delete_plan() {
     HM_DEL_PLAN_KEYS+=("pm2")
   fi
 
-  if [[ -n "${HM_DEL_USER}" ]]; then
+  # pkill -u ubija wszystkie lsphp usera — pomiń gdy współdzielony/chroniony
+  if [[ -n "${HM_DEL_USER}" && "${HM_DEL_USER_SHARED}" -eq 0 && "${HM_DEL_USER_PROTECTED}" -eq 0 ]]; then
     HM_DEL_PLAN_STEPS+=("Zatrzymanie procesów workerów LSPHP użytkownika ${HM_DEL_USER} (pkill -u ${HM_DEL_USER} lsphp)")
     HM_DEL_PLAN_KEYS+=("lsphp")
   fi
@@ -471,7 +499,11 @@ hm_site_print_delete_inventory() {
   echo "  Vhost OLS : ${HM_DEL_VHOST_DIR:--}"
   echo "  CyberPanel: $([[ "${HM_DEL_HAS_CP}" -eq 1 ]] && echo tak || echo nie)"
   echo "  PM2       : ${#HM_DEL_PM2[@]} proces(ów)"
-  echo "  Bazy      : ${#HM_DEL_DBS[@]} do usunięcia, ${#HM_DEL_SKIP_DBS[@]} pominiętych"
+  if [[ "${HM_DEL_KEEP_DB}" -eq 1 ]]; then
+    echo "  Bazy      : ${#HM_DEL_DBS[@]} wykrytych (zachowane: --keep-db), ${#HM_DEL_SKIP_DBS[@]} pominiętych"
+  else
+    echo "  Bazy      : ${#HM_DEL_DBS[@]} do usunięcia, ${#HM_DEL_SKIP_DBS[@]} pominiętych"
+  fi
   echo "  SSL paths : ${#HM_DEL_SSL_PATHS[@]}"
   local w
   for w in "${HM_DEL_NESTED_WARN[@]}"; do
@@ -497,27 +529,32 @@ hm_ols_remove_domain_from_conf() {
   cp -a "${conf}" "${conf}.hmtools.bak" 2>/dev/null || true
   local tmp
   tmp="$(mktemp)"
+  # virtualHost / virtualhost / listener / map — case-insensitive (OLS WebAdmin / CyberPanel)
   awk -v dom="${domain}" '
     BEGIN { skip=0; depth=0 }
-    /^[[:space:]]*virtualHost[[:space:]]+/ {
-      name=$2
-      gsub(/\{/,"",name)
-      if (name == dom) {
+    {
+      line=$0
+      first=$1
+      second=$2
+      gsub(/\{/,"",second)
+    }
+    tolower(first)=="virtualhost" {
+      if (second == dom) {
         skip=1
         depth=0
-        if ($0 ~ /\{/) depth=1
+        if (line ~ /\{/) depth=1
         next
       }
     }
     skip {
-      if ($0 ~ /\{/) depth++
-      if ($0 ~ /\}/) {
+      if (line ~ /\{/) depth++
+      if (line ~ /\}/) {
         depth--
         if (depth <= 0) { skip=0; depth=0 }
       }
       next
     }
-    /^[[:space:]]*map[[:space:]]+/ && $2 == dom { next }
+    tolower(first)=="map" && second == dom { next }
     { print }
   ' "${conf}" > "${tmp}" && mv "${tmp}" "${conf}" || rm -f "${tmp}"
 }
@@ -547,8 +584,12 @@ hm_site_execute_delete() {
         ;;
       lsphp)
         hm_progress_bar "${i}" "${total}" "pkill lsphp…"
-        pkill -u "${HM_DEL_USER}" -f 'lsphp' 2>/dev/null || true
-        hm_ok "LSPHP workery użytkownika ${HM_DEL_USER} zatrzymane."
+        if [[ "${HM_DEL_USER_SHARED}" -eq 1 || "${HM_DEL_USER_PROTECTED}" -eq 1 ]]; then
+          hm_warn "Pominięto pkill lsphp — użytkownik ${HM_DEL_USER} współdzielony/chroniony."
+        else
+          pkill -u "${HM_DEL_USER}" -f 'lsphp' 2>/dev/null || true
+          hm_ok "LSPHP workery użytkownika ${HM_DEL_USER} zatrzymane."
+        fi
         ;;
       cron)
         hm_progress_bar "${i}" "${total}" "crontab -r…"

@@ -35,6 +35,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `security ban/unban` — dokładny match ufw; IPv6 (firewalld/ip6tables); ban we wszystkich jailach; walidacja IP; ostrzeżenie self-ban
 - Fix: rpm candidate = dokładna nazwa pakietu; walidacja FORCE_*; komunikaty update-php / wiek indeksu
 - Fix: `php` / php.net — `{"error":"Unknown version"}` nie cache’owane; kanał „brak danych” zamiast false-stable (`hm_php_parse_phpnet_json`)
+- Fix: `webs delete` / archive — `virtualhost` case-insensitive w httpd_config; denylista `SITES_ROOT`; bez `pkill` na współdzielonym userze; inwentarz `--keep-db`; hardening `uninstall-hmtools`
 
 ## [v0.1.7]
 

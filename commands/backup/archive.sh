@@ -90,26 +90,32 @@ hm_archive_write_ols_snippet() {
   local conf="${OLS_CONF:-}"
   : > "${out_file}"
   [[ -n "${conf}" && -f "${conf}" ]] || return 0
+  # virtualHost / virtualhost — case-insensitive (OLS WebAdmin / CyberPanel)
   awk -v dom="${domain}" '
     BEGIN { skip=0; depth=0 }
-    /^[[:space:]]*virtualHost[[:space:]]+/ {
-      name=$2; gsub(/\{/,"",name)
-      if (name == dom) {
+    {
+      line=$0
+      first=$1
+      second=$2
+      gsub(/\{/,"",second)
+    }
+    tolower(first)=="virtualhost" {
+      if (second == dom) {
         print; skip=1; depth=0
-        if ($0 ~ /\{/) depth=1
+        if (line ~ /\{/) depth=1
         next
       }
     }
     skip {
       print
-      if ($0 ~ /\{/) depth++
-      if ($0 ~ /\}/) {
+      if (line ~ /\{/) depth++
+      if (line ~ /\}/) {
         depth--
         if (depth <= 0) { skip=0; depth=0 }
       }
       next
     }
-    /^[[:space:]]*map[[:space:]]+/ && $2 == dom { print }
+    tolower(first)=="map" && second == dom { print }
   ' "${conf}" > "${out_file}" 2>/dev/null || true
 }
 

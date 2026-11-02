@@ -116,15 +116,24 @@ EOF
   done
 
   if [[ -d "${dest}" ]]; then
-    # bezpieczeństwo: nie kasuj / ani /
-    case "${dest}" in
-      /|/usr|/usr/local|/bin|/etc|/home|/var|/root)
-        hm_err "Odmowa usunięcia niebezpiecznej ścieżki: ${dest}"
+    local dest_n
+    dest_n="$(realpath -m "${dest}" 2>/dev/null || echo "${dest}")"
+    dest_n="${dest_n%/}"
+    [[ -n "${dest_n}" ]] || dest_n="/"
+    # denylista + warianty z końcowym / (po realpath -m)
+    case "${dest_n}" in
+      /|/bin|/boot|/dev|/etc|/home|/lib|/lib32|/lib64|/libx32|/media|/mnt|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/usr/local|/var)
+        hm_err "Odmowa usunięcia niebezpiecznej ścieżki: ${dest} (→ ${dest_n})"
         return 1
         ;;
     esac
-    rm -rf "${dest}"
-    echo "Usunięto katalog ${dest}"
+    # wymagaj markera instalacji hmtools (nie kasuj przypadkowego katalogu)
+    if [[ ! -f "${dest_n}/bin/hmtools" || ! -f "${dest_n}/VERSION" ]]; then
+      hm_err "Odmowa: ${dest_n} nie wygląda na instalację hmtools (brak bin/hmtools + VERSION)."
+      return 1
+    fi
+    rm -rf -- "${dest_n}"
+    echo "Usunięto katalog ${dest_n}"
   else
     hm_warn "Katalog ${dest} już nie istnieje."
   fi
