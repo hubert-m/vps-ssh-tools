@@ -315,7 +315,7 @@ cmd_supervisor_action() {
       "Tylko programy tej strony (${#names[@]})." \
       "${yes_flag[@]}" \
       "${plan[@]}"; then
-      return 0
+      return 1
     fi
     local rc=0
     for p in "${names[@]}"; do
@@ -331,7 +331,7 @@ cmd_supervisor_action() {
     "Dotknie WSZYSTKICH programów Supervisora na serwerze." \
     "${yes_flag[@]}" \
     "${action} all (supervisorctl)"; then
-    return 0
+    return 1
   fi
   hm_supervisor_ctl "${action}" all
 }

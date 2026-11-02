@@ -17,20 +17,59 @@ EOF
 hm_is_valid_ip() {
   local ip="${1:-}"
   [[ -n "${ip}" ]] || return 1
-  # IPv4 — oktety 0–255
+  # IPv4 — oktety 0–255; odrzuć 0.0.0.0 (bezsensowny ban „wszystkiego”)
   if [[ "${ip}" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
     local o
     for o in "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"; do
       [[ "${o}" =~ ^[0-9]+$ ]] || return 1
       ((10#${o} <= 255)) || return 1
     done
+    [[ "${ip}" != "0.0.0.0" ]] || return 1
     return 0
   fi
-  # IPv6 — musi zawierać hex i ':', nie sam ':' / puste
+  # IPv6 — hex + ':', co najwyżej jedno '::', 2–8 hextetów
   [[ "${ip}" == *:* ]] || return 1
   [[ "${ip}" =~ ^[0-9a-fA-F:]+$ ]] || return 1
   [[ "${ip}" =~ [0-9a-fA-F] ]] || return 1
   [[ "${ip}" != : && "${ip}" != :: ]] || return 1
+  # więcej niż jedno '::' (np. 1::2::3)
+  local _tmp="${ip//::/}"
+  local _ncomp=$(( (${#ip} - ${#_tmp}) / 2 ))
+  [[ "${_ncomp}" -le 1 ]] || return 1
+  # hextety (puste OK tylko przy kompresji ::)
+  local _left _right _g _groups=0
+  if [[ "${ip}" == *"::"* ]]; then
+    _left="${ip%%::*}"
+    _right="${ip#*::}"
+    [[ "${_right}" != *"::"* ]] || return 1
+    if [[ -n "${_left}" ]]; then
+      IFS=':' read -r -a _la <<< "${_left}"
+      for _g in "${_la[@]}"; do
+        [[ -n "${_g}" ]] || return 1
+        [[ "${#_g}" -le 4 && "${_g}" =~ ^[0-9a-fA-F]+$ ]] || return 1
+        _groups=$((_groups + 1))
+      done
+    fi
+    if [[ -n "${_right}" ]]; then
+      IFS=':' read -r -a _ra <<< "${_right}"
+      for _g in "${_ra[@]}"; do
+        [[ -n "${_g}" ]] || return 1
+        [[ "${#_g}" -le 4 && "${_g}" =~ ^[0-9a-fA-F]+$ ]] || return 1
+        _groups=$((_groups + 1))
+      done
+    fi
+    # :: musi „zjadać” ≥1 hextet → max 7 jawnych grup
+    [[ "${_groups}" -ge 1 && "${_groups}" -le 7 ]] || return 1
+  else
+    IFS=':' read -r -a _la <<< "${ip}"
+    for _g in "${_la[@]}"; do
+      [[ -n "${_g}" ]] || return 1
+      [[ "${#_g}" -le 4 && "${_g}" =~ ^[0-9a-fA-F]+$ ]] || return 1
+      _groups=$((_groups + 1))
+    done
+    # bez :: — dokładnie 8 hextetów (odrzuca 1:2)
+    [[ "${_groups}" -eq 8 ]] || return 1
+  fi
   return 0
 }
 

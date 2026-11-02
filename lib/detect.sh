@@ -364,6 +364,7 @@ hm_detect_chrome() {
 
 hm_detect_apply_overrides() {
   # Ręczne nadpisanie z hmtools.conf (gdy auto-detekcja się myli)
+  # Ostrzeżenia FORCE_* — max 1× na proces (detect wołany wielokrotnie).
   if [[ -n "${FORCE_PANEL:-}" ]]; then
     case "${FORCE_PANEL}" in
       cyberpanel|cpanel|plesk|webmin|directadmin|aapanel|unknown)
@@ -376,7 +377,10 @@ hm_detect_apply_overrides() {
         fi
         ;;
       *)
-        hm_warn "FORCE_PANEL='${FORCE_PANEL}' spoza listy (cyberpanel|cpanel|plesk|webmin|directadmin|aapanel|unknown) — ignoruję."
+        if [[ "${_HM_FORCE_PANEL_WARNED:-0}" != "1" ]]; then
+          _HM_FORCE_PANEL_WARNED=1
+          hm_warn "FORCE_PANEL='${FORCE_PANEL}' spoza listy (cyberpanel|cpanel|plesk|webmin|directadmin|aapanel|unknown) — ignoruję."
+        fi
         ;;
     esac
   fi
@@ -387,14 +391,22 @@ hm_detect_apply_overrides() {
         WEBSERVER_SOURCE="override:FORCE_WEBSERVER"
         ;;
       *)
-        hm_warn "FORCE_WEBSERVER='${FORCE_WEBSERVER}' spoza listy (openlitespeed|litespeed|nginx|apache|unknown) — ignoruję."
+        if [[ "${_HM_FORCE_WEBSERVER_WARNED:-0}" != "1" ]]; then
+          _HM_FORCE_WEBSERVER_WARNED=1
+          hm_warn "FORCE_WEBSERVER='${FORCE_WEBSERVER}' spoza listy (openlitespeed|litespeed|nginx|apache|unknown) — ignoruję."
+        fi
         ;;
     esac
   fi
   if [[ -n "${FORCE_DB_ENGINE:-}" ]]; then
     case "${FORCE_DB_ENGINE}" in
       mariadb|mysql|unknown) DB_ENGINE="${FORCE_DB_ENGINE}" ;;
-      *) hm_warn "FORCE_DB_ENGINE='${FORCE_DB_ENGINE}' spoza listy (mariadb|mysql|unknown) — ignoruję." ;;
+      *)
+        if [[ "${_HM_FORCE_DB_WARNED:-0}" != "1" ]]; then
+          _HM_FORCE_DB_WARNED=1
+          hm_warn "FORCE_DB_ENGINE='${FORCE_DB_ENGINE}' spoza listy (mariadb|mysql|unknown) — ignoruję."
+        fi
+        ;;
     esac
   fi
   if [[ -n "${FORCE_SITES_ROOT:-}" && -z "${SITES_ROOT:-}" ]]; then
@@ -404,15 +416,35 @@ hm_detect_apply_overrides() {
     case "${FORCE_PKG_MANAGER}" in
       apt|dnf|yum)
         PKG_MANAGER="${FORCE_PKG_MANAGER}"
-        # ostrzeż gdy wymuszono CLI, którego nie ma w PATH
-        case "${FORCE_PKG_MANAGER}" in
-          apt) hm_have_cmd apt-get || hm_warn "FORCE_PKG_MANAGER=apt, ale brak apt-get w PATH." ;;
-          dnf) hm_have_cmd dnf || hm_warn "FORCE_PKG_MANAGER=dnf, ale brak dnf w PATH." ;;
-          yum) hm_have_cmd yum || hm_warn "FORCE_PKG_MANAGER=yum, ale brak yum w PATH." ;;
-        esac
+        # ostrzeż gdy wymuszono CLI, którego nie ma w PATH (1×)
+        if [[ "${_HM_FORCE_PKG_PATH_WARNED:-0}" != "1" ]]; then
+          case "${FORCE_PKG_MANAGER}" in
+            apt)
+              if ! hm_have_cmd apt-get; then
+                _HM_FORCE_PKG_PATH_WARNED=1
+                hm_warn "FORCE_PKG_MANAGER=apt, ale brak apt-get w PATH."
+              fi
+              ;;
+            dnf)
+              if ! hm_have_cmd dnf; then
+                _HM_FORCE_PKG_PATH_WARNED=1
+                hm_warn "FORCE_PKG_MANAGER=dnf, ale brak dnf w PATH."
+              fi
+              ;;
+            yum)
+              if ! hm_have_cmd yum; then
+                _HM_FORCE_PKG_PATH_WARNED=1
+                hm_warn "FORCE_PKG_MANAGER=yum, ale brak yum w PATH."
+              fi
+              ;;
+          esac
+        fi
         ;;
       *)
-        hm_warn "FORCE_PKG_MANAGER='${FORCE_PKG_MANAGER}' spoza listy (apt|dnf|yum) — ignoruję."
+        if [[ "${_HM_FORCE_PKG_WARNED:-0}" != "1" ]]; then
+          _HM_FORCE_PKG_WARNED=1
+          hm_warn "FORCE_PKG_MANAGER='${FORCE_PKG_MANAGER}' spoza listy (apt|dnf|yum) — ignoruję."
+        fi
         ;;
     esac
   fi
@@ -457,6 +489,23 @@ hm_detect_pkg_manager() {
   if [[ -n "${FORCE_PKG_MANAGER:-}" ]]; then
     case "${FORCE_PKG_MANAGER}" in
       apt|dnf|yum) PKG_MANAGER="${FORCE_PKG_MANAGER}" ;;
+    esac
+  fi
+  # Najpierw rodzina OS — na RHEL przypadkowy apt-get nie wygrywa z dnf/yum
+  if [[ "${PKG_MANAGER}" == "unknown" ]]; then
+    case "${OS_FAMILY:-}" in
+      rhel)
+        if hm_have_cmd dnf; then
+          PKG_MANAGER="dnf"
+        elif hm_have_cmd yum; then
+          PKG_MANAGER="yum"
+        fi
+        ;;
+      debian)
+        if hm_have_cmd apt-get; then
+          PKG_MANAGER="apt"
+        fi
+        ;;
     esac
   fi
   if [[ "${PKG_MANAGER}" == "unknown" ]] && type hm_pkg_id >/dev/null 2>&1; then

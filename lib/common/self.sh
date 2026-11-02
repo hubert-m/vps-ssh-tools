@@ -180,12 +180,15 @@ hm_latest_remote_version() {
     "https://api.github.com/repos/${repo}/tags?per_page=100" 2>/dev/null \
     | grep -oE '"name"[[:space:]]*:[[:space:]]*"[^"]+"' \
     | sed -E 's/.*"([^"]+)"$/\1/' \
+    | grep -E '^v?[0-9]+(\.[0-9]+)*$' \
     | sort -V | tail -1 || true)"
   if [[ -z "${latest}" ]]; then
     latest="$(curl -fsSL --connect-timeout 2 --max-time 5 --retry 0 \
       "https://raw.githubusercontent.com/${repo}/${branch}/VERSION" 2>/dev/null \
       | tr -d '[:space:]' || true)"
   fi
+  # odrzuć HTML / captive portal (np. 200 z <html>…)
+  [[ "${latest}" =~ ^v?[0-9]+(\.[0-9]+)*$ ]] || latest=""
   printf '%s' "${latest}"
 }
 
@@ -204,6 +207,8 @@ hm_welcome_update_notice() {
   [[ -n "${cur}" ]] || return 0
   remote="$(hm_latest_remote_version)"
   [[ -n "${remote}" ]] || return 0
+  # odrzuć HTML/captive portal / śmieci z endpointu (tylko semver z opcjonalnym v)
+  [[ "${remote}" =~ ^v?[0-9]+(\.[0-9]+)*$ ]] || return 0
   hm_version_is_newer "${cur}" "${remote}" || return 0
 
   repo="${HMTOOLS_REPO:-hubert-m/vps-ssh-tools}"

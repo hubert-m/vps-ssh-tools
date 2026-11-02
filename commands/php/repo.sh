@@ -47,7 +47,9 @@ hm_php_print_installable_newer() {
   local -a avail_lines=() show_branches=()
 
   for b in "${installed_branches[@]}"; do
-    [[ -n "${b}" && "${b}" != "-" ]] || continue
+    # pomiń śmieci / "?" z nieparsowalnego PHP_VERSION
+    [[ -n "${b}" && "${b}" != "-" && "${b}" != "?" ]] || continue
+    [[ "${b}" =~ ^[0-9]+\.[0-9]+$ ]] || continue
     have_branch["${b}"]=1
     if [[ -z "${max_branch}" ]]; then
       max_branch="${b}"
@@ -186,7 +188,7 @@ hm_php_parse_phpnet_json() {
 }
 
 hm_php_latest_remote() {
-  # najnowszy patch dla gałęzi (np. 8.4 → 8.4.27) z php.net; cache 1h (tylko poprawne wersje)
+  # najnowszy patch dla gałęzi (np. 8.4 → 8.4.27) z php.net; cache 1h (OK) / 10 min (unknown)
   local branch="$1"
   [[ -n "${branch}" ]] || return 1
   local cache_dir="${TMP_DIR:-/tmp}/hmtools-php-cache"
@@ -194,6 +196,7 @@ hm_php_latest_remote() {
   chmod 0700 "${cache_dir}" 2>/dev/null || true
   local cache="${cache_dir}/latest-${branch}.txt"
   local max_age=3600
+  local fail_age=600
   if [[ -f "${cache}" ]]; then
     local age mtime now cached
     mtime="$(stat -c %Y "${cache}" 2>/dev/null || echo 0)"
@@ -206,12 +209,16 @@ hm_php_latest_remote() {
       printf '%s' "${cached}"
       return 0
     fi
+    # krótki negative-cache: HTML / Unknown version / brak sieci
+    if [[ "${cached}" == "unknown" && "${age}" -ge 0 && "${age}" -lt "${fail_age}" ]]; then
+      return 1
+    fi
   fi
   local json ver
   json="$(curl -fsSL --connect-timeout 2 --max-time 6 --retry 0 \
     "https://www.php.net/releases/index.php?json&version=${branch}&max=1" 2>/dev/null || true)"
   if ! ver="$(hm_php_parse_phpnet_json "${json}")"; then
-    # nie cache’uj błędów / unknown — przy następnym wywołaniu spróbuj ponownie
+    printf 'unknown\n' > "${cache}" 2>/dev/null || true
     return 1
   fi
   printf '%s\n' "${ver}" > "${cache}" 2>/dev/null || true
@@ -258,9 +265,10 @@ hm_list_available_php() {
         ver="?"
       fi
       branch="$(hm_php_branch_of "${ver}")"
-      [[ -n "${branch}" ]] || branch="-"
+      [[ -n "${branch}" && "${branch}" =~ ^[0-9]+\.[0-9]+$ ]] || branch="-"
       rows+=("${p}"$'\t'"${ver}"$'\t'"${branch}")
-      [[ "${branch}" != "-" ]] && branches+=("${branch}")
+      # "?" / nieparsowalna wersja nie trafia do „Nowsze” ani prefetch php.net
+      [[ "${branch}" != "-" && "${ver}" != "?" ]] && branches+=("${branch}")
     fi
   done
 

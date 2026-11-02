@@ -42,6 +42,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `help`/`use` — kontekst z perms/htaccess/proxy/archive/supervisor; `logs` bez surowego `ls -la` przy braku plików
 - Fix: `mysql dump-local` — walidacja ścieżki przed mkdir, umask 077; `mysql create` — hasło przez stdin (nie `-e`); install.sh `${DEST:?}`
 - Fix: TSV `hm_resolve_site_paths` / `hm_dbs_for_site` — puste pola jako `-` (`hm_tsv_field`), bez zlewania kolumn przy `IFS=tab`; test `scripts/test-tsv-fields.sh`
+- Fix: drobne UX/walidacja (retest v0.1.8) — chrome FORCE etykieta + timeout version; supervisor/cache/delete/restore cancel → rc≠0; detect FORCE warn 1×; IP (0.0.0.0, IPv6); port 99999; PHP `?` poza Nowsze; pkg OS_FAMILY przed apt-get; php.net negative-cache 10 min; cache flush bez podwójnego liczenia/„Uwaga”; webs `--keep-db` banner; restore bez pustego `/home` i bez duplikatu vhconf; list bez pustej tabeli; snapshot bez files* = BAD; mysql help `${TMP_DIR}/hmtools-db`; update-check tylko semver
 
 ## [v0.1.7]
 

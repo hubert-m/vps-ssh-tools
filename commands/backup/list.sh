@@ -62,10 +62,10 @@ hm_backup_list_stamps() {
   hm_rclone_lsd_names "${base}" | grep -E '^[0-9]{8}-[0-9]{6}$' | sort -r
 }
 
-# 0 = kompletny (ma manifest, status≠partial/failed); 1 = niepełny/osierocony
+# 0 = kompletny (ma manifest, status≠partial/failed, ma files*); 1 = niepełny/osierocony
 hm_backup_snapshot_is_incomplete() {
   local remote_base="$1"
-  local json status type
+  local json status type mode
   json="$(hm_backup_cat_manifest "${remote_base}")"
   if [[ -z "${json}" ]]; then
     return 0
@@ -76,6 +76,13 @@ hm_backup_snapshot_is_incomplete() {
   esac
   type="$(hm_backup_json_str "${json}" "type")"
   [[ -z "${type}" ]] && return 0
+  # site/archive bez files.tar.gz / files.chunks → BAD (sam manifest)
+  case "${type}" in
+    site|archive)
+      mode="$(hm_backup_detect_files_mode "${remote_base}")"
+      [[ "${mode}" == "none" ]] && return 0
+      ;;
+  esac
   return 1
 }
 
@@ -145,8 +152,6 @@ hm_backup_list() {
   echo "${C_BOLD}Backup list — ${target}${C_RESET}"
   echo "  Remote: ${remote_parent}"
   echo
-  printf '  %-18s %-6s %10s  %-14s  %s\n' "STAMP" "TYP" "ROZMIAR" "ARCHIWUM" "META"
-  printf '  %-18s %-6s %10s  %-14s  %s\n' "-----" "---" "-------" "--------" "----"
 
   local stamp remote_base count=0
   local -a stamps=()
@@ -159,6 +164,9 @@ hm_backup_list() {
     hm_warn "Brak snapshotów w ${remote_parent}"
     return 0
   fi
+
+  printf '  %-18s %-6s %10s  %-14s  %s\n' "STAMP" "TYP" "ROZMIAR" "ARCHIWUM" "META"
+  printf '  %-18s %-6s %10s  %-14s  %s\n' "-----" "---" "-------" "--------" "----"
 
   for stamp in "${stamps[@]}"; do
     count=$((count + 1))

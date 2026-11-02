@@ -248,7 +248,7 @@ hm_backup_restore_ols_from_archive() {
     fi
   fi
 
-  # 2) pojedynczy vhost.conf → vhconf / HM_SITE_VHOST
+  # 2) pojedynczy vhost.conf → vhconf — tylko gdy ols-vhost-dir nie dał już vhconf
   if rclone cat "${remote_base}/vhost.conf" >/dev/null 2>&1; then
     local dest_vh="${HM_SITE_VHOST:-}"
     if [[ -z "${dest_vh}" && -n "${vhosts}" ]]; then
@@ -256,7 +256,9 @@ hm_backup_restore_ols_from_archive() {
       dest_vh="${vhosts}/${domain}/vhconf.conf"
       HM_SITE_VHOST="${dest_vh}"
     fi
-    if [[ -n "${dest_vh}" ]]; then
+    if [[ -n "${dest_vh}" && -f "${dest_vh}" && "${did}" -eq 1 ]]; then
+      hm_info "vhconf już z ols-vhost-dir (${dest_vh}) — pomijam osobny vhost.conf"
+    elif [[ -n "${dest_vh}" ]]; then
       mkdir -p "$(dirname "${dest_vh}")"
       if rclone cat "${remote_base}/vhost.conf" > "${dest_vh}"; then
         hm_ok "Przywrócono vhost.conf → ${dest_vh}"
@@ -395,8 +397,16 @@ hm_backup_restore() {
     HM_SITE_DOMAIN="${domain}"
   fi
   [[ -n "${target_dir}" ]] || { hm_err "Brak katalogu docelowego strony (manifest bez site_root/docroot)."; return 1; }
-  if [[ ! -d "${target_dir}" ]]; then
-    mkdir -p "${target_dir}" || { hm_err "Nie można utworzyć ${target_dir}"; return 1; }
+
+  # sprawdź pliki PRZED confirm — snapshot tylko z manifestem już oznaczony incomplete wyżej;
+  # dodatkowa jasna ścieżka gdy ktoś minie incomplete
+  if [[ "${db_only}" -eq 0 ]]; then
+    local _fmode
+    _fmode="$(hm_backup_detect_files_mode "${remote_base}")"
+    if [[ "${_fmode}" == "none" ]]; then
+      hm_err "Snapshot ${stamp} bez archiwum plików (files.tar.gz / files.chunks) — odmowa restore."
+      return 1
+    fi
   fi
 
   hm_backup_check_space || return 1
@@ -405,6 +415,7 @@ hm_backup_restore() {
   local restore_ols=0
   local db_list=""
   local snap_type=""
+  local created_target=0
   snap_type="$(hm_backup_json_str "$(hm_backup_cat_manifest "${remote_base}")" "type")"
 
   if [[ "${db_only}" -eq 0 ]]; then
@@ -433,11 +444,22 @@ hm_backup_restore() {
     "backup restore — ${domain} (${stamp})" \
     "Nadpisanie danych strony i/lub baz — operacja trudna do cofnięcia.${warn_extra}" \
     "${plan_steps[@]}"; then
-    return 0
+    return 1
+  fi
+
+  # katalog docelowy dopiero PO potwierdzeniu — anulowanie nie zostawia pustego /home/<domena>
+  if [[ ! -d "${target_dir}" ]]; then
+    mkdir -p "${target_dir}" || { hm_err "Nie można utworzyć ${target_dir}"; return 1; }
+    created_target=1
   fi
 
   if [[ "${db_only}" -eq 0 ]]; then
-    hm_backup_restore_files "${remote_base}" "${target_dir}" || return 1
+    if ! hm_backup_restore_files "${remote_base}" "${target_dir}"; then
+      if [[ "${created_target}" -eq 1 ]]; then
+        rmdir "${target_dir}" 2>/dev/null || true
+      fi
+      return 1
+    fi
     if [[ "${restore_ols}" -eq 1 ]]; then
       hm_backup_restore_ols_from_archive "${domain}" "${remote_base}" || {
         hm_err "Restore OLS nieudany — pliki/DB mogą być już odtworzone; dokończ vhost ręcznie."

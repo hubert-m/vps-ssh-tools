@@ -18,7 +18,8 @@ hm_chrome_require() {
     if [[ -x "${FORCE_CHROME_BIN}" ]]; then
       CHROME="yes"
       CHROME_BIN="${FORCE_CHROME_BIN}"
-      CHROME_SOURCE="${CHROME_SOURCE:-override:FORCE_CHROME_BIN}"
+      # zawsze FORCE — nie zostawiaj etykiety z hm_detect_chrome (bin:chromium)
+      CHROME_SOURCE="override:FORCE_CHROME_BIN"
     elif [[ "${_HM_FORCE_CHROME_WARNED:-0}" != "1" ]]; then
       _HM_FORCE_CHROME_WARNED=1
       hm_warn "FORCE_CHROME_BIN nie jest wykonywalne: ${FORCE_CHROME_BIN}"
@@ -93,7 +94,15 @@ cmd_chrome() {
       ;;
     version|ver|-v|--version)
       hm_chrome_require || return 1
-      hm_run_timeout 3 "${CHROME_BIN}" --version
+      if ! hm_run_timeout 3 "${CHROME_BIN}" --version; then
+        local vrc=$?
+        if [[ "${vrc}" -eq 124 ]]; then
+          hm_err "Timeout (3s) przy „${CHROME_BIN} --version” — binarka nie odpowiada (zawieszona?)."
+        else
+          hm_err "Nie udało się odczytać wersji (rc=${vrc}): ${CHROME_BIN}"
+        fi
+        return "${vrc}"
+      fi
       ;;
     test|smoke|check)
       cmd_chrome_test

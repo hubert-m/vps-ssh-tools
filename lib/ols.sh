@@ -455,6 +455,25 @@ hm_ols_cache_flush() {
     hm_info "Brak katalogów LSCache do wyczyszczenia."
     return 0
   fi
+  # usuń potomków innych ścieżek (flush all: cachedata + cachedata/domena → podwójne liczenie)
+  local -a pruned=()
+  local u v skip_child
+  for u in "${uniq[@]}"; do
+    skip_child=0
+    for v in "${uniq[@]}"; do
+      [[ "${u}" == "${v}" ]] && continue
+      if [[ "${u}" == "${v}"/* ]]; then
+        skip_child=1
+        break
+      fi
+    done
+    [[ "${skip_child}" -eq 0 ]] && pruned+=("${u}")
+  done
+  uniq=("${pruned[@]}")
+  if [[ "${#uniq[@]}" -eq 0 ]]; then
+    hm_info "Brak katalogów LSCache do wyczyszczenia."
+    return 0
+  fi
 
   local bytes total=0
   local -a plan_steps=()
@@ -465,12 +484,13 @@ hm_ols_cache_flush() {
   done
   local warn_cache="Razem do usunięcia: $(hm_human_size "${total}")."
   if [[ "${scope}" == "all" || "${scope}" == "--all" || "${scope}" == "global" ]]; then
-    warn_cache="${warn_cache} Uwaga: tryb all czyści też globalne katalogi cachedata OLS (wszystkie domeny)."
+    # bez „Uwaga:” — hm_confirm_plan już prefixuje „UWAGA:”
+    warn_cache="${warn_cache} Tryb all czyści też globalne katalogi cachedata OLS (wszystkie domeny)."
   fi
   if ! hm_confirm_plan "ols cache flush — ${scope:-${domain:-all}}" \
     "${warn_cache}" \
     "${plan_steps[@]}"; then
-    return 0
+    return 1
   fi
   local ent
   for t in "${uniq[@]}"; do

@@ -753,16 +753,21 @@ EOF
     return 1
   fi
 
-  local warn_extra=""
+  local warn_extra="" warn_data
   if [[ "${#HM_DEL_NESTED_WARN[@]}" -gt 0 ]]; then
     warn_extra=" Wykryto nachodzące ścieżki innych domen — sprawdź ostrzeżenia powyżej!"
+  fi
+  if [[ "${keep_db}" -eq 1 ]]; then
+    warn_data="pliki strony zostaną bezpowrotnie skasowane z VPS (bazy MySQL zachowane: --keep-db)"
+  else
+    warn_data="pliki i bazy zostaną bezpowrotnie skasowane z VPS"
   fi
 
   if ! hm_confirm_plan_critical "${domain}" \
     "CAŁKOWITE USUNIĘCIE SERWISU WEBOWEGO: ${domain}" \
-    "Operacja jest NIEODWRACALNA — pliki i bazy zostaną bezpowrotnie skasowane z VPS!${warn_extra} (Najpierw kopia: backup site ${domain})" \
+    "Operacja jest NIEODWRACALNA — ${warn_data}!${warn_extra} (Najpierw kopia: backup site ${domain})" \
     "${HM_DEL_PLAN_STEPS[@]}"; then
-    return 0
+    return 1
   fi
 
   hm_site_execute_delete

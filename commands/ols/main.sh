@@ -194,6 +194,12 @@ cmd_ols_proxy() {
         domain="${1}"; port="${2}"; name="${3:-}"
       elif [[ -n "${1:-}" ]] && hm_is_valid_port "${1}"; then
         domain="${HM_SITE_DOMAIN:-}"; port="${1}"; name="${2:-}"
+      elif [[ -n "${1:-}" ]] && hm_is_valid_domain "${1}" && [[ -n "${2:-}" ]] && [[ "${2}" =~ ^[0-9]+$ ]]; then
+        hm_err "Nieprawidłowy port (1–65535): ${2}"
+        return 1
+      elif [[ -n "${1:-}" ]] && [[ "${1}" =~ ^[0-9]+$ ]]; then
+        hm_err "Nieprawidłowy port (1–65535): ${1}"
+        return 1
       else
         hm_err "Użycie: ols proxy set-port [domena] <port> [nazwa]"
         return 1
@@ -248,6 +254,10 @@ cmd_site_proxy() {
       shift || true
       local port="${1:-}" name="${2:-}"
       [[ -n "${port}" ]] || { hm_err "Użycie: proxy set-port <port> [nazwa]"; return 1; }
+      if ! hm_is_valid_port "${port}"; then
+        hm_err "Nieprawidłowy port (1–65535): ${port}"
+        return 1
+      fi
       hm_ols_proxy_set_port "${HM_SITE_DOMAIN}" "${port}" "${name}"
       ;;
     ""|status|check)

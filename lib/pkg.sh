@@ -39,6 +39,25 @@ hm_pkg_id() {
         ;;
     esac
   fi
+  # Rodzina OS przed samym PATH — unikaj apt-get na RPM (fałszywy „apt”)
+  case "${OS_FAMILY:-}" in
+    rhel)
+      if hm_have_cmd dnf; then
+        printf 'dnf'
+        return 0
+      fi
+      if hm_have_cmd yum; then
+        printf 'yum'
+        return 0
+      fi
+      ;;
+    debian)
+      if hm_have_cmd apt-get; then
+        printf 'apt'
+        return 0
+      fi
+      ;;
+  esac
   if hm_have_cmd apt-get; then
     printf 'apt'
     return 0
