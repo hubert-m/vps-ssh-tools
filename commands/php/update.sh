@@ -98,24 +98,20 @@ cmd_update_php() {
     return 1
   fi
 
-  set +e
-  hm_pkg_refresh
-  local refresh_rc=$?
-  set -e
+  local refresh_rc=0
+  hm_pkg_refresh || refresh_rc=$?
   if [[ "${refresh_rc}" -ne 0 ]]; then
     hm_warn "Odświeżenie indeksu zakończyło się kodem ${refresh_rc} — kontynuuję ostrożnie."
   fi
 
-  set +e
+  local rc=0
   if [[ "${#pkgs[@]}" -gt 0 ]]; then
     hm_info "Aktualizacja pakietów lsphp${suffix}* (${#pkgs[@]})…"
-    hm_pkg_upgrade "${pkgs[@]}"
+    hm_pkg_upgrade "${pkgs[@]}" || rc=$?
   else
     hm_info "Instalacja lsphp${suffix} z repozytorium…"
-    hm_php_install_branch_packages "${suffix}"
+    hm_php_install_branch_packages "${suffix}" || rc=$?
   fi
-  local rc=$?
-  set -e
 
   if [[ "${rc}" -ne 0 ]]; then
     hm_err "Aktualizacja pakietów zakończyła się kodem ${rc}."

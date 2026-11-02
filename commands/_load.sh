@@ -13,6 +13,7 @@ declare -gA HM_CMD_ALIAS_MAP=()
 declare -gA HM_CMD_ENTRY=()
 declare -gA HM_CMD_RESTRICTED=()
 declare -gA HM_CMD_SITE_ENTRY=()
+declare -ga HM_CMD_SITE_PRIMARY=()
 declare -gA HM_CMD_HELP=()
 
 # _hm_cmd_help <topic>  + heredoc na stdin
@@ -35,9 +36,18 @@ _hm_cmd_register() {
   done
 }
 
+# _hm_cmd_register_site <canonical> <entry_fn> [alias...]
+# Canonical trafia do HM_CMD_SITE_PRIMARY (help); aliasy tylko do SITE_ENTRY (dispatch/Tab).
 _hm_cmd_register_site() {
   local name="$1" entry="$2"
+  shift 2 || true
   HM_CMD_SITE_ENTRY["${name}"]="${entry}"
+  HM_CMD_SITE_PRIMARY+=("${name}")
+  local a
+  for a in "$@"; do
+    [[ -n "${a}" ]] || continue
+    HM_CMD_SITE_ENTRY["${a}"]="${entry}"
+  done
 }
 
 # Współdzielone helpery (vhost/discover/…) — przed narzędziami

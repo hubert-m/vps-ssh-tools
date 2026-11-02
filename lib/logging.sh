@@ -239,6 +239,8 @@ hm_run() {
 
   local cmd_pid fd start_ts elapsed last_line spin_idx=0
   local -a frames=('|' '/' '-' '\\')
+  local _errexit_was_on=0
+  [[ $- == *e* ]] && _errexit_was_on=1
   start_ts="$(date +%s)"
 
   set +e
@@ -266,7 +268,10 @@ hm_run() {
   fi
   wait "${cmd_pid}"
   rc=$?
-  set -e
+  # nie włączaj set -e, jeśli wywołujący miał set +e (np. update-php po rc≠0 z apt)
+  if [[ "${_errexit_was_on}" -eq 1 ]]; then
+    set -e
+  fi
 
   # pokaż użytkownikowi
   if [[ -s "${tmp_out}" ]]; then
@@ -311,13 +316,17 @@ hm_run() {
 hm_run_quiet() {
   local -a cmd=("$@")
   local tmp_out tmp_err rc=0
+  local _errexit_was_on=0
+  [[ $- == *e* ]] && _errexit_was_on=1
   tmp_out="$(mktemp /tmp/hmtools-run.XXXXXX.out)"
   tmp_err="$(mktemp /tmp/hmtools-run.XXXXXX.err)"
   hm_file_log INFO "RUN_QUIET: ${cmd[*]}"
   set +e
   "${cmd[@]}" >"${tmp_out}" 2>"${tmp_err}"
   rc=$?
-  set -e
+  if [[ "${_errexit_was_on}" -eq 1 ]]; then
+    set -e
+  fi
   [[ -s "${tmp_out}" ]] && hm_log_stream_to_file RUN_OUT INFO < "${tmp_out}"
   [[ -s "${tmp_err}" ]] && hm_log_stream_to_file RUN_ERR WARN < "${tmp_err}"
   hm_file_log INFO "RUN_END: rc=${rc} cmd=${cmd[*]}"

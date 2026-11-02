@@ -245,7 +245,7 @@ hm_list_available_php() {
   local mode="repo"
   [[ "${1:-}" == "--phpnet" ]] && mode="phpnet"
 
-  local p ver branch latest status
+  local p ver branch latest status _sfx
   local root="${OLS_ROOT:-/usr/local/lsws}"
   local -a rows=() branches=()
   local oldnull
@@ -265,10 +265,16 @@ hm_list_available_php() {
         ver="?"
       fi
       branch="$(hm_php_branch_of "${ver}")"
+      # przy „?” bierz gałąź z nazwy katalogu lsphpNN (żeby „Nowsze” nie dublowało tej samej)
+      if [[ -z "${branch}" || ! "${branch}" =~ ^[0-9]+\.[0-9]+$ ]]; then
+        _sfx="$(basename "${p}")"
+        _sfx="${_sfx#lsphp}"
+        branch="$(hm_php_suffix_to_branch "${_sfx}" 2>/dev/null || true)"
+      fi
       [[ -n "${branch}" && "${branch}" =~ ^[0-9]+\.[0-9]+$ ]] || branch="-"
       rows+=("${p}"$'\t'"${ver}"$'\t'"${branch}")
-      # "?" / nieparsowalna wersja nie trafia do „Nowsze” ani prefetch php.net
-      [[ "${branch}" != "-" && "${ver}" != "?" ]] && branches+=("${branch}")
+      # gałąź z lsphpNN liczy się jako zainstalowana (nawet przy ver=?); prefetch php.net tylko przy znanej ver
+      [[ "${branch}" != "-" ]] && branches+=("${branch}")
     fi
   done
 
@@ -300,18 +306,23 @@ hm_list_available_php() {
       IFS=$'\t' read -r path ver branch <<<"${row}"
       latest=""
       status="?"
-      if [[ -n "${branch}" && "${branch}" != "-" ]]; then
-        latest="$(hm_php_latest_remote "${branch}" 2>/dev/null || true)"
-      fi
-      if [[ -z "${latest}" ]]; then
+      if [[ "${ver}" == "?" ]]; then
         latest="-"
-        status="${C_DIM}brak danych php.net${C_RESET}"
-      elif [[ "${ver}" == "${latest}" ]]; then
-        status="${C_GREEN}aktualna${C_RESET}"
-      elif hm_version_is_newer "${ver}" "${latest}" 2>/dev/null; then
-        status="${C_YELLOW}dostępna nowsza${C_RESET}"
+        status="${C_DIM}?${C_RESET}"
       else
-        status="${C_GREEN}aktualna${C_RESET}"
+        if [[ -n "${branch}" && "${branch}" != "-" ]]; then
+          latest="$(hm_php_latest_remote "${branch}" 2>/dev/null || true)"
+        fi
+        if [[ -z "${latest}" ]]; then
+          latest="-"
+          status="${C_DIM}brak danych php.net${C_RESET}"
+        elif [[ "${ver}" == "${latest}" ]]; then
+          status="${C_GREEN}aktualna${C_RESET}"
+        elif hm_version_is_newer "${ver}" "${latest}" 2>/dev/null; then
+          status="${C_YELLOW}dostępna nowsza${C_RESET}"
+        else
+          status="${C_GREEN}aktualna${C_RESET}"
+        fi
       fi
       # ASCII "-" zamiast "—" — wielobajtowy em dash psuje printf %-Ns
       printf '  %-28s %-14s %-14s %b\n' \
@@ -361,7 +372,9 @@ hm_list_available_php() {
       fi
 
       status="${C_GREEN}aktualna${C_RESET}"
-      if [[ "${cand_clean}" == "-" || "${cand_pkg}" == "-" || "${cand_pkg}" == "(none)" ]]; then
+      if [[ "${ver}" == "?" ]]; then
+        status="${C_DIM}?${C_RESET}"
+      elif [[ "${cand_clean}" == "-" || "${cand_pkg}" == "-" || "${cand_pkg}" == "(none)" ]]; then
         status="${C_DIM}brak danych repo${C_RESET}"
         repo_col="-"
       elif [[ "${cand_clean}" != "-" && "${ver}" != "${cand_clean}" ]] && hm_version_is_newer "${ver}" "${cand_clean}" 2>/dev/null; then
@@ -394,8 +407,10 @@ hm_list_available_php() {
     pm_label="$(hm_pkg_label)"
     if [[ "${age_info}" == "nieznany" || "${age_info}" == "wiek indeksu: nieznany" ]]; then
       echo "  ${C_DIM}Źródło: repozytorium pakietów (${pm_label}, wiek indeksu: nieznany). Odśwież: php --refresh${C_RESET}"
+    elif [[ "${age_info}" == "przed chwilą" ]]; then
+      echo "  ${C_DIM}Źródło: repozytorium pakietów (${pm_label}, indeks: przed chwilą). Odśwież: php --refresh${C_RESET}"
     else
-      echo "  ${C_DIM}Źródło: repozytorium pakietów (${pm_label}, indeks sprzed ${age_info}). Odśwież: php --refresh${C_RESET}"
+      echo "  ${C_DIM}Źródło: repozytorium pakietów (${pm_label}, indeks z: ${age_info}). Odśwież: php --refresh${C_RESET}"
     fi
   fi
 

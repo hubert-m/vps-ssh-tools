@@ -535,6 +535,7 @@ Komendy w kontekście strony:
   perms [check|fix] Uprawnienia plików pod OLS / CyberPanel
   delete-site […]  Całkowite usunięcie tej strony (yes + nazwa domeny)
   archive   Archiwum Drive → weryfikacja → usunięcie z VPS
+  supervisor  Procesy Supervisor użytkownika strony (status/ctl/logs)
   help [cmd] Pomoc (lista lub help <polecenie>)
   exit      Wyjście z kontekstu strony
 EOF
@@ -542,12 +543,9 @@ EOF
 
 _hm_cmd_register_site info cmd_site_info
 _hm_cmd_register_site size cmd_site_size
-_hm_cmd_register_site dbs cmd_site_dbs
-_hm_cmd_register_site databases cmd_site_dbs
+_hm_cmd_register_site dbs cmd_site_dbs databases
 _hm_cmd_register_site ssl cmd_site_ssl
-_hm_cmd_register_site logs cmd_site_logs
-_hm_cmd_register_site log cmd_site_logs
+_hm_cmd_register_site logs cmd_site_logs log
 _hm_cmd_register_site clean cmd_site_clean
-_hm_cmd_register_site perms cmd_site_perms
-_hm_cmd_register_site perm cmd_site_perms
-# site backup / php / htaccess / proxy handled in dispatch (shared with global tools)
+_hm_cmd_register_site perms cmd_site_perms perm
+# site backup / php / htaccess / proxy / supervisor handled in dispatch (shared with global tools)

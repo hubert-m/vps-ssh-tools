@@ -4,7 +4,7 @@
 hm_help_global() {
   # Generowane z rejestru modułów (HM_CMD_ENTRY / ALIAS_MAP / HELP)
   echo "Komendy globalne:"
-  local name a aliases blurb
+  local name a aliases blurb label
   local -a names=()
   if [[ "${#HM_CMD_ENTRY[@]}" -gt 0 ]]; then
     if [[ "${HMTOOLS_RESTRICTED:-0}" -eq 1 ]]; then
@@ -27,9 +27,14 @@ hm_help_global() {
         [[ "${HM_CMD_ALIAS_MAP[${a}]}" == "${name}" && "${a}" != "${name}" ]] || continue
         aliases+="${aliases:+, }${a}"
       done
+      # pomiń „Użycie:” i wcięte linie składni — bierz pierwszy akapit opisu
       blurb="$(printf '%s\n' "${HM_CMD_HELP[${name}]:-}" | awk '
-        /^Użycie:/ { next }
-        NF {
+        /^Użycie:/ { skip=1; next }
+        skip && /^[[:space:]]/ { next }
+        skip && NF == 0 { skip=0; next }
+        skip { skip=0 }
+        NF == 0 { next }
+        {
           gsub(/^[[:space:]]+/, "")
           if (length($0) > 56) $0 = substr($0, 1, 53) "…"
           print
@@ -37,24 +42,38 @@ hm_help_global() {
         }
       ')"
       if [[ -n "${aliases}" ]]; then
-        printf '  %-22s %s\n' "${name} (${aliases})" "${blurb}"
+        label="${name} (${aliases})"
       else
-        printf '  %-22s %s\n' "${name}" "${blurb}"
+        label="${name}"
+      fi
+      if [[ ${#label} -gt 28 ]]; then
+        printf '  %s\n' "${label}"
+        printf '  %-28s %s\n' "" "${blurb}"
+      else
+        printf '  %-28s %s\n' "${label}" "${blurb}"
       fi
     done < <(printf '%s\n' "${names[@]}" | sort -u)
   fi
-  echo "  exit / quit            Wyjście z hmtools"
+  echo "  exit / quit                  Wyjście z hmtools"
   echo
-  echo "W kontekście strony (po 'use'):"
-  local -a site_cmds=()
-  local s
-  for s in "${!HM_CMD_SITE_ENTRY[@]}"; do
-    site_cmds+=("${s}")
-  done
-  site_cmds+=(php backup cron pm2 htaccess proxy perms renew-ssl delete-site archive supervisor exit)
-  echo "  $(printf '%s\n' "${site_cmds[@]}" | sort -u | paste -sd ', ' -)"
-  echo
-  echo "Szczegóły: help <polecenie>"
+  # w restricted komendy kontekstu i tak są zablokowane — nie mylić użytkownika
+  if [[ "${HMTOOLS_RESTRICTED:-0}" -ne 1 ]]; then
+    echo "W kontekście strony (po 'use'):"
+    local -a site_cmds=()
+    local s
+    if [[ "${#HM_CMD_SITE_PRIMARY[@]}" -gt 0 ]]; then
+      site_cmds+=("${HM_CMD_SITE_PRIMARY[@]}")
+    else
+      for s in "${!HM_CMD_SITE_ENTRY[@]}"; do
+        site_cmds+=("${s}")
+      done
+    fi
+    # narzędzia globalne dostępne też w kontekście (dispatch), bez aliasów SITE_ENTRY
+    site_cmds+=(php backup cron pm2 htaccess proxy renew-ssl delete-site archive supervisor help exit)
+    # paste -sd ', ' traktuje spację i przecinek jako OSOBNE separatory — użyj samego przecinka
+    echo "  $(printf '%s\n' "${site_cmds[@]}" | sort -u | paste -sd, - | sed 's/,/, /g')"
+    echo
+  fi
 }
 
 cmd_uninstall_hmtools() {

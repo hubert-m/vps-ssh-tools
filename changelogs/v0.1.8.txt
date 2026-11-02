@@ -31,4 +31,6 @@
 - Fix: `pm2 list` — puste pola TSV (script/porthint) jako `-` w jq; bez przesunięcia RST→PORT; ols/db hardening; test-tsv-fields
 - Fix: `backup full` — błędy plików/konfig → status `partial` + rc≠0 (nie „zakończony”); restore OLS mapy per-listener (`# listener:`) bez dublowania
 - Fix: `backup restore` — po ols-vhost-dir nie dokłada zbędnego `vhconf.conf` (używa istniejącego `vhost.conf` / `hm_vhost_conf_path`; standalone → `vhost.conf`)
+- Fix: polish php — gramatyka wieku indeksu (`indeks z:` / `indeks:`); RPM candidate strip `.arch` z `dnf check-update`; `hm_run` przywraca stan `set -e`; `update-php` przeżywa refresh rc≠0; gałąź z `lsphpNN` przy ver=`?`
+- Fix: `help` — lista kontekstu z przecinkami+spacjami (nie sklejona); tylko kanoniczne SITE (bez aliasów databases/log/perm); bez sekcji kontekstu w restricted; jedna stopka; `help` w kontekście ma `supervisor`; blurb z opisu nie z linii użycia
 
