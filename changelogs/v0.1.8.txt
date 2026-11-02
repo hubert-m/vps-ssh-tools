@@ -28,4 +28,5 @@
 - Fix: TSV `hm_resolve_site_paths` / `hm_dbs_for_site` — puste pola jako `-` (`hm_tsv_field`), bez zlewania kolumn przy `IFS=tab`; test `scripts/test-tsv-fields.sh`
 - Fix: drobne UX/walidacja (retest v0.1.8) — chrome FORCE etykieta + timeout version; supervisor/cache/delete/restore cancel → rc≠0; detect FORCE warn 1×; IP (0.0.0.0, IPv6); port 99999; PHP `?` poza Nowsze; pkg OS_FAMILY przed apt-get; php.net negative-cache 10 min; cache flush bez podwójnego liczenia/„Uwaga”; webs `--keep-db` banner; restore bez pustego `/home` i bez duplikatu vhconf; list bez pustej tabeli; snapshot bez files* = BAD; mysql help `${TMP_DIR}/hmtools-db`; update-check tylko semver
 - Fix: `security ban` / ufw — `ufw insert 1 deny from IP` (DENY przed ALLOW 22/80/443); komunikat gdy f2b OK a firewall nie
+- Fix: `pm2 list` — puste pola TSV (script/porthint) jako `-` w jq; bez przesunięcia RST→PORT; ols/db hardening; test-tsv-fields
 

@@ -154,10 +154,11 @@ hm_ols_stats_print() {
     echo "  (brak danych per-vhost)"
   else
     local sorted
-    sorted="$(for k in "${!vh_rps[@]}"; do printf '%s\t%s\t%s\n' "${vh_rps[$k]}" "${vh_proc[$k]}" "$k"; done | sort -t$'\t' -k1,1nr)"
+    # liczby zawsze niepuste (unikaj zlewania kolumn przy IFS=tab)
+    sorted="$(for k in "${!vh_rps[@]}"; do printf '%s\t%s\t%s\n' "${vh_rps[$k]:-0}" "${vh_proc[$k]:-0}" "${k:--}"; done | sort -t$'\t' -k1,1nr)"
     printf '  %-40s %10s %8s\n' "VHOST" "REQ/s" "PROC"
     while IFS=$'\t' read -r rps proc vh; do
-      [[ -n "${vh}" ]] || continue
+      [[ -n "${vh}" && "${vh}" != "-" ]] || continue
       printf '  %-40s %10s %8s\n' "${vh}" "${rps}" "${proc}"
     done <<< "${sorted}"
   fi
@@ -170,10 +171,11 @@ hm_ols_stats_print() {
     printf '  %-48s %6s %6s %6s %6s %8s\n' "APP" "WAITQ" "INUSE" "IDLE" "POOL" "REQ/s"
     sorted="$(for k in "${!ea_wait[@]}"; do
       printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "${ea_wait[$k]}" "${ea_inuse[$k]}" "${ea_idle[$k]}" "${ea_pool[$k]}" "${ea_rps[$k]}" "${ea_label[$k]}" "$k"
+        "${ea_wait[$k]:-0}" "${ea_inuse[$k]:-0}" "${ea_idle[$k]:-0}" "${ea_pool[$k]:-0}" \
+        "${ea_rps[$k]:-0}" "${ea_label[$k]:--}" "${k:--}"
     done | sort -t$'\t' -k1,1nr)"
     while IFS=$'\t' read -r wq inu idl pool rps lab _; do
-      [[ -n "${lab}" ]] || continue
+      [[ -n "${lab}" && "${lab}" != "-" ]] || continue
       if [[ "${wq:-0}" -gt 0 ]]; then
         printf '  %s%-48s%s %s%6s%s %6s %6s %6s %8s\n' \
           "${C_RED}" "${lab}" "${C_RESET}" "${C_RED}" "${wq}" "${C_RESET}" "${inu}" "${idl}" "${pool}" "${rps}"

@@ -203,14 +203,19 @@ hm_dbs_for_site() {
     local name user host
     while IFS=$'\t' read -r name user host; do
       [[ -n "${name}" ]] || continue
-      _hm_dbs_emit "${name}" "${user:-}" "confirmed"
+      # host z SQL zawsze localhost/-; user już '-' przy pustym dbUser
+      [[ -n "${user}" ]] || user="-"
+      [[ -n "${host}" ]] || host="-"
+      _hm_dbs_emit "${name}" "${user}" "confirmed"
     done < <(hm_cyberpanel_dbs_for_domain "${domain}")
 
     # dopisz bazy po externalApp / unix user strony
     if [[ -n "${site_user}" ]]; then
       while IFS=$'\t' read -r name user host; do
         [[ -n "${name}" ]] || continue
-        _hm_dbs_emit "${name}" "${user:-}" "user-match"
+        [[ -n "${user}" ]] || user="-"
+        [[ -n "${host}" ]] || host="-"
+        _hm_dbs_emit "${name}" "${user}" "user-match"
       done < <(hm_cyberpanel_dbs_for_user "${site_user}")
     fi
   fi

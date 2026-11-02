@@ -78,6 +78,55 @@ assert_eq "db-safe-user" "${user}" "-"
 assert_eq "db-safe-size" "${size}" "2048"
 assert_eq "db-safe-origin" "${origin}" "detected"
 
+# 7) pm2: puste script+porthint zlewają kolumny (RST → PORT)
+# IFS whitespace: a\t\t\tb → a, b (puste znikają całkiem) → porthint=RST
+pm_bad=$'api\t0\tonline\t/home/x\t\t\t0.0\t1'
+IFS=$'\t' read -r name pid status cwd script porthint mem restarts <<<"${pm_bad}"
+assert_eq "pm2-collapse-porthint-is-rst" "${porthint}" "1"
+assert_eq "pm2-collapse-script-is-mem" "${script}" "0.0"
+pm_ok=$'api\t0\tonline\t/home/x\t-\t-\t0.0\t1'
+IFS=$'\t' read -r name pid status cwd script porthint mem restarts <<<"${pm_ok}"
+assert_eq "pm2-safe-script" "${script}" "-"
+assert_eq "pm2-safe-porthint" "${porthint}" "-"
+assert_eq "pm2-safe-mem" "${mem}" "0.0"
+assert_eq "pm2-safe-rst" "${restarts}" "1"
+
+# 8) pm2 jq → TSV z sentinelem (gdy jq dostępne)
+if command -v jq >/dev/null 2>&1; then
+  pm_json='[{"name":"api","pid":0,"pm2_env":{"status":"online","pm_cwd":"/home/example.com/app","restart_time":1},"monit":{"memory":1000}}]'
+  pm_tsv="$(printf '%s' "${pm_json}" | jq -r '
+    def dash: if . == null or . == "" then "-" else . end;
+    .[] |
+    [
+      ((.name // "?") | dash),
+      (.pid // 0 | tostring),
+      ((.pm2_env.status // "?") | dash),
+      ((.pm2_env.pm_cwd // .pm2_env.cwd // "") | dash),
+      ((.pm2_env.pm_exec_path // .pm2_env.script // "") | dash),
+      (
+        if ((.pm2_env.env.PORT // .pm2_env.PORT // null) != null) then
+          (.pm2_env.env.PORT // .pm2_env.PORT | tostring)
+        else
+          ((.pm2_env.args // [])
+            | if type=="array" then map(tostring)|join(" ") else tostring end
+            | dash)
+        end
+      ),
+      (((.monit.memory // 0) / 1048576 * 10 | floor) / 10 | tostring),
+      ((.pm2_env.restart_time // 0) | tostring)
+    ] | @tsv
+  ')"
+  IFS=$'\t' read -r name pid status cwd script porthint mem restarts <<<"${pm_tsv}"
+  assert_eq "pm2-jq-name" "${name}" "api"
+  assert_eq "pm2-jq-script-dash" "${script}" "-"
+  assert_eq "pm2-jq-porthint-dash" "${porthint}" "-"
+  assert_eq "pm2-jq-rst" "${restarts}" "1"
+  # mem ≈ 0.0 (1000 B)
+  assert_eq "pm2-jq-mem" "${mem}" "0"
+else
+  echo "SKIP pm2-jq (brak jq)"
+fi
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"
   exit 1

@@ -280,20 +280,23 @@ hm_pm2_parse_apps() {
   [[ -n "${json}" && "${json}" != "[]" ]] || return 0
 
   if hm_have_cmd jq; then
+    # Puste pola → "-" — IFS=$'\t' zlewa sąsiadujące tabulatory (script/porthint puste → RST w PORT)
     echo "${json}" | jq -r '
+      def dash: if . == null or . == "" then "-" else . end;
       .[] |
       [
-        (.name // "?"),
+        ((.name // "?") | dash),
         (.pid // 0 | tostring),
-        (.pm2_env.status // "?"),
-        (.pm2_env.pm_cwd // .pm2_env.cwd // ""),
-        (.pm2_env.pm_exec_path // .pm2_env.script // ""),
+        ((.pm2_env.status // "?") | dash),
+        ((.pm2_env.pm_cwd // .pm2_env.cwd // "") | dash),
+        ((.pm2_env.pm_exec_path // .pm2_env.script // "") | dash),
         (
           if ((.pm2_env.env.PORT // .pm2_env.PORT // null) != null) then
             (.pm2_env.env.PORT // .pm2_env.PORT | tostring)
           else
             ((.pm2_env.args // [])
-              | if type=="array" then map(tostring)|join(" ") else tostring end)
+              | if type=="array" then map(tostring)|join(" ") else tostring end
+              | dash)
           end
         ),
         (((.monit.memory // 0) / 1048576 * 10 | floor) / 10 | tostring),
@@ -301,15 +304,18 @@ hm_pm2_parse_apps() {
       ] | @tsv
     ' 2>/dev/null | while IFS=$'\t' read -r name pid status cwd script porthint mem restarts; do
       local port=""
+      [[ "${cwd}" == "-" ]] && cwd=""
+      [[ "${script}" == "-" ]] && script=""
+      [[ "${porthint}" == "-" ]] && porthint=""
       # regex w zmiennych — unika błędów parsowania [= ] / [[:space:]] w =~
       local re_num='^[0-9]+$'
       local re_port_eq='PORT(=|:)([0-9]+)'
       local re_port_flag='(^|[[:space:]])(-p|--port)(=|[[:space:]])([0-9]+)'
-      if [[ "${porthint}" =~ $re_num ]]; then
+      if [[ -n "${porthint}" && "${porthint}" =~ $re_num ]]; then
         port="${porthint}"
-      elif [[ "${porthint}" =~ $re_port_eq ]]; then
+      elif [[ -n "${porthint}" && "${porthint}" =~ $re_port_eq ]]; then
         port="${BASH_REMATCH[2]}"
-      elif [[ "${porthint}" =~ $re_port_flag ]]; then
+      elif [[ -n "${porthint}" && "${porthint}" =~ $re_port_flag ]]; then
         port="${BASH_REMATCH[4]}"
       fi
       if [[ -z "${port}" && -n "${pid}" && "${pid}" != "0" ]]; then
