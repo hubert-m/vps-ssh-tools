@@ -1,2 +1,4 @@
 # hmtools v0.1.9
 
+- Fix: `hm_ols_remove_domain_from_conf` — usuwa też `# hmtools restore — <domena>` (bez kumulacji po archive→restore)
+

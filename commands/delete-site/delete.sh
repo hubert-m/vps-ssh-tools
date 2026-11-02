@@ -539,7 +539,8 @@ hm_ols_remove_domain_from_conf() {
   cp -a "${conf}" "${conf}.hmtools.bak" 2>/dev/null || true
   local tmp
   tmp="$(mktemp)"
-  # virtualHost / virtualhost / listener / map — case-insensitive (OLS WebAdmin / CyberPanel)
+  # virtualHost / virtualhost / map — case-insensitive; też osierocone
+  # „# hmtools restore — <domena>” (zostawały po archive/delete, kumulowały się)
   awk -v dom="${domain}" '
     BEGIN { skip=0; depth=0 }
     {
@@ -547,6 +548,11 @@ hm_ols_remove_domain_from_conf() {
       first=$1
       second=$2
       gsub(/\{/,"",second)
+    }
+    # komentarz markera restore: „# hmtools restore — <domena>” (dowolny separator po restore)
+    line ~ /^[[:space:]]*#/ && line ~ /hmtools[[:space:]]+restore/ {
+      n = split(line, parts, /[[:space:]]+/)
+      if (n >= 1 && parts[n] == dom) next
     }
     tolower(first)=="virtualhost" {
       if (second == dom) {

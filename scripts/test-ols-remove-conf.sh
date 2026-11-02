@@ -244,6 +244,60 @@ else
   echo "OK   legacy snippet: dedup → 1 map per listener"
 fi
 
+# --- osierocone „# hmtools restore — domena” usuwane z blokiem ---
+cat > "${conf}" <<'EOF'
+listener Default {
+  address *:80
+  map orphan.pl orphan.pl
+}
+# hmtools restore — orphan.pl
+virtualhost orphan.pl {
+  vhRoot /home/orphan.pl
+}
+# hmtools restore — keep.pl
+virtualhost keep.pl {
+  vhRoot /home/keep.pl
+}
+# hmtools restore — orphan.pl
+EOF
+hm_ols_remove_domain_from_conf "orphan.pl"
+if grep -Fq 'hmtools restore — orphan.pl' "${conf}"; then
+  echo "FAIL orphan restore comment still present"
+  cat "${conf}"
+  fail=1
+else
+  echo "OK   removed orphan # hmtools restore comments for orphan.pl"
+fi
+if ! grep -Fq 'hmtools restore — keep.pl' "${conf}"; then
+  echo "FAIL keep.pl restore comment lost"
+  fail=1
+else
+  echo "OK   kept restore comment for keep.pl"
+fi
+if grep -Eqi 'virtualhost[[:space:]]+orphan\.pl' "${conf}"; then
+  echo "FAIL orphan.pl virtualhost still present"
+  fail=1
+else
+  echo "OK   removed orphan.pl virtualhost with comments"
+fi
+# ponowny apply nie duplikuje komentarza
+cat > "${snip}" <<'EOF'
+virtualhost orphan.pl {
+  vhRoot /home/orphan.pl
+}
+map orphan.pl orphan.pl
+EOF
+hm_ols_apply_httpd_snippet "orphan.pl" "${snip}"
+hm_ols_apply_httpd_snippet "orphan.pl" "${snip}"
+cmt_count="$(grep -cF 'hmtools restore — orphan.pl' "${conf}" || true)"
+if [[ "${cmt_count}" -ne 1 ]]; then
+  echo "FAIL restore comment duplicated (count=${cmt_count}, want 1)"
+  cat "${conf}"
+  fail=1
+else
+  echo "OK   re-apply: pojedynczy komentarz restore (count=1)"
+fi
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"
   exit 1

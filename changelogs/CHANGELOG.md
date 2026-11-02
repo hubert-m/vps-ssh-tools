@@ -16,6 +16,8 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [v0.1.9]
 
+- Fix: `hm_ols_remove_domain_from_conf` — usuwa też `# hmtools restore — <domena>` (bez kumulacji po archive→restore)
+
 ## [v0.1.8]
 
 - Refactor: `lib/pkg.sh` + `pkg/apt|rpm` — adapter menedżera pakietów; PHP/`update-php`/`ext` bez `case apt|dnf|yum`
