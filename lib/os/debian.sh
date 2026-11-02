@@ -43,19 +43,25 @@ _hm_os_do_firewall_ban() {
   local ip="${1:-}"
   [[ -n "${ip}" ]] || return 1
   if hm_have_cmd ufw; then
-    # Już zbanowane → OK (idempotent)
-    if _hm_os_ufw_status_has_ip "${ip}"; then
+    # Już DENY/REJECT → OK (idempotent). ALLOW from IP ≠ ban (nie mylić).
+    if _hm_os_ufw_has_deny_from "${ip}"; then
       return 0
     fi
-    # ufw = first match: DENY musi być PRZED ALLOW 22/80/443 (deny na końcu = martwy ban)
-    # insert 1 działa dla v4 i v6 (osobne listy numerowane w „ufw status numbered”)
-    if ufw insert 1 deny from "${ip}" >/dev/null 2>&1; then
-      return 0
-    fi
-    # starsze ufw bez insert / błąd — spróbuj deny (z ostrzeżeniem o kolejności)
-    hm_warn "ufw insert 1 nieudane dla ${ip} — fallback „ufw deny” (reguła może wylądować za ALLOW)."
-    if ufw deny from "${ip}"; then
-      return 0
+    # ufw = first match: DENY musi być PRZED ALLOW 22/80/443.
+    # prepend działa dla v4 i v6 (insert 1 tylko dla v4 — numery v6 kontynuują po v4).
+    if ufw prepend deny from "${ip}" >/dev/null 2>&1; then
+      if _hm_os_ufw_has_deny_from "${ip}"; then
+        return 0
+      fi
+      hm_warn "ufw prepend: brak DENY dla ${ip} w statusie — traktuję jako nieudane."
+    elif ufw insert 1 deny from "${ip}" >/dev/null 2>&1; then
+      # starsze ufw bez prepend — insert 1 OK dla IPv4
+      if _hm_os_ufw_has_deny_from "${ip}"; then
+        return 0
+      fi
+      hm_warn "ufw insert 1: brak DENY dla ${ip} w statusie — traktuję jako nieudane."
+    else
+      hm_warn "ufw prepend/insert nieudane dla ${ip} — pomijam append „ufw deny” (martwy ban za ALLOW)."
     fi
   fi
   if [[ "${ip}" == *:* ]] && hm_have_cmd ip6tables; then
@@ -67,11 +73,12 @@ _hm_os_do_firewall_ban() {
   return 1
 }
 
-# Exact token match for IP in ufw status (nie substring 1.2.3.4 ⊂ 1.2.3.45)
-_hm_os_ufw_status_has_ip() {
+# Exact token: reguła DENY/REJECT z tym IP (nie ALLOW from IP, nie substring 1.2.3.4 ⊂ 1.2.3.45)
+_hm_os_ufw_has_deny_from() {
   local ip="${1:-}"
+  [[ -n "${ip}" ]] || return 1
   ufw status 2>/dev/null | awk -v ip="${ip}" '
-    {
+    $0 ~ /(^|[[:space:]])(DENY|REJECT)([[:space:]]|$)/ {
       for (i = 1; i <= NF; i++) {
         if ($i == ip) { found = 1; exit }
       }
@@ -80,12 +87,17 @@ _hm_os_ufw_status_has_ip() {
   '
 }
 
+# Alias (stare wywołania) — tylko DENY/REJECT
+_hm_os_ufw_status_has_ip() {
+  _hm_os_ufw_has_deny_from "$@"
+}
+
 _hm_os_do_firewall_unban() {
   local ip="${1:-}"
   [[ -n "${ip}" ]] || return 1
   local ok=0
   if hm_have_cmd ufw; then
-    if _hm_os_ufw_status_has_ip "${ip}"; then
+    if _hm_os_ufw_has_deny_from "${ip}"; then
       if ufw delete deny from "${ip}"; then
         ok=1
       else

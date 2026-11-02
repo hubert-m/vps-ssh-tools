@@ -4,4 +4,5 @@
 - Fix: polszczyzna „1 dzień temu” (wiek indeksu apt/rpm; cert SSL) zamiast „1 dni temu”
 - Feat: `access` — zarządzanie SSH (passwd/shell/keys) i FTP (CyberPanel/pure-pw) per strona (`HM_SITE_USER`)
 - Fix: `backup site` / `backup full` — błąd mysqldump → `status: partial`, NIEKOMPLETNY, rc≠0 (nie cichy sukces)
+- Fix: `security ban` / ufw — `prepend deny` (v4+v6), DETEKCJA tylko DENY/REJECT; rc≠0 przy całkowitej porażce
 

@@ -324,11 +324,15 @@ cmd_security_ban() {
       hm_warn "Fail2Ban OK, ale firewall (ufw/firewalld/iptables) nie zablokował ${ip} — sprawdź reguły (DENY musi być przed ALLOW)."
     fi
   fi
-  [[ "${ok}" -eq 1 ]] || hm_err "Nie udało się zablokować (brak fail2ban / firewall OS)."
+  if [[ "${ok}" -eq 0 ]]; then
+    hm_err "Nie udało się zablokować (brak fail2ban / firewall OS)."
+    return 1
+  fi
   # częściowy sukces (tylko f2b) — rc≠0, żeby nie wyglądało na pełny ban
   if [[ "${f2b_ok}" -eq 1 && "${fw_ok}" -eq 0 ]]; then
     return 1
   fi
+  return 0
 }
 
 cmd_security_ssh() {
