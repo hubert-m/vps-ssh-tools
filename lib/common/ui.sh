@@ -204,6 +204,17 @@ hm_have_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+# Uruchom z limitem czasu (sekundy). Bez `timeout` w PATH — wywołanie bezpośrednie.
+hm_run_timeout() {
+  local secs="${1:-3}"
+  shift || true
+  if hm_have_cmd timeout; then
+    timeout "${secs}s" "$@"
+  else
+    "$@"
+  fi
+}
+
 hm_mysql_cli() {
   if hm_have_cmd mariadb; then
     echo mariadb

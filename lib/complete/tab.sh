@@ -143,9 +143,9 @@ hm_tab_complete() {
           while IFS= read -r m; do
             [[ -n "${m}" ]] && matches+=("${m}")
           done < <(hm_complete_filter_sites "${partial}")
-          for m in full; do
-            [[ "${prefix}" == *list* && "${m}" == "${partial}"* ]] && matches+=("${m}")
-          done
+          if [[ "${prefix}" == *list* && "full" == "${partial}"* ]]; then
+            matches+=("full")
+          fi
         else
           for m in setup config path root show status full site archive list restore prune schedule test help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
@@ -299,6 +299,16 @@ hm_tab_complete() {
           fi
         done
         eval "${oldnull}" 2>/dev/null || shopt -u nullglob
+        ;;
+      chrome|chromium|headless)
+        for m in info status which version test help; do
+          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+        done
+        ;;
+      supervisor)
+        for m in status all info start stop restart reread update logs ctl help; do
+          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+        done
         ;;
     esac
   fi

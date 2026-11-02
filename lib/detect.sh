@@ -322,6 +322,17 @@ hm_detect_supervisor() {
   fi
 }
 
+# Lenive pobranie wersji Chrome (timeout 3s) — nie wołać przy każdym starcie hmtools.
+hm_chrome_fetch_version() {
+  local bin="${1:-${CHROME_BIN:-}}"
+  CHROME_VERSION=""
+  [[ -n "${bin}" && -x "${bin}" ]] || return 1
+  local ver
+  ver="$(hm_run_timeout 3 "${bin}" --version 2>/dev/null | head -1 | tr -s ' ' | sed 's/[[:space:]]*$//' || true)"
+  CHROME_VERSION="${ver}"
+  [[ -n "${ver}" ]]
+}
+
 hm_detect_chrome() {
   CHROME="no"
   CHROME_BIN=""
@@ -335,7 +346,7 @@ hm_detect_chrome() {
       CHROME="yes"
       CHROME_BIN="${bin}"
       CHROME_SOURCE="bin:${name}"
-      CHROME_VERSION="$("${bin}" --version 2>/dev/null | head -1 | tr -s ' ' || true)"
+      # wersja dopiero w detect / chrome / health (hm_chrome_fetch_version)
       return 0
     fi
   done
@@ -345,13 +356,13 @@ hm_detect_chrome() {
     /usr/bin/google-chrome \
     /usr/bin/chromium \
     /usr/bin/chromium-browser \
+    /snap/bin/chromium \
     /opt/google/chrome/chrome
   do
     if [[ -x "${bin}" ]]; then
       CHROME="yes"
       CHROME_BIN="${bin}"
       CHROME_SOURCE="path:${bin}"
-      CHROME_VERSION="$("${bin}" --version 2>/dev/null | head -1 | tr -s ' ' || true)"
       return 0
     fi
   done
@@ -391,8 +402,9 @@ hm_detect_apply_overrides() {
       CHROME="yes"
       CHROME_BIN="${FORCE_CHROME_BIN}"
       CHROME_SOURCE="override:FORCE_CHROME_BIN"
-      CHROME_VERSION="$("${CHROME_BIN}" --version 2>/dev/null | head -1 | tr -s ' ' || true)"
-    else
+      CHROME_VERSION=""
+    elif [[ "${_HM_FORCE_CHROME_WARNED:-0}" != "1" ]]; then
+      _HM_FORCE_CHROME_WARNED=1
       hm_warn "FORCE_CHROME_BIN nie jest wykonywalne: ${FORCE_CHROME_BIN}"
     fi
   fi
@@ -583,7 +595,12 @@ hm_detect_print() {
   [[ -n "${SUPERVISOR_CONF}" ]] && echo "  SUPERV_CONF : ${SUPERVISOR_CONF}"
   echo "  CHROME      : ${CHROME}${CHROME_SOURCE:+  [${CHROME_SOURCE}]}"
   [[ -n "${CHROME_BIN}" ]] && echo "  CHROME_BIN  : ${CHROME_BIN}"
-  [[ -n "${CHROME_VERSION}" ]] && echo "  CHROME_VER  : ${CHROME_VERSION}"
+  if [[ "${CHROME}" == "yes" && -n "${CHROME_BIN}" ]]; then
+    if [[ -z "${CHROME_VERSION}" ]]; then
+      hm_chrome_fetch_version "${CHROME_BIN}" || true
+    fi
+    [[ -n "${CHROME_VERSION}" ]] && echo "  CHROME_VER  : ${CHROME_VERSION}"
+  fi
   echo
   if [[ "${HMTOOLS_RESTRICTED}" -eq 1 ]]; then
     hm_warn "  System nieobsługiwany — dozwolone: uninstall-hmtools, help, version, detect, exit"

@@ -29,6 +29,8 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Refactor: `help <polecenie>` — treści w `commands/*/main.sh` (`_hm_cmd_help` / `HM_CMD_HELP`); brak wpisu → „Brak podpowiedzi dla tego polecenia”
 - Feat: detect — Supervisor + Chrome/Chromium (headless); `FORCE_SUPERVISOR` / `FORCE_CHROME_BIN`
 - Feat: komendy `supervisor` (status/ctl/logs) i `chrome` (info/which/version/test headless); skrót w `health`
+- Fix: `hm_detect_chrome` — bez `--version` na starcie (timeout 3s / leniwie); `/snap/bin/chromium`; trim wersji; 1× warn FORCE
+- Fix: `help` / Tab z rejestru `HM_CMD_*` (w tym chrome/supervisor + podkomendy Tab)
 
 ## [v0.1.7]
 

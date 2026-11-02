@@ -74,20 +74,38 @@ hm_complete_filter_sites() {
 
 hm_complete_commands() {
   local partial="$1"
-  local cmds=(
-    webs sites list use enter cd delete-site archive-site
-    backup disk df ols lsws ssl renew-ssl ssl-renew mysql dbs db cron crons pm2 node apps php
-    update-php php-update
-    health status security sec applog selflog hmlog detect env
-    update-hmtools version ver uninstall-hmtools
-    help h exit quit q
-  )
+  local -a cmds=()
+  local c k
+  # Z rejestru modułów (nazwy + aliasy); fallback gdy _load jeszcze nie
+  if [[ "${#HM_CMD_ALIAS_MAP[@]}" -gt 0 ]]; then
+    for k in "${!HM_CMD_ALIAS_MAP[@]}"; do
+      cmds+=("${k}")
+    done
+  else
+    cmds=(
+      webs sites list use enter cd delete-site archive-site
+      backup disk df ols lsws ssl renew-ssl ssl-renew mysql dbs db cron crons pm2 node apps php
+      update-php php-update chrome chromium headless supervisor
+      health status security sec applog selflog hmlog detect env
+      update-hmtools version ver uninstall-hmtools
+      help h
+    )
+  fi
+  cmds+=(exit quit q)
   # w kontekście strony — komendy lokalne (info/size/…)
   if [[ -n "${HM_SITE_DOMAIN:-}" ]]; then
-    cmds+=(info size logs clean htaccess proxy perms back dbs renew-ssl delete-site archive)
+    if [[ "${#HM_CMD_SITE_ENTRY[@]}" -gt 0 ]]; then
+      for k in "${!HM_CMD_SITE_ENTRY[@]}"; do
+        cmds+=("${k}")
+      done
+    fi
+    cmds+=(info size logs clean htaccess proxy perms back dbs renew-ssl delete-site archive supervisor)
   fi
-  local c
+  # unikalne + filtr partial
+  local seen="|"
   for c in "${cmds[@]}"; do
+    [[ "${seen}" == *"|${c}|"* ]] && continue
+    seen+="${c}|"
     if [[ "${c}" == "${partial}"* ]]; then
       printf '%s\n' "${c}"
     fi

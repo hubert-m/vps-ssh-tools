@@ -2,41 +2,59 @@
 # Common: help global, uninstall, applog, version/changelog
 
 hm_help_global() {
-  cat <<'EOF'
-Komendy globalne:
-  webs [--quick]     Lista usług webowych
-  webs delete <d>    Całkowite usunięcie serwisu (delete-site)
-  webs archive <d>   Archiwum Drive → verify → usunięcie z VPS
-  use <n|domena>     Wejście w kontekst strony (Tab = podpowiedź domen)
-  delete-site <d>    Alias: webs delete
-  archive-site <d>   Alias: webs archive
-  backup setup       Konfiguracja rclone / Google Drive
-  backup config      Ustaw katalog root backupów na Drive
-  backup full|site   Kopia → Drive; list / restore / prune / schedule
-  applog [N]         Ostatnie N linii logu hmtools (domyślnie 50)
-  disk               Zużycie dysku
-  ols […]            OLS: status/reload/stats/htaccess/cache/proxy/admin
-  ssl                Certyfikaty SSL stron (status / dni)
-  renew-ssl [domena] Odnów Let's Encrypt (z potwierdzeniem)
-  mysql / dbs        Bazy danych (globalnie)
-  cron [list|edit…]  Crony systemowe / użytkowników / strony
-  pm2|node|apps      Procesy PM2/Node (porty, status, proxy OLS)
-  php                LSPHP: lista / set / ext / ini / restart / ps
-  update-php <ver>   Aktualizacja pakietów LSPHP (np. update-php 8.4)
-  health             Szybki przegląd zdrowia serwera
-  security […]       Audyt: porty, SSH, Fail2Ban, skan docroot
-  detect             Pokaż wykryty panel / webserver
-  help [polecenie]   Lista komend lub pomoc do konkretnej (np. help use)
-  version            Wersja + changelog zainstalowanej wersji
-  update-hmtools     Aktualizacja z GitHuba (+ co nowego)
-  uninstall-hmtools  Usuń hmtools z serwera (--yes bez pytania)
-  exit / quit        Wyjście z hmtools
-
-W kontekście strony (po 'use'):
-  info, size, dbs, ssl, renew-ssl, php, logs, cron, pm2, backup, clean, htaccess, proxy, perms, exit
-
-Szczegóły: help <polecenie>
-EOF
+  # Generowane z rejestru modułów (HM_CMD_ENTRY / ALIAS_MAP / HELP)
+  echo "Komendy globalne:"
+  local name a aliases blurb
+  local -a names=()
+  if [[ "${#HM_CMD_ENTRY[@]}" -gt 0 ]]; then
+    if [[ "${HMTOOLS_RESTRICTED:-0}" -eq 1 ]]; then
+      for name in "${!HM_CMD_ENTRY[@]}"; do
+        [[ "${HM_CMD_RESTRICTED[${name}]:-0}" == "1" ]] && names+=("${name}")
+      done
+    else
+      for name in "${!HM_CMD_ENTRY[@]}"; do
+        names+=("${name}")
+      done
+    fi
+  fi
+  if [[ "${#names[@]}" -eq 0 ]]; then
+    echo "  (brak zarejestrowanych komend)"
+  else
+    while IFS= read -r name; do
+      [[ -n "${name}" ]] || continue
+      aliases=""
+      for a in "${!HM_CMD_ALIAS_MAP[@]}"; do
+        [[ "${HM_CMD_ALIAS_MAP[${a}]}" == "${name}" && "${a}" != "${name}" ]] || continue
+        aliases+="${aliases:+, }${a}"
+      done
+      blurb="$(printf '%s\n' "${HM_CMD_HELP[${name}]:-}" | awk '
+        /^Użycie:/ { next }
+        NF {
+          gsub(/^[[:space:]]+/, "")
+          if (length($0) > 56) $0 = substr($0, 1, 53) "…"
+          print
+          exit
+        }
+      ')"
+      if [[ -n "${aliases}" ]]; then
+        printf '  %-22s %s\n' "${name} (${aliases})" "${blurb}"
+      else
+        printf '  %-22s %s\n' "${name}" "${blurb}"
+      fi
+    done < <(printf '%s\n' "${names[@]}" | sort -u)
+  fi
+  echo "  exit / quit            Wyjście z hmtools"
+  echo
+  echo "W kontekście strony (po 'use'):"
+  local -a site_cmds=()
+  local s
+  for s in "${!HM_CMD_SITE_ENTRY[@]}"; do
+    site_cmds+=("${s}")
+  done
+  site_cmds+=(php backup cron pm2 htaccess proxy renew-ssl delete-site archive supervisor exit)
+  echo "  $(printf '%s\n' "${site_cmds[@]}" | sort -u | paste -sd ', ' -)"
+  echo
+  echo "Szczegóły: help <polecenie>"
 }
 
 cmd_uninstall_hmtools() {

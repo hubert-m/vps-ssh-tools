@@ -14,15 +14,19 @@ EOF
 
 hm_chrome_require() {
   hm_detect_chrome 2>/dev/null || true
-  if [[ -n "${FORCE_CHROME_BIN:-}" && -x "${FORCE_CHROME_BIN}" ]]; then
-    CHROME="yes"
-    CHROME_BIN="${FORCE_CHROME_BIN}"
-    CHROME_SOURCE="${CHROME_SOURCE:-override:FORCE_CHROME_BIN}"
-    CHROME_VERSION="$("${CHROME_BIN}" --version 2>/dev/null | head -1 | tr -s ' ' || true)"
+  if [[ -n "${FORCE_CHROME_BIN:-}" ]]; then
+    if [[ -x "${FORCE_CHROME_BIN}" ]]; then
+      CHROME="yes"
+      CHROME_BIN="${FORCE_CHROME_BIN}"
+      CHROME_SOURCE="${CHROME_SOURCE:-override:FORCE_CHROME_BIN}"
+    elif [[ "${_HM_FORCE_CHROME_WARNED:-0}" != "1" ]]; then
+      _HM_FORCE_CHROME_WARNED=1
+      hm_warn "FORCE_CHROME_BIN nie jest wykonywalne: ${FORCE_CHROME_BIN}"
+    fi
   fi
   if [[ "${CHROME:-no}" != "yes" || -z "${CHROME_BIN:-}" || ! -x "${CHROME_BIN}" ]]; then
     hm_err "Brak Chrome/Chromium — nie wykryto binarki."
-    hm_info "Szukane: google-chrome-stable, google-chrome, chromium, chromium-browser, chrome"
+    hm_info "Szukane: google-chrome-stable, google-chrome, chromium, chromium-browser, chrome, /snap/bin/chromium"
     hm_info "Nadpisanie: FORCE_CHROME_BIN=/ścieżka w hmtools.conf   | detect"
     return 1
   fi
@@ -30,7 +34,11 @@ hm_chrome_require() {
 }
 
 cmd_chrome_info() {
-  hm_detect_all
+  # Nie wołaj hm_detect_all — wystarczy chrome (+ już znany stos ze startu)
+  hm_chrome_require || true
+  if [[ "${CHROME:-no}" == "yes" && -n "${CHROME_BIN:-}" && -z "${CHROME_VERSION:-}" ]]; then
+    hm_chrome_fetch_version "${CHROME_BIN}" || true
+  fi
   echo "${C_BOLD}Chrome / Chromium (headless)${C_RESET}"
   echo "  Detected : ${CHROME:-no}${CHROME_SOURCE:+  [${CHROME_SOURCE}]}"
   echo "  Binary   : ${CHROME_BIN:--}"
@@ -49,7 +57,7 @@ cmd_chrome_test() {
   hm_status_line "Uruchamianie --headless --dump-dom about:blank..."
   local out rc=0
   out="$(
-    timeout 15s "${CHROME_BIN}" \
+    hm_run_timeout 15 "${CHROME_BIN}" \
       --headless \
       --disable-gpu \
       --no-sandbox \
@@ -59,21 +67,6 @@ cmd_chrome_test() {
       2>/dev/null
   )" || rc=$?
   hm_status_clear
-  if [[ "${rc}" -ne 0 ]]; then
-    # bez timeout (busybox / brak)
-    if ! hm_have_cmd timeout; then
-      out="$(
-        "${CHROME_BIN}" \
-          --headless \
-          --disable-gpu \
-          --no-sandbox \
-          --disable-dev-shm-usage \
-          --dump-dom \
-          about:blank \
-          2>/dev/null
-      )" || rc=$?
-    fi
-  fi
   if [[ "${rc}" -eq 0 ]] && printf '%s' "${out}" | grep -qiE '<html|<!doctype'; then
     hm_ok "Headless OK (otrzymano DOM z about:blank)"
     return 0
@@ -100,7 +93,7 @@ cmd_chrome() {
       ;;
     version|ver|-v|--version)
       hm_chrome_require || return 1
-      "${CHROME_BIN}" --version
+      hm_run_timeout 3 "${CHROME_BIN}" --version
       ;;
     test|smoke|check)
       cmd_chrome_test

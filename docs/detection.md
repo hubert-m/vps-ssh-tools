@@ -11,7 +11,7 @@
 | **WWW** | OLS (`/usr/local/lsws`), Nginx (`/etc/nginx`), Apache (`/etc/apache2`\|`/etc/httpd`), potem proces/systemd | `WEBSERVER`, `WEBSERVER_SOURCE`; dodatkowe w `STACK_EXTRA` |
 | **DB** | socket MySQL + `mariadb`/`mysql` / unit systemd | `DB_ENGINE`, `MYSQL_SOCKET` |
 | **Supervisor** | `supervisorctl` / conf (`/etc/supervisor/…`) / unit `supervisord`\|`supervisor` | `SUPERVISOR`, `SUPERVISOR_CTL`, `SUPERVISOR_CONF`, `SUPERVISOR_SOURCE` |
-| **Chrome** | `google-chrome-stable` → `chromium` → … (+ `--version`) | `CHROME`, `CHROME_BIN`, `CHROME_VERSION`, `CHROME_SOURCE` |
+| **Chrome** | `google-chrome-stable` → … → `/snap/bin/chromium` (wersja **leniwie**, `timeout 3s`) | `CHROME`, `CHROME_BIN`, `CHROME_VERSION`, `CHROME_SOURCE` |
 
 cPanel / Plesk: preferowany sygnał to obecność narzędzi API/CLI (UAPI, `plesk`), nie samo zgadywanie po layoutcie plików.
 
