@@ -261,6 +261,7 @@ hm_detect_db() {
 }
 
 hm_detect_supervisor() {
+  # SUPERVISOR=yes tylko gdy jest usable supervisorctl (nie sam conf / unit).
   SUPERVISOR="no"
   SUPERVISOR_SOURCE=""
   SUPERVISOR_CTL=""
@@ -268,15 +269,8 @@ hm_detect_supervisor() {
 
   if hm_have_cmd supervisorctl; then
     SUPERVISOR_CTL="$(command -v supervisorctl)"
-    SUPERVISOR="yes"
-    SUPERVISOR_SOURCE="bin:supervisorctl"
   elif [[ -x /usr/bin/supervisorctl ]]; then
     SUPERVISOR_CTL="/usr/bin/supervisorctl"
-    SUPERVISOR="yes"
-    SUPERVISOR_SOURCE="bin:/usr/bin/supervisorctl"
-  elif hm_have_cmd supervisord; then
-    SUPERVISOR="yes"
-    SUPERVISOR_SOURCE="bin:supervisord"
   fi
 
   local conf
@@ -287,37 +281,37 @@ hm_detect_supervisor() {
   do
     if [[ -f "${conf}" ]]; then
       SUPERVISOR_CONF="${conf}"
-      if [[ "${SUPERVISOR}" != "yes" ]]; then
-        SUPERVISOR="yes"
-        SUPERVISOR_SOURCE="path:${conf}"
-      elif [[ -z "${SUPERVISOR_SOURCE}" ]]; then
-        SUPERVISOR_SOURCE="path:${conf}"
-      fi
       break
     fi
   done
 
+  local systemd_hit=""
   if hm_have_cmd systemctl; then
     local unit
     for unit in supervisord supervisor; do
       if systemctl is-active --quiet "${unit}" 2>/dev/null \
         || systemctl is-enabled --quiet "${unit}" 2>/dev/null; then
-        if [[ "${SUPERVISOR}" != "yes" ]]; then
-          SUPERVISOR="yes"
-        fi
-        if [[ -z "${SUPERVISOR_SOURCE}" || "${SUPERVISOR_SOURCE}" == path:* ]]; then
-          SUPERVISOR_SOURCE="systemd:${unit}"
-        fi
+        systemd_hit="${unit}"
         break
       fi
     done
   fi
 
-  if [[ "${SUPERVISOR}" == "yes" && -z "${SUPERVISOR_CTL}" ]]; then
-    if hm_have_cmd supervisorctl; then
-      SUPERVISOR_CTL="$(command -v supervisorctl)"
-    elif [[ -x /usr/bin/supervisorctl ]]; then
-      SUPERVISOR_CTL="/usr/bin/supervisorctl"
+  if [[ -n "${SUPERVISOR_CTL}" && -x "${SUPERVISOR_CTL}" ]]; then
+    SUPERVISOR="yes"
+    SUPERVISOR_SOURCE="bin:supervisorctl"
+    if [[ -n "${systemd_hit}" ]]; then
+      SUPERVISOR_SOURCE="systemd:${systemd_hit}+ctl"
+    elif [[ -n "${SUPERVISOR_CONF}" ]]; then
+      SUPERVISOR_SOURCE="bin:supervisorctl+conf"
+    fi
+  elif [[ -n "${SUPERVISOR_CONF}" || -n "${systemd_hit}" ]]; then
+    # conf/unit bez ctl — nie oznaczaj jako gotowe narzędzie
+    SUPERVISOR="no"
+    if [[ -n "${SUPERVISOR_CONF}" ]]; then
+      SUPERVISOR_SOURCE="conf-only:${SUPERVISOR_CONF}"
+    else
+      SUPERVISOR_SOURCE="systemd-only:${systemd_hit}"
     fi
   fi
 }
@@ -391,9 +385,21 @@ hm_detect_apply_overrides() {
   fi
   if [[ -n "${FORCE_SUPERVISOR:-}" ]]; then
     case "${FORCE_SUPERVISOR}" in
-      yes|no)
-        SUPERVISOR="${FORCE_SUPERVISOR}"
+      yes)
+        SUPERVISOR="yes"
         SUPERVISOR_SOURCE="override:FORCE_SUPERVISOR"
+        if [[ -z "${SUPERVISOR_CTL}" ]]; then
+          if hm_have_cmd supervisorctl; then
+            SUPERVISOR_CTL="$(command -v supervisorctl)"
+          elif [[ -x /usr/bin/supervisorctl ]]; then
+            SUPERVISOR_CTL="/usr/bin/supervisorctl"
+          fi
+        fi
+        ;;
+      no)
+        SUPERVISOR="no"
+        SUPERVISOR_SOURCE="override:FORCE_SUPERVISOR"
+        SUPERVISOR_CTL=""
         ;;
     esac
   fi
@@ -591,7 +597,9 @@ hm_detect_print() {
   echo "  CYBERPANEL  : ${CYBERPANEL_ROOT:--}"
   echo "  MYSQL_SOCK  : ${MYSQL_SOCKET:--}"
   echo "  SUPERVISOR  : ${SUPERVISOR}${SUPERVISOR_SOURCE:+  [${SUPERVISOR_SOURCE}]}"
-  [[ -n "${SUPERVISOR_CTL}" ]] && echo "  SUPERV_CTL  : ${SUPERVISOR_CTL}"
+  if [[ "${SUPERVISOR}" == "yes" && -n "${SUPERVISOR_CTL}" ]]; then
+    echo "  SUPERV_CTL  : ${SUPERVISOR_CTL}"
+  fi
   [[ -n "${SUPERVISOR_CONF}" ]] && echo "  SUPERV_CONF : ${SUPERVISOR_CONF}"
   echo "  CHROME      : ${CHROME}${CHROME_SOURCE:+  [${CHROME_SOURCE}]}"
   [[ -n "${CHROME_BIN}" ]] && echo "  CHROME_BIN  : ${CHROME_BIN}"
