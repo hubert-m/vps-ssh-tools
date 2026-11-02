@@ -101,6 +101,26 @@ hm_discover_sites() {
   done < <(hm_home_public_html_domains)
 }
 
+# Puste pole TSV → "-" — IFS=$'\t' zlewa sąsiadujące tabulatory (whitespace).
+hm_tsv_field() {
+  local v="${1-}"
+  if [[ -z "${v}" ]]; then
+    printf '-'
+  else
+    printf '%s' "${v}"
+  fi
+}
+
+# Po odczycie TSV: sentinel "-" → pusty string (ścieżki / user).
+hm_tsv_unfield() {
+  local v="${1-}"
+  if [[ "${v}" == "-" ]]; then
+    printf ''
+  else
+    printf '%s' "${v}"
+  fi
+}
+
 hm_resolve_site_paths() {
   local domain="$1"
   local root="" docroot="" logs="" vhost="" php="?" user="" status="active"
@@ -198,15 +218,17 @@ hm_resolve_site_paths() {
 
   # Normalizacja PHP (PHP 8.2 -> 8.2)
   php="$(echo "${php}" | sed -E 's/.*PHP[[:space:]]*//; s/lsphp//; s/^([0-9])([0-9])$/\1.\2/')"
+  [[ -n "${php}" ]] || php="?"
 
+  # user w rest: też "-" gdy pusty (spójne z display ${user:--})
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s' \
     "${domain}" \
-    "${root}" \
-    "${docroot}" \
-    "${logs}" \
-    "${vhost}" \
-    "${php:-?}" \
-    "${user}|${status}"
+    "$(hm_tsv_field "${root}")" \
+    "$(hm_tsv_field "${docroot}")" \
+    "$(hm_tsv_field "${logs}")" \
+    "$(hm_tsv_field "${vhost}")" \
+    "$(hm_tsv_field "${php}")" \
+    "$(hm_tsv_field "${user}")|${status}"
 }
 
 hm_set_site_context() {
@@ -214,8 +236,15 @@ hm_set_site_context() {
   local row root docroot logs vhost php rest user status
   row="$(hm_resolve_site_paths "${domain}")"
   IFS=$'\t' read -r domain root docroot logs vhost php rest <<<"${row}"
-  user="${rest%%|*}"
+  root="$(hm_tsv_unfield "${root}")"
+  docroot="$(hm_tsv_unfield "${docroot}")"
+  logs="$(hm_tsv_unfield "${logs}")"
+  vhost="$(hm_tsv_unfield "${vhost}")"
+  php="$(hm_tsv_unfield "${php}")"
+  [[ -n "${php}" ]] || php="?"
+  user="$(hm_tsv_unfield "${rest%%|*}")"
   status="${rest##*|}"
+  [[ -n "${status}" ]] || status="active"
 
   HM_SITE_DOMAIN="${domain}"
   HM_SITE_ROOT="${root}"

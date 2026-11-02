@@ -151,7 +151,9 @@ LIMIT 1;
     row="$(hm_resolve_site_paths "${d}" 2>/dev/null || true)"
     [[ -n "${row}" ]] || continue
     IFS=$'\t' read -r _ root doc _ _ _ rest <<<"${row}"
-    user="${rest%%|*}"
+    root="$(hm_tsv_unfield "${root}")"
+    doc="$(hm_tsv_unfield "${doc}")"
+    user="$(hm_tsv_unfield "${rest%%|*}")"
     while IFS=$'\t' read -r name _u _s origin; do
       [[ "${name}" == "${dbname}" ]] || continue
       case "${origin}" in
@@ -265,7 +267,12 @@ hm_site_collect_delete_inventory() {
   local row root docroot logs vhost php rest user status
   row="$(hm_resolve_site_paths "${domain}")"
   IFS=$'\t' read -r domain root docroot logs vhost php rest <<<"${row}"
-  user="${rest%%|*}"
+  root="$(hm_tsv_unfield "${root}")"
+  docroot="$(hm_tsv_unfield "${docroot}")"
+  logs="$(hm_tsv_unfield "${logs}")"
+  vhost="$(hm_tsv_unfield "${vhost}")"
+  php="$(hm_tsv_unfield "${php}")"
+  user="$(hm_tsv_unfield "${rest%%|*}")"
   status="${rest##*|}"
   HM_DEL_ROOT="$(realpath -m "${root}" 2>/dev/null || echo "${root}")"
   HM_DEL_DOCROOT="$(realpath -m "${docroot}" 2>/dev/null || echo "${docroot}")"
@@ -292,6 +299,8 @@ hm_site_collect_delete_inventory() {
     row="$(hm_resolve_site_paths "${other}" 2>/dev/null || true)"
     [[ -n "${row}" ]] || continue
     IFS=$'\t' read -r _ oroot odoc _ _ _ orest <<<"${row}"
+    oroot="$(hm_tsv_unfield "${oroot}")"
+    odoc="$(hm_tsv_unfield "${odoc}")"
     oroot="$(realpath -m "${oroot}" 2>/dev/null || echo "${oroot}")"
     odoc="$(realpath -m "${odoc}" 2>/dev/null || echo "${odoc}")"
     if [[ -n "${oroot}" && "${oroot}" != "${HM_DEL_ROOT}" && ( "${oroot}" == "${HM_DEL_ROOT}"/* || "${HM_DEL_ROOT}" == "${oroot}"/* ) ]]; then
@@ -299,7 +308,8 @@ hm_site_collect_delete_inventory() {
     elif [[ -n "${odoc}" && "${odoc}" == "${HM_DEL_ROOT}"/* ]]; then
       HM_DEL_NESTED_WARN+=("docroot ${other} (${odoc}) leży wewnątrz ${HM_DEL_ROOT}")
     fi
-    local ou="${orest%%|*}"
+    local ou
+    ou="$(hm_tsv_unfield "${orest%%|*}")"
     if [[ -n "${HM_DEL_USER}" && -n "${ou}" && "${ou}" == "${HM_DEL_USER}" ]]; then
       HM_DEL_USER_SHARED=1
     fi

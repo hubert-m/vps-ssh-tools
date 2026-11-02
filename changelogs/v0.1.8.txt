@@ -25,4 +25,5 @@
 - Fix: polish `php` (kolumny ASCII, subpakiety w statusie, nieparsowalna wersja); `ols cache` bez global cachedata per-domena; walidacja nazwy proxy przed confirm
 - Fix: `help`/`use` — kontekst z perms/htaccess/proxy/archive/supervisor; `logs` bez surowego `ls -la` przy braku plików
 - Fix: `mysql dump-local` — walidacja ścieżki przed mkdir, umask 077; `mysql create` — hasło przez stdin (nie `-e`); install.sh `${DEST:?}`
+- Fix: TSV `hm_resolve_site_paths` / `hm_dbs_for_site` — puste pola jako `-` (`hm_tsv_field`), bez zlewania kolumn przy `IFS=tab`; test `scripts/test-tsv-fields.sh`
 

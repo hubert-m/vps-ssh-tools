@@ -24,7 +24,14 @@ hm_list_sites() {
     fi
     row="$(hm_resolve_site_paths "${domain}")"
     IFS=$'\t' read -r _ root docroot logs vhost php rest <<<"${row}"
+    root="$(hm_tsv_unfield "${root}")"
+    docroot="$(hm_tsv_unfield "${docroot}")"
+    logs="$(hm_tsv_unfield "${logs}")"
+    vhost="$(hm_tsv_unfield "${vhost}")"
+    php="$(hm_tsv_unfield "${php}")"
+    [[ -n "${php}" ]] || php="?"
     status="${rest##*|}"
+    [[ -n "${status}" ]] || status="active"
     ssl="$(hm_ssl_has "${domain}")"
     size_bytes=0
     if [[ "${quick}" == "1" ]]; then

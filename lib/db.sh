@@ -47,13 +47,14 @@ hm_cyberpanel_dbs_for_domain() {
   q="$(hm_sql_quote "${domain}")"
 
   # 1) aktualny schemat + child domains
+  # Pusty dbUser → '-' (mysql TSV + IFS=$'\t' zlewa puste pola)
   out="$(hm_mysql_exec cyberpanel -e "
-SELECT d.dbName, COALESCE(d.dbUser,''), 'localhost'
+SELECT d.dbName, IF(d.dbUser IS NULL OR d.dbUser='', '-', d.dbUser), 'localhost'
 FROM databases_databases d
 INNER JOIN websiteFunctions_websites w ON d.website_id = w.id
 WHERE w.domain = ${q}
 UNION
-SELECT d.dbName, COALESCE(d.dbUser,''), 'localhost'
+SELECT d.dbName, IF(d.dbUser IS NULL OR d.dbUser='', '-', d.dbUser), 'localhost'
 FROM databases_databases d
 INNER JOIN websiteFunctions_websites w ON d.website_id = w.id
 INNER JOIN websiteFunctions_childdomains c ON c.master_id = w.id
@@ -67,7 +68,7 @@ WHERE c.domain = ${q};
 
   # 2) legacy
   hm_mysql_exec cyberpanel -e "
-SELECT d.dbName, COALESCE(d.dbUser,''), COALESCE(d.dbHost,'localhost')
+SELECT d.dbName, IF(d.dbUser IS NULL OR d.dbUser='', '-', d.dbUser), COALESCE(NULLIF(d.dbHost,''), 'localhost')
 FROM databases_databases d
 JOIN websites_website w ON d.website_id = w.id
 WHERE w.domainName = ${q};
@@ -82,7 +83,7 @@ hm_cyberpanel_dbs_for_user() {
   local q
   q="$(hm_sql_quote "${user}")"
   hm_mysql_exec cyberpanel -e "
-SELECT dbName, COALESCE(dbUser,''), 'localhost'
+SELECT dbName, IF(dbUser IS NULL OR dbUser='', '-', dbUser), 'localhost'
 FROM databases_databases
 WHERE dbUser = ${q}
    OR dbUser LIKE CONCAT(${q}, '\\_%')
@@ -192,6 +193,9 @@ hm_dbs_for_site() {
     [[ "${seen}" == *"|${name}|"* ]] && return 0
     seen="${seen}${name}|"
     size="$(hm_db_size_bytes "${name}")"
+    [[ -n "${size}" ]] || size="0"
+    # Puste user → "-" (IFS=$'\t' zlewa sąsiadujące tabulatory → przesunięte kolumny)
+    [[ -n "${user}" ]] || user="-"
     printf '%s\t%s\t%s\t%s\n' "${name}" "${user}" "${size}" "${origin}"
   }
 

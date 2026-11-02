@@ -166,6 +166,7 @@ cmd_renew_ssl() {
           local _row _docroot
           _row="$(hm_resolve_site_paths "${domain}")"
           IFS=$'\t' read -r _ _ _docroot _ <<<"${_row}"
+          _docroot="$(hm_tsv_unfield "${_docroot}")"
           [[ -n "${_docroot}" && -d "${_docroot}" ]] && webroot="${_docroot}"
         fi
         mkdir -p "/etc/letsencrypt/live/${domain}" 2>/dev/null || true
