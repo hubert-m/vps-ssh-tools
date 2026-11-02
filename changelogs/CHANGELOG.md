@@ -14,7 +14,9 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ---
 
-## [Unreleased] / [v0.1.8]
+## [Unreleased] / [v0.1.9]
+
+## [v0.1.8]
 
 - Refactor: `lib/pkg.sh` + `pkg/apt|rpm` — adapter menedżera pakietów; PHP/`update-php`/`ext` bez `case apt|dnf|yum`
 - Refactor: `lib/os_family.sh` + `os/debian|rhel` — web group, apache, firewall; override per `OS_ID`
