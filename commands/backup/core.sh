@@ -257,6 +257,8 @@ hm_backup_site() {
   mkdir -p "${TMP_DIR}"
   local manifest="${TMP_DIR}/manifest-${domain}-${stamp}.json"
   local db_list="" db_names=()
+  local db_fail=0
+  local -a failed_dbs=()
 
   # Bazy
   local name user size origin
@@ -264,7 +266,9 @@ hm_backup_site() {
     [[ -n "${name}" ]] || continue
     db_names+=("${name}")
     if ! hm_stream_mysqldump "${name}" "${remote_base}/db/${name}.sql.gz"; then
-      hm_warn "Pominięto DB ${name}."
+      hm_err "Błąd zrzutu/uploadu DB ${name} — backup będzie niekompletny."
+      db_fail=$((db_fail + 1))
+      failed_dbs+=("${name}")
     else
       db_list="${db_list}\"${name}\","
     fi
@@ -299,10 +303,18 @@ hm_backup_site() {
       || cat "${HM_SITE_VHOST}" | hm_rclone_rcat "${remote_base}/vhost.conf" || true
   fi
 
+  local status="ok"
+  [[ "${db_fail}" -eq 0 ]] || status="partial"
+
+  local fail_db_json="[]"
+  if [[ "${#failed_dbs[@]}" -gt 0 ]]; then
+    fail_db_json="$(printf '%s\n' "${failed_dbs[@]}" | awk 'BEGIN{printf "["} {printf sep "\"" $0 "\""; sep=","} END{printf "]"}')"
+  fi
+
   cat > "${manifest}" <<EOF
 {
   "type": "site",
-  "status": "ok",
+  "status": "${status}",
   "domain": "${domain}",
   "host": "${BACKUP_HOST_LABEL}",
   "stamp": "${stamp}",
@@ -310,6 +322,7 @@ hm_backup_site() {
   "docroot": "${HM_SITE_DOCROOT}",
   "php": "${HM_SITE_PHP}",
   "databases": [${db_list}],
+  "failed_databases": ${fail_db_json},
   "remote": "${remote_base}",
   "created_at": "$(date -Iseconds)"
 }
@@ -322,6 +335,11 @@ EOF
   fi
   rm -f "${manifest}"
 
+  if [[ "${status}" != "ok" ]]; then
+    hm_err "Backup ${domain} NIEKOMPLETNY → ${remote_base} (status=${status}; błędy DB: ${db_fail})."
+    [[ "${#failed_dbs[@]}" -gt 0 ]] && hm_warn "Nieudane bazy: ${failed_dbs[*]}"
+    return 1
+  fi
   hm_ok "Backup strony ${domain} zakończony → ${remote_base}"
 }
 
@@ -371,22 +389,29 @@ hm_backup_system_configs() {
   return 1
 }
 
+# Ustawia HM_BACKUP_DB_FAILED=(…); return 0 gdy wszystkie dump OK, 1 przy ≥1 błędzie.
 hm_backup_all_databases() {
   local remote_base="$1"
   local db
   local -a dbs=()
+  HM_BACKUP_DB_FAILED=()
   while IFS= read -r db; do
     [[ -n "${db}" ]] && dbs+=("${db}")
   done < <(hm_list_all_databases)
-  local i=0 total="${#dbs[@]}"
+  local i=0 total="${#dbs[@]}" fail=0
   [[ "${total}" -gt 0 ]] || return 0
   for db in "${dbs[@]}"; do
     i=$((i + 1))
     hm_progress_bar "${i}" "${total}" "Dump DB: ${db}"
     hm_status_clear
-    hm_stream_mysqldump "${db}" "${remote_base}/databases/${db}.sql.gz" || hm_warn "DB ${db} pominięta."
+    if ! hm_stream_mysqldump "${db}" "${remote_base}/databases/${db}.sql.gz"; then
+      hm_err "Błąd zrzutu/uploadu DB ${db} — full backup będzie niekompletny."
+      fail=$((fail + 1))
+      HM_BACKUP_DB_FAILED+=("${db}")
+    fi
   done
   hm_progress_done
+  [[ "${fail}" -eq 0 ]]
 }
 
 hm_backup_full() {
@@ -406,12 +431,15 @@ hm_backup_full() {
   hm_rclone_ensure_backup_layout
   hm_rclone_mkdir "${remote_base}"
 
-  local cfg_ok=1 sites_fail=0
+  local cfg_ok=1 sites_fail=0 db_ok=1
   local -a failed_sites=()
+  HM_BACKUP_DB_FAILED=()
   if ! hm_backup_system_configs "${remote_base}"; then
     cfg_ok=0
   fi
-  hm_backup_all_databases "${remote_base}"
+  if ! hm_backup_all_databases "${remote_base}"; then
+    db_ok=0
+  fi
 
   hm_discover_sites
   local domain
@@ -439,13 +467,16 @@ hm_backup_full() {
   hm_progress_done
 
   local status="ok"
-  if [[ "${cfg_ok}" -ne 1 || "${sites_fail}" -gt 0 ]]; then
+  if [[ "${cfg_ok}" -ne 1 || "${sites_fail}" -gt 0 || "${db_ok}" -ne 1 ]]; then
     status="partial"
   fi
 
-  local fail_json="[]"
+  local fail_json="[]" fail_db_json="[]"
   if [[ "${#failed_sites[@]}" -gt 0 ]]; then
     fail_json="$(printf '%s\n' "${failed_sites[@]}" | awk 'BEGIN{printf "["} {printf sep "\"" $0 "\""; sep=","} END{printf "]"}')"
+  fi
+  if [[ "${#HM_BACKUP_DB_FAILED[@]}" -gt 0 ]]; then
+    fail_db_json="$(printf '%s\n' "${HM_BACKUP_DB_FAILED[@]}" | awk 'BEGIN{printf "["} {printf sep "\"" $0 "\""; sep=","} END{printf "]"}')"
   fi
 
   local manifest="${TMP_DIR}/manifest-full-${stamp}.json"
@@ -460,7 +491,9 @@ hm_backup_full() {
   "webserver": "${WEBSERVER}",
   "sites": $(printf '%s\n' "${HM_SITES_LIST[@]}" | awk 'BEGIN{printf "["} {printf sep "\"" $0 "\""; sep=","} END{printf "]"}'),
   "failed_sites": ${fail_json},
+  "failed_databases": ${fail_db_json},
   "config_ok": ${cfg_ok},
+  "databases_ok": ${db_ok},
   "remote": "${remote_base}",
   "created_at": "$(date -Iseconds)"
 }
@@ -474,8 +507,9 @@ EOF
   rm -f "${manifest}"
 
   if [[ "${status}" != "ok" ]]; then
-    hm_err "Pełny backup NIEKOMPLETNY → ${remote_base} (status=${status}; config_ok=${cfg_ok}; strony z błędem plików: ${sites_fail})."
+    hm_err "Pełny backup NIEKOMPLETNY → ${remote_base} (status=${status}; config_ok=${cfg_ok}; databases_ok=${db_ok}; strony z błędem plików: ${sites_fail})."
     [[ "${#failed_sites[@]}" -gt 0 ]] && hm_warn "Nieudane strony: ${failed_sites[*]}"
+    [[ "${#HM_BACKUP_DB_FAILED[@]}" -gt 0 ]] && hm_warn "Nieudane bazy: ${HM_BACKUP_DB_FAILED[*]}"
     return 1
   fi
   hm_ok "Pełny backup zakończony → ${remote_base}"
