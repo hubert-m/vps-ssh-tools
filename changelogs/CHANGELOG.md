@@ -21,6 +21,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Feat: `access` — zarządzanie SSH (passwd/shell/keys) i FTP (CyberPanel/pure-pw) per strona (`HM_SITE_USER`)
 - Fix: `backup site` / `backup full` — błąd mysqldump → `status: partial`, NIEKOMPLETNY, rc≠0 (nie cichy sukces)
 - Fix: `security ban` / ufw — `prepend deny` (v4+v6), DETEKCJA tylko DENY/REJECT; rc≠0 przy całkowitej porażce
+- Fix: `chrome version` — zachowanie rc timeoutu (124), bez `if ! …; then $?` (fałszywe rc=0)
 
 ## [v0.1.8]
 

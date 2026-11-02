@@ -94,8 +94,10 @@ cmd_chrome() {
       ;;
     version|ver|-v|--version)
       hm_chrome_require || return 1
-      if ! hm_run_timeout 3 "${CHROME_BIN}" --version; then
-        local vrc=$?
+      # Nie: `if ! cmd; then rc=$?` — po `!` $? = 0 (sukces negacji), gubi 124.
+      local vrc=0
+      hm_run_timeout 3 "${CHROME_BIN}" --version || vrc=$?
+      if [[ "${vrc}" -ne 0 ]]; then
         if [[ "${vrc}" -eq 124 ]]; then
           hm_err "Timeout (3s) przy „${CHROME_BIN} --version” — binarka nie odpowiada (zawieszona?)."
         else
