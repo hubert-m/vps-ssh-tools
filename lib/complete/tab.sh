@@ -81,6 +81,11 @@ hm_tab_complete() {
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
         done
         ;;
+      disk|df)
+        for m in --drive --inodes --home --heavy --count --deep help; do
+          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+        done
+        ;;
       use|enter|cd)
         hm_ensure_sites_cached
         while IFS= read -r m; do

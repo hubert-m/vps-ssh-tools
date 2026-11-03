@@ -21,7 +21,7 @@
 | `version` | Wersja lokalna/remote + changelog tej wersji |
 | `uninstall-hmtools [--yes]` | Usuwa `/hm-tools` i symlink (z potwierdzeniem) |
 | `applog [N]` | Ostatnie N linii logu hmtools (domyślnie 50) |
-| `disk` | `df`, inody, top `/home` |
+| `disk` [`--drive`] [`--inodes`] [`--home`] [`--heavy` [`--count N`] [`--deep N`]] | `df` / inody / top `/home`; `--heavy` — rekurencyjnie najcięższe pliki/katalogi od `/` (domyślnie count=3, deep=5) |
 | `ols …` | OLS: `status`/`reload`/`restart`/`log`, `stats`/`top`, `htaccess`, `cache`, `proxy`, `admin` |
 | `ssl` | Certyfikaty SSL (status / dni; wygasły na czerwono) |
 | `renew-ssl [domena]` | Odnów Let's Encrypt (z potwierdzeniem) |
