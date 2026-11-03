@@ -226,16 +226,46 @@ hm_log_cmd_end() {
   fi
 }
 
+# Zredaguj argv do logu: wartości po --password/--pass/--passwd/-p oraz --password=…
+hm_run_cmd_redacted() {
+  local -a out=()
+  local prev="" a redact_next=0
+  for a in "$@"; do
+    if [[ "${redact_next}" -eq 1 ]]; then
+      out+=("***")
+      redact_next=0
+      prev="${a}"
+      continue
+    fi
+    if [[ "${a}" =~ ^--(password|pass|passwd)= ]]; then
+      out+=("${a%%=*}=***")
+      prev="${a}"
+      continue
+    fi
+    if [[ "${a}" =~ ^--(password|pass|passwd)$ || "${a}" == "-p" ]]; then
+      out+=("${a}")
+      redact_next=1
+      prev="${a}"
+      continue
+    fi
+    out+=("${a}")
+    prev="${a}"
+  done
+  printf '%s' "${out[*]}"
+}
+
 # Uruchom komendę zewnętrzną: pokaż output + zapisz do logu (RUN / RUN_OUT / RUN_ERR / RUN_END)
 hm_run() {
   local -a cmd=("$@")
   [[ "${#cmd[@]}" -gt 0 ]] || return 1
 
   local tmp_out tmp_err rc=0 max="${LOG_RUN_MAX_LINES:-400}"
+  local cmd_log
   tmp_out="$(mktemp "${TMP_DIR:-/tmp}/hmtools-run.XXXXXX.out" 2>/dev/null || mktemp /tmp/hmtools-run.XXXXXX.out)"
   tmp_err="$(mktemp "${TMP_DIR:-/tmp}/hmtools-run.XXXXXX.err" 2>/dev/null || mktemp /tmp/hmtools-run.XXXXXX.err)"
+  cmd_log="$(hm_run_cmd_redacted "${cmd[@]}")"
 
-  hm_file_log INFO "RUN: ${cmd[*]}"
+  hm_file_log INFO "RUN: ${cmd_log}"
 
   local cmd_pid fd start_ts elapsed last_line spin_idx=0
   local -a frames=('|' '/' '-' '\\')
@@ -307,7 +337,7 @@ hm_run() {
     fi
   fi
 
-  hm_file_log INFO "RUN_END: rc=${rc} cmd=${cmd[*]}"
+  hm_file_log INFO "RUN_END: rc=${rc} cmd=${cmd_log}"
   rm -f "${tmp_out}" "${tmp_err}" 2>/dev/null || true
   return "${rc}"
 }
@@ -317,10 +347,12 @@ hm_run_quiet() {
   local -a cmd=("$@")
   local tmp_out tmp_err rc=0
   local _errexit_was_on=0
+  local cmd_log
   [[ $- == *e* ]] && _errexit_was_on=1
   tmp_out="$(mktemp /tmp/hmtools-run.XXXXXX.out)"
   tmp_err="$(mktemp /tmp/hmtools-run.XXXXXX.err)"
-  hm_file_log INFO "RUN_QUIET: ${cmd[*]}"
+  cmd_log="$(hm_run_cmd_redacted "${cmd[@]}")"
+  hm_file_log INFO "RUN_QUIET: ${cmd_log}"
   set +e
   "${cmd[@]}" >"${tmp_out}" 2>"${tmp_err}"
   rc=$?
@@ -329,7 +361,7 @@ hm_run_quiet() {
   fi
   [[ -s "${tmp_out}" ]] && hm_log_stream_to_file RUN_OUT INFO < "${tmp_out}"
   [[ -s "${tmp_err}" ]] && hm_log_stream_to_file RUN_ERR WARN < "${tmp_err}"
-  hm_file_log INFO "RUN_END: rc=${rc} cmd=${cmd[*]}"
+  hm_file_log INFO "RUN_END: rc=${rc} cmd=${cmd_log}"
   rm -f "${tmp_out}" "${tmp_err}" 2>/dev/null || true
   return "${rc}"
 }

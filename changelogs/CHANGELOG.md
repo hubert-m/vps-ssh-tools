@@ -31,6 +31,8 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `redis` — parse ERR/(error) przy config set / client kill; wartość ze spacjami; UX sites/clients/slowlog/restart/NOAUTH
 - Fix: `redis flushdb N` — `redis-cli -n N FLUSHDB` (osobny SELECT nie zmienia DB; wcześniej czyściło db0)
 - Fix: `access ssh` — status bez „0\\n0” kluczy; `keys remove 0` → błąd; duplikat klucza przed confirm; CP FTP bez SQL plaintext hasła
+- Fix: `access ssh keys` — anti-TOCTOU (recheck `-L`/path_ok po confirm; zapis przez runuser); zakres #N przed planem; shell już włączony → skip
+- Fix: `hm_run` / `hm_run_quiet` — redakcja `--password`/`--pass`/`-p` w logu RUN/RUN_END (FTP CyberPanel)
 
 ## [v0.1.8]
 

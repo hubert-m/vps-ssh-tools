@@ -100,6 +100,40 @@ hm_access_ssh_path_ok() {
   return 0
 }
 
+# ~/.ssh + authorized_keys: bez symlinku katalogu/pliku, path_ok (anti-TOCTOU przed I/O).
+hm_access_ssh_recheck_keys_paths() {
+  local user="$1" home="$2" keysf="$3"
+  local sshdir="${home}/.ssh"
+  if [[ -L "${sshdir}" ]]; then
+    hm_err "Odmowa: ${sshdir} jest symlinkiem (ryzyko eskalacji / TOCTOU)."
+    return 1
+  fi
+  if [[ -L "${keysf}" ]]; then
+    hm_err "Odmowa: ${keysf} jest symlinkiem (ryzyko eskalacji / TOCTOU)."
+    return 1
+  fi
+  # katalog .ssh musi istnieć i należeć do usera
+  if [[ -d "${sshdir}" ]]; then
+    hm_access_ssh_path_ok "${user}" "${home}" "${sshdir}" || return 1
+  fi
+  hm_access_ssh_path_ok "${user}" "${home}" "${keysf}" || return 1
+  return 0
+}
+
+# Zapis treści (stdin) do authorized_keys — preferuj runuser (bez chown roota).
+hm_access_ssh_write_keys_file() {
+  local user="$1" keysf="$2"
+  if hm_have_cmd runuser; then
+    runuser -u "${user}" -- tee "${keysf}" >/dev/null || return 1
+    runuser -u "${user}" -- chmod 600 "${keysf}" 2>/dev/null || true
+    return 0
+  fi
+  cat > "${keysf}" || return 1
+  chmod 600 "${keysf}"
+  chown -h "${user}:${user}" "${keysf}" 2>/dev/null || chown -h "${user}" "${keysf}"
+  return 0
+}
+
 hm_access_is_valid_ssh_key_line() {
   local line="${1:-}"
   [[ -n "${line}" ]] || return 1
@@ -198,6 +232,14 @@ hm_access_ssh_shell() {
   domain="${HM_SITE_DOMAIN}"
   user="$(hm_access_require_site_user "${domain}")" || return 1
   cur="$(hm_access_unix_shell "${user}")"
+
+  if [[ "${cur}" == "${target}" ]]; then
+    case "${action}" in
+      enable|on|bash) hm_ok "Shell ${user}: już włączony (${cur})." ;;
+      *) hm_ok "Shell ${user}: już wyłączony (${cur})." ;;
+    esac
+    return 0
+  fi
 
   if ! hm_confirm_plan "access ssh shell ${action} — ${domain}" \
     "Zmiana shella wpływa na możliwość logowania SSH/SFTP jako ${user}." \
@@ -360,10 +402,17 @@ hm_access_ssh_keys_add() {
     return 1
   fi
 
+  # Anti-TOCTOU: ponowna weryfikacja po confirm (user mógł podmienić ~/.ssh)
+  if [[ -e "${home}/.ssh" || -L "${home}/.ssh" ]]; then
+    if [[ -L "${home}/.ssh" ]]; then
+      hm_err "Odmowa: ${home}/.ssh jest symlinkiem (ryzyko eskalacji / TOCTOU)."
+      return 1
+    fi
+    hm_access_ssh_path_ok "${user}" "${home}" "${home}/.ssh" || return 1
+  fi
+
   keysf="$(hm_access_ssh_keys_ensure_dir "${user}")" || return 1
-  # po ensure_dir: bez symlinków; jeszcze raz przed zapisem
-  [[ -L "${keysf}" ]] && { hm_err "Odmowa: ${keysf} jest symlinkiem."; return 1; }
-  hm_access_ssh_path_ok "${user}" "${home}" "${keysf}" || return 1
+  hm_access_ssh_recheck_keys_paths "${user}" "${home}" "${keysf}" || return 1
   if grep -Fqx "${key_line}" "${keysf}" 2>/dev/null; then
     hm_ok "Klucz już jest w ${keysf}."
     return 0
@@ -373,12 +422,15 @@ hm_access_ssh_keys_add() {
       hm_err "Zapis klucza (runuser) nieudany."
       return 1
     }
+    runuser -u "${user}" -- chmod 600 "${keysf}" 2>/dev/null || true
   else
+    hm_access_ssh_recheck_keys_paths "${user}" "${home}" "${keysf}" || return 1
     printf '%s\n' "${key_line}" >> "${keysf}" || return 1
+    hm_access_ssh_recheck_keys_paths "${user}" "${home}" "${keysf}" || return 1
+    chmod 600 "${keysf}"
+    chown -h "${user}:${user}" "${keysf}" 2>/dev/null || chown -h "${user}" "${keysf}"
   fi
-  [[ -L "${keysf}" ]] && { hm_err "Odmowa po zapisie: ${keysf} jest symlinkiem."; return 1; }
-  chmod 600 "${keysf}"
-  chown -h "${user}:${user}" "${keysf}" 2>/dev/null || chown -h "${user}" "${keysf}"
+  hm_access_ssh_recheck_keys_paths "${user}" "${home}" "${keysf}" || return 1
   hm_ok "Dodano klucz do ${keysf}"
 }
 
@@ -416,11 +468,19 @@ hm_access_ssh_keys_remove() {
     hm_err "Brak authorized_keys."
     return 1
   }
-  if [[ -L "${home}/.ssh" || -L "${keysf}" ]]; then
-    hm_err "Odmowa: ~/.ssh lub authorized_keys jest symlinkiem."
+  hm_access_ssh_recheck_keys_paths "${user}" "${home}" "${keysf}" || return 1
+
+  # Zakres numeru — przed confirm (nie pytaj o nieistniejący #N)
+  local n_avail=0
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    if hm_access_is_valid_ssh_key_line "${line}"; then
+      n_avail=$((n_avail + 1))
+    fi
+  done < "${keysf}"
+  if [[ "${idx}" -gt "${n_avail}" ]]; then
+    hm_err "Brak klucza o numerze ${idx} (jest ${n_avail})."
     return 1
   fi
-  hm_access_ssh_path_ok "${user}" "${home}" "${keysf}" || return 1
 
   if ! hm_confirm_plan "access ssh keys remove #${idx} — ${domain}" \
     "Usunięcie klucza uniemożliwi logowanie tym kluczem." \
@@ -428,8 +488,12 @@ hm_access_ssh_keys_remove() {
     return 1
   fi
 
+  # Anti-TOCTOU: po „yes” user mógł podmienić ~/.ssh → /root/.ssh
+  hm_access_ssh_recheck_keys_paths "${user}" "${home}" "${keysf}" || return 1
+
   tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-ak.XXXXXX")"
   local removed=0
+  n=0
   while IFS= read -r line || [[ -n "${line}" ]]; do
     if hm_access_is_valid_ssh_key_line "${line}"; then
       n=$((n + 1))
@@ -446,20 +510,18 @@ hm_access_ssh_keys_remove() {
     hm_err "Brak klucza o numerze ${idx} (jest ${n})."
     return 1
   fi
-  # zamień plik bez podążania za symlinkiem (już odrzucony); cat > zachowuje inode/owner lepiej niż mv z /tmp
-  if [[ -L "${keysf}" ]]; then
+
+  hm_access_ssh_recheck_keys_paths "${user}" "${home}" "${keysf}" || {
     rm -f "${tmp}"
-    hm_err "Odmowa: ${keysf} jest symlinkiem."
     return 1
-  fi
-  if ! cat "${tmp}" > "${keysf}"; then
+  }
+  if ! hm_access_ssh_write_keys_file "${user}" "${keysf}" < "${tmp}"; then
     rm -f "${tmp}"
     hm_err "Zapis authorized_keys nieudany."
     return 1
   fi
   rm -f "${tmp}"
-  chmod 600 "${keysf}"
-  chown -h "${user}:${user}" "${keysf}" 2>/dev/null || chown -h "${user}" "${keysf}"
+  hm_access_ssh_recheck_keys_paths "${user}" "${home}" "${keysf}" || return 1
   hm_ok "Usunięto klucz #${idx}."
 }
 
