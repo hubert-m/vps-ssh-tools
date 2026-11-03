@@ -289,6 +289,110 @@ hm_print_all_dbs() {
   echo "  ${C_DIM}Sortowanie: rozmiar ↓${C_RESET}"
 }
 
+# Parsuj rozmiar ludzki → bajty (1G, 1GB, 500M, 1024K, czyste bajty).
+hm_parse_size_bytes() {
+  local raw="${1:-}" n u mult
+  raw="$(printf '%s' "${raw}" | tr -d '[:space:]')"
+  [[ -n "${raw}" ]] || return 1
+  if [[ "${raw}" =~ ^([0-9]+)([KkMmGgTtPp]([Ii])?[Bb]?)?$ ]]; then
+    n="${BASH_REMATCH[1]}"
+    u="$(printf '%s' "${BASH_REMATCH[2]:-}" | tr '[:lower:]' '[:upper:]')"
+    case "${u}" in
+      ""|B) mult=1 ;;
+      K|KB|KI|KIB) mult=1024 ;;
+      M|MB|MI|MIB) mult=$((1024 * 1024)) ;;
+      G|GB|GI|GIB) mult=$((1024 * 1024 * 1024)) ;;
+      T|TB|TI|TIB) mult=$((1024 * 1024 * 1024 * 1024)) ;;
+      P|PB|PI|PIB) mult=$((1024 * 1024 * 1024 * 1024 * 1024)) ;;
+      *) return 1 ;;
+    esac
+    printf '%s' "$((n * mult))"
+    return 0
+  fi
+  if hm_have_cmd numfmt; then
+    numfmt --from=iec "${raw}" 2>/dev/null && return 0
+  fi
+  return 1
+}
+
+# Bazy ≥ min_bytes; pod nimi tabele ≥ min_bytes (data_length + index_length).
+hm_mysql_heavy() {
+  local min_bytes="${1:-1073741824}"
+  local min_label
+  min_label="$(hm_human_size "${min_bytes}")"
+
+  if ! hm_mysql_cli >/dev/null 2>&1; then
+    hm_err "Brak klienta mysql/mariadb."
+    return 1
+  fi
+
+  echo "${C_BOLD}Bazy / tabele ≥ ${min_label}${C_RESET} ${C_DIM}(sort: rozmiar ↓)${C_RESET}"
+  echo
+  hm_status_line "Odpytywanie information_schema (rozmiary baz/tabel)..."
+
+  local raw=""
+  raw="$(hm_mysql_exec -e "
+SELECT table_schema, table_name, COALESCE(data_length + index_length, 0)
+FROM information_schema.tables
+WHERE table_schema NOT IN ('information_schema','performance_schema','mysql','sys')
+  AND table_type = 'BASE TABLE'
+ORDER BY table_schema, (data_length + index_length) DESC;
+" 2>/dev/null)" || raw=""
+
+  hm_status_clear
+
+  if [[ -z "${raw}" ]]; then
+    hm_warn "Brak danych z information_schema (MySQL niedostępny lub pusto)."
+    return 0
+  fi
+
+  local -A db_sum=()
+  local -a db_order=()
+  local schema table sz
+  while IFS=$'\t' read -r schema table sz || [[ -n "${schema:-}" ]]; do
+    [[ -n "${schema}" ]] || continue
+    [[ "${sz}" =~ ^[0-9]+$ ]] || sz=0
+    if [[ -z "${db_sum[${schema}]+x}" ]]; then
+      db_order+=("${schema}")
+      db_sum["${schema}"]=0
+    fi
+    db_sum["${schema}"]=$(( ${db_sum[${schema}]} + sz ))
+  done <<<"${raw}"
+
+  local -a sorted_dbs=()
+  local d
+  while IFS= read -r d; do
+    [[ -n "${d}" ]] && sorted_dbs+=("${d}")
+  done < <(
+    for d in "${db_order[@]}"; do
+      printf '%s\t%s\n' "${db_sum[$d]}" "${d}"
+    done | sort -t $'\t' -nr -k1,1 | cut -f2-
+  )
+
+  printf '  %s%-40s %s%s\n' "${C_DIM}" "DATABASE / TABLE" "ROZMIAR" "${C_RESET}"
+  printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..52})" "${C_RESET}"
+
+  local any=0
+  for d in "${sorted_dbs[@]}"; do
+    [[ "${db_sum[$d]}" -ge "${min_bytes}" ]] || continue
+    any=1
+    printf '  %-40s %s\n' "${d}" "$(hm_human_size "${db_sum[$d]}")"
+    while IFS=$'\t' read -r schema table sz || [[ -n "${schema:-}" ]]; do
+      [[ "${schema}" == "${d}" ]] || continue
+      [[ "${sz}" =~ ^[0-9]+$ ]] || continue
+      [[ "${sz}" -ge "${min_bytes}" ]] || continue
+      printf '    %-38s %s\n' "${table}" "$(hm_human_size "${sz}")"
+    done <<<"${raw}"
+  done
+
+  if [[ "${any}" -eq 0 ]]; then
+    echo "  ${C_DIM}(brak baz ≥ ${min_label})${C_RESET}"
+  else
+    echo
+    echo "  ${C_DIM}Próg: ${min_label} — tabele poniżej progu pominięte${C_RESET}"
+  fi
+}
+
 # --- zarządzanie (dump lokalny, import, cli, top, optimize, create) ------------
 
 hm_mysql_db_exists() {

@@ -25,7 +25,7 @@
 | `ols …` | OLS: `status`/`reload`/`restart`/`log`, `stats`/`top`, `htaccess`, `cache`, `proxy`, `admin` |
 | `ssl` | Certyfikaty SSL (status / dni; wygasły na czerwono) |
 | `renew-ssl [domena]` | Odnów Let's Encrypt (z potwierdzeniem) |
-| `mysql` / `dbs` | Lista baz; `dump`/`dump-local`/`import`/`cli`/`top`/`optimize`/`create` |
+| `mysql` / `dbs` | Lista baz; `heavy [--min-size X]` (bazy/tabele ≥ X, domyślnie 1G); `dump`/`dump-local`/`import`/`cli`/`top`/`optimize`/`create` |
 | `cron` / `crons` | Crony systemowe / users / strony; `cron edit` |
 | `pm2` / `node` / `apps` | PM2: lista, proxy, `restart`/`reload`/`logs`/`save` |
 | `php` | LSPHP: lista vs repo + nowsze gałęzie do instalacji (`--refresh` / `--phpnet`), `set`/`ext`/`ini`/`restart`/`ps` |

@@ -5,6 +5,7 @@
 _hm_cmd_help mysql <<'EOF'
 Użycie:
   mysql | dbs                 Lista baz (globalnie / w kontekście strony)
+  mysql heavy [--min-size X]  Bazy ≥ X + tabele ≥ X (domyślnie 1G)
   mysql dump <db>             Zrzut → Google Drive
   mysql dump <db> --local [p] Lokalny .sql.gz (domyślnie <site>/backups/ lub ${TMP_DIR}/hmtools-db/ → zwykle /tmp/hmtools-backup/hmtools-db/)
   mysql dump-local [db] [p]   Alias lokalnego dumpa (p = plik lub katalog absolutny)
@@ -15,7 +16,49 @@ Użycie:
   mysql create <db> [user]    Nowa baza + user@localhost + hasło
 
 W kontekście bez [db] — pierwsza wykryta baza strony.
+--min-size: 1G, 1GB, 500M, 1024K lub bajty.
 EOF
+
+cmd_mysql_heavy() {
+  local min_raw="1G" a
+  while [[ $# -gt 0 ]]; do
+    a="${1}"
+    case "${a}" in
+      --min-size)
+        shift
+        [[ -n "${1:-}" ]] || {
+          hm_err "Użycie: mysql heavy --min-size <X>  (np. 1G, 1GB, 500M)"
+          return 1
+        }
+        min_raw="${1}"
+        shift
+        ;;
+      --min-size=*)
+        min_raw="${a#--min-size=}"
+        [[ -n "${min_raw}" ]] || {
+          hm_err "Użycie: mysql heavy --min-size <X>  (np. 1G, 1GB, 500M)"
+          return 1
+        }
+        shift
+        ;;
+      help|-h|--help)
+        hm_help_topic mysql
+        return 0
+        ;;
+      *)
+        hm_err "Nieznane: mysql heavy ${a}. Użycie: mysql heavy [--min-size X]"
+        return 1
+        ;;
+    esac
+  done
+
+  local min_bytes
+  min_bytes="$(hm_parse_size_bytes "${min_raw}")" || {
+    hm_err "Nieprawidłowy --min-size: '${min_raw}' (np. 1G, 1GB, 500M)."
+    return 1
+  }
+  hm_mysql_heavy "${min_bytes}"
+}
 
 cmd_mysql() {
   local sub="${1:-list}"
@@ -31,6 +74,9 @@ cmd_mysql() {
         echo
         hm_print_all_dbs
       fi
+      ;;
+    heavy)
+      cmd_mysql_heavy "$@"
       ;;
     dump)
       cmd_mysql_dump "$@"

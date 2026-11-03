@@ -209,12 +209,17 @@ hm_tab_complete() {
         ;;
       mysql|dbs|db)
         local re_mysql_dump='(mysql|dbs|db)[[:space:]]+dump[[:space:]]'
+        local re_mysql_heavy='(mysql|dbs|db)[[:space:]]+heavy[[:space:]]'
         if [[ "${prefix}" =~ $re_mysql_dump ]]; then
           for m in --local help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
+        elif [[ "${prefix}" =~ $re_mysql_heavy ]]; then
+          for m in --min-size help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
         else
-          for m in list ls dump dump-local import cli top processlist optimize create help; do
+          for m in list ls heavy dump dump-local import cli top processlist optimize create help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi
