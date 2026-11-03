@@ -69,6 +69,37 @@ hm_access_ssh_keys_file() {
   printf '%s' "${home}/.ssh/authorized_keys"
 }
 
+# Ścieżka nie jest symlinkiem, realpath ⊆ home, owner=user (gdy plik istnieje).
+hm_access_ssh_path_ok() {
+  local user="$1" home="$2" path="$3"
+  local rp hr owner
+  [[ -n "${user}" && -n "${home}" && -n "${path}" ]] || return 1
+  if [[ -L "${path}" ]]; then
+    hm_err "Odmowa: ${path} jest symlinkiem (ryzyko zapisu poza home)."
+    return 1
+  fi
+  hr="$(realpath -m "${home}" 2>/dev/null || echo "${home}")"
+  hr="${hr%/}"
+  if [[ -e "${path}" ]]; then
+    rp="$(realpath "${path}" 2>/dev/null || realpath -m "${path}" 2>/dev/null || echo "${path}")"
+  else
+    rp="$(realpath -m "${path}" 2>/dev/null || echo "${path}")"
+  fi
+  rp="${rp%/}"
+  if [[ "${rp}" != "${hr}" && "${rp}" != "${hr}"/* ]]; then
+    hm_err "Odmowa: ${path} poza home ${hr} (→ ${rp})."
+    return 1
+  fi
+  if [[ -e "${path}" ]]; then
+    owner="$(stat -c '%U' "${path}" 2>/dev/null || stat -f '%Su' "${path}" 2>/dev/null || true)"
+    if [[ -n "${owner}" && "${owner}" != "${user}" ]]; then
+      hm_err "Odmowa: ${path} należy do „${owner}”, nie „${user}”."
+      return 1
+    fi
+  fi
+  return 0
+}
+
 hm_access_is_valid_ssh_key_line() {
   local line="${1:-}"
   [[ -n "${line}" ]] || return 1
@@ -94,9 +125,17 @@ hm_access_ssh_status() {
   else
     echo "  Logowanie: ${C_YELLOW}wyłączone${C_RESET} (nologin/false)"
   fi
-  if [[ -n "${keysf}" && -f "${keysf}" ]]; then
-    nkeys="$(grep -cE '^[[:space:]]*(ssh-|ecdsa-|sk-)' "${keysf}" 2>/dev/null || echo 0)"
-    echo "  Klucze   : ${nkeys} w ${keysf}"
+  if [[ -n "${keysf}" ]]; then
+    if [[ -L "${home}/.ssh" || -L "${keysf}" ]]; then
+      hm_warn "Klucze   : odmowa odczytu — ~/.ssh lub authorized_keys jest symlinkiem"
+    elif [[ -f "${keysf}" ]] && hm_access_ssh_path_ok "${user}" "${home}" "${keysf}" 2>/dev/null; then
+      nkeys="$(grep -cE '^[[:space:]]*(ssh-|ecdsa-|sk-)' "${keysf}" 2>/dev/null || echo 0)"
+      echo "  Klucze   : ${nkeys} w ${keysf}"
+    elif [[ -f "${keysf}" ]]; then
+      hm_warn "Klucze   : plik istnieje, ale ścieżka/właściciel niebezpieczne — pomijam odczyt"
+    else
+      echo "  Klucze   : 0 (brak authorized_keys)"
+    fi
   else
     echo "  Klucze   : 0 (brak authorized_keys)"
   fi
@@ -172,17 +211,23 @@ hm_access_ssh_shell() {
 }
 
 hm_access_ssh_keys_list() {
-  local domain user keysf line i=0
+  local domain user home keysf line i=0
   hm_access_resolve_site "${1:-}" || return 1
   domain="${HM_SITE_DOMAIN}"
   user="$(hm_access_require_site_user "${domain}")" || return 1
+  home="$(hm_access_unix_home "${user}")"
   keysf="$(hm_access_ssh_keys_file "${user}" 2>/dev/null || true)"
 
   echo "${C_BOLD}authorized_keys — ${user} (${domain})${C_RESET}"
-  if [[ -z "${keysf}" || ! -f "${keysf}" ]]; then
+  if [[ -z "${keysf}" || ! -e "${keysf}" ]]; then
     echo "  (brak pliku)"
     return 0
   fi
+  if [[ -L "${home}/.ssh" || -L "${keysf}" ]]; then
+    hm_err "Odmowa: ~/.ssh lub authorized_keys jest symlinkiem."
+    return 1
+  fi
+  hm_access_ssh_path_ok "${user}" "${home}" "${keysf}" || return 1
   echo "  Plik: ${keysf}"
   echo
   while IFS= read -r line || [[ -n "${line}" ]]; do
@@ -202,20 +247,70 @@ hm_access_ssh_keys_list() {
 
 hm_access_ssh_keys_ensure_dir() {
   local user="$1"
-  local home sshdir
+  local home sshdir keysf
   home="$(hm_access_unix_home "${user}")"
   [[ -n "${home}" && -d "${home}" ]] || {
     hm_err "Brak katalogu home: ${home:--}"
     return 1
   }
+  home="$(realpath -m "${home}" 2>/dev/null || echo "${home}")"
   sshdir="${home}/.ssh"
-  mkdir -p "${sshdir}"
-  chmod 700 "${sshdir}"
-  chown "${user}:${user}" "${sshdir}" 2>/dev/null || chown "${user}" "${sshdir}"
-  touch "${sshdir}/authorized_keys"
-  chmod 600 "${sshdir}/authorized_keys"
-  chown "${user}:${user}" "${sshdir}/authorized_keys" 2>/dev/null || chown "${user}" "${sshdir}/authorized_keys"
-  printf '%s' "${sshdir}/authorized_keys"
+  keysf="${sshdir}/authorized_keys"
+
+  if [[ -L "${sshdir}" ]]; then
+    hm_err "Odmowa: ${sshdir} jest symlinkiem (ryzyko eskalacji)."
+    return 1
+  fi
+  if [[ -e "${sshdir}" && ! -d "${sshdir}" ]]; then
+    hm_err "Odmowa: ${sshdir} nie jest katalogiem."
+    return 1
+  fi
+
+  if [[ ! -d "${sshdir}" ]]; then
+    if hm_have_cmd install; then
+      install -d -o "${user}" -g "${user}" -m 700 "${sshdir}" || {
+        hm_err "Nie utworzono ${sshdir}."
+        return 1
+      }
+    else
+      mkdir -m 700 "${sshdir}" || return 1
+      chown -h "${user}:${user}" "${sshdir}" 2>/dev/null || chown -h "${user}" "${sshdir}"
+    fi
+  else
+    hm_access_ssh_path_ok "${user}" "${home}" "${sshdir}" || return 1
+    chmod 700 "${sshdir}"
+  fi
+
+  if [[ -L "${keysf}" ]]; then
+    hm_err "Odmowa: ${keysf} jest symlinkiem (ryzyko eskalacji)."
+    return 1
+  fi
+  if [[ -e "${keysf}" ]]; then
+    hm_access_ssh_path_ok "${user}" "${home}" "${keysf}" || return 1
+  else
+    # nowy plik — bez podążania za linkiem (nie istnieje)
+    if hm_have_cmd install; then
+      install -o "${user}" -g "${user}" -m 600 /dev/null "${keysf}" || {
+        hm_err "Nie utworzono ${keysf}."
+        return 1
+      }
+    elif hm_have_cmd runuser; then
+      runuser -u "${user}" -- touch "${keysf}" || return 1
+      chmod 600 "${keysf}"
+    else
+      (umask 077; : > "${keysf}") || return 1
+      chown -h "${user}:${user}" "${keysf}" 2>/dev/null || chown -h "${user}" "${keysf}"
+      chmod 600 "${keysf}"
+    fi
+  fi
+  # ponowna weryfikacja po utworzeniu
+  if [[ -L "${keysf}" ]]; then
+    hm_err "Odmowa: ${keysf} stał się symlinkiem."
+    return 1
+  fi
+  hm_access_ssh_path_ok "${user}" "${home}" "${keysf}" || return 1
+  chmod 600 "${keysf}"
+  printf '%s' "${keysf}"
 }
 
 hm_access_ssh_keys_add() {
@@ -252,13 +347,26 @@ hm_access_ssh_keys_add() {
   fi
 
   keysf="$(hm_access_ssh_keys_ensure_dir "${user}")" || return 1
+  # po ensure_dir: bez symlinków; jeszcze raz przed zapisem
+  [[ -L "${keysf}" ]] && { hm_err "Odmowa: ${keysf} jest symlinkiem."; return 1; }
+  local home
+  home="$(hm_access_unix_home "${user}")"
+  hm_access_ssh_path_ok "${user}" "${home}" "${keysf}" || return 1
   if grep -Fqx "${key_line}" "${keysf}" 2>/dev/null; then
     hm_ok "Klucz już jest w ${keysf}."
     return 0
   fi
-  printf '%s\n' "${key_line}" >> "${keysf}"
+  if hm_have_cmd runuser; then
+    printf '%s\n' "${key_line}" | runuser -u "${user}" -- tee -a "${keysf}" >/dev/null || {
+      hm_err "Zapis klucza (runuser) nieudany."
+      return 1
+    }
+  else
+    printf '%s\n' "${key_line}" >> "${keysf}" || return 1
+  fi
+  [[ -L "${keysf}" ]] && { hm_err "Odmowa po zapisie: ${keysf} jest symlinkiem."; return 1; }
   chmod 600 "${keysf}"
-  chown "${user}:${user}" "${keysf}" 2>/dev/null || chown "${user}" "${keysf}"
+  chown -h "${user}:${user}" "${keysf}" 2>/dev/null || chown -h "${user}" "${keysf}"
   hm_ok "Dodano klucz do ${keysf}"
 }
 
@@ -284,11 +392,18 @@ hm_access_ssh_keys_remove() {
   hm_access_resolve_site "${domain_arg}" || return 1
   domain="${HM_SITE_DOMAIN}"
   user="$(hm_access_require_site_user "${domain}")" || return 1
+  local home
+  home="$(hm_access_unix_home "${user}")"
   keysf="$(hm_access_ssh_keys_file "${user}" 2>/dev/null || true)"
   [[ -n "${keysf}" && -f "${keysf}" ]] || {
     hm_err "Brak authorized_keys."
     return 1
   }
+  if [[ -L "${home}/.ssh" || -L "${keysf}" ]]; then
+    hm_err "Odmowa: ~/.ssh lub authorized_keys jest symlinkiem."
+    return 1
+  fi
+  hm_access_ssh_path_ok "${user}" "${home}" "${keysf}" || return 1
 
   if ! hm_confirm_plan "access ssh keys remove #${idx} — ${domain}" \
     "Usunięcie klucza uniemożliwi logowanie tym kluczem." \
@@ -312,9 +427,20 @@ hm_access_ssh_keys_remove() {
     hm_err "Brak klucza o numerze ${idx} (jest ${n})."
     return 1
   fi
-  mv "${tmp}" "${keysf}"
+  # zamień plik bez podążania za symlinkiem (już odrzucony); cat > zachowuje inode/owner lepiej niż mv z /tmp
+  if [[ -L "${keysf}" ]]; then
+    rm -f "${tmp}"
+    hm_err "Odmowa: ${keysf} jest symlinkiem."
+    return 1
+  fi
+  if ! cat "${tmp}" > "${keysf}"; then
+    rm -f "${tmp}"
+    hm_err "Zapis authorized_keys nieudany."
+    return 1
+  fi
+  rm -f "${tmp}"
   chmod 600 "${keysf}"
-  chown "${user}:${user}" "${keysf}" 2>/dev/null || chown "${user}" "${keysf}"
+  chown -h "${user}:${user}" "${keysf}" 2>/dev/null || chown -h "${user}" "${keysf}"
   hm_ok "Usunięto klucz #${idx}."
 }
 
