@@ -41,6 +41,7 @@ hm_tab_complete() {
   local re_backup_site='backup[[:space:]]+(site|restore|list)[[:space:]]'
   local re_cron_site='cron[[:space:]]+(site|edit)[[:space:]]'
   local re_pm2_site='(pm2|node|apps)[[:space:]]+site[[:space:]]'
+  local re_sup_action='supervisor[[:space:]]+(start|stop|restart|logs|log|tail)[[:space:]]'
 
   if [[ "${prefix}" =~ $re_empty ]]; then
     while IFS= read -r m; do
@@ -58,6 +59,11 @@ hm_tab_complete() {
         ;;
       logs|log)
         for m in errors stats top follow live help; do
+          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+        done
+        ;;
+      health|status)
+        for m in --ram --cpu --count help; do
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
         done
         ;;
@@ -360,9 +366,15 @@ hm_tab_complete() {
         done
         ;;
       supervisor)
-        for m in status all info start stop restart reread update logs ctl help; do
-          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
-        done
+        if [[ "${prefix}" =~ $re_sup_action ]]; then
+          while IFS= read -r m; do
+            [[ -n "${m}" ]] && matches+=("${m}")
+          done < <(hm_complete_filter_supervisor "${partial}")
+        else
+          for m in status all info start stop restart reread update logs ctl help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
         ;;
     esac
   fi

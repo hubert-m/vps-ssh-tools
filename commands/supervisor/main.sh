@@ -152,6 +152,25 @@ hm_supervisor_filtered_names() {
   done < <(hm_supervisor_ctl status 2>/dev/null || true)
 }
 
+# Wszystkie nazwy programów (group:process) — cicho, do Tab / skryptów.
+hm_supervisor_list_names() {
+  hm_detect_supervisor >/dev/null 2>&1 || true
+  [[ "${SUPERVISOR:-no}" == "yes" ]] || return 0
+  local ctl="${SUPERVISOR_CTL:-}"
+  [[ -n "${ctl}" && -x "${ctl}" ]] || return 0
+  local -a args=()
+  if [[ -n "${SUPERVISOR_CONF:-}" && -f "${SUPERVISOR_CONF}" ]]; then
+    args+=(-c "${SUPERVISOR_CONF}")
+  fi
+  local line name
+  while IFS= read -r line; do
+    [[ -n "${line}" ]] || continue
+    name="${line%%[[:space:]]*}"
+    [[ -n "${name}" ]] || continue
+    printf '%s\n' "${name}"
+  done < <("${ctl}" "${args[@]}" status 2>/dev/null || true)
+}
+
 hm_supervisor_status_lines() {
   hm_supervisor_ctl status 2>/dev/null
 }

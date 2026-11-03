@@ -72,6 +72,35 @@ hm_complete_filter_sites() {
   printf '%s\n' "${out[@]}"
 }
 
+# Tab: nazwy workerów Supervisora (group:name) + „all”.
+hm_complete_filter_supervisor() {
+  local partial="${1:-}"
+  local partial_lc name nlc
+  partial_lc="$(printf '%s' "${partial}" | tr '[:upper:]' '[:lower:]')"
+  local -a out=()
+
+  if [[ -z "${partial_lc}" || "all" == "${partial_lc}"* ]]; then
+    out+=("all")
+  fi
+
+  if declare -F hm_supervisor_list_names >/dev/null 2>&1; then
+    while IFS= read -r name; do
+      [[ -n "${name}" ]] || continue
+      nlc="$(printf '%s' "${name}" | tr '[:upper:]' '[:lower:]')"
+      if [[ -z "${partial_lc}" || "${nlc}" == "${partial_lc}"* || "${nlc}" == *"${partial_lc}"* ]]; then
+        out+=("${name}")
+      fi
+    done < <(hm_supervisor_list_names 2>/dev/null || true)
+  fi
+
+  local seen="|" c
+  for c in "${out[@]}"; do
+    [[ "${seen}" == *"|${c}|"* ]] && continue
+    seen+="${c}|"
+    printf '%s\n' "${c}"
+  done
+}
+
 hm_complete_commands() {
   local partial="$1"
   local -a cmds=()

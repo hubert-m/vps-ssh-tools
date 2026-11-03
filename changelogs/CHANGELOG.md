@@ -20,6 +20,8 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `disk` / `disk --heavy` — `hm_status_clear` przed wypisaniem wyników (status nie dokleja się do pierwszej linii)
 - Feat: `mysql heavy [--min-size X]` — bazy ≥ X oraz tabele ≥ X (domyślnie 1G; `information_schema`)
 - UX: rozmiary wszędzie w formacie jak `mysql` (`6.44 GB` / `1.00 KB`) — `disk`, `size`, `redis`, `pm2` (`hm_human_size` / `hm_print_du_depth`)
+- Feat: `health --ram` / `health --cpu` [`--count N`] — top procesów (RSS/%CPU) z mapowaniem domeny (`/home/…`), systemd service i cwd
+- Feat: Tab — `supervisor start|stop|restart|logs <name>` uzupełnia nazwy workerów (oraz `all`)
 - Feat: `chrome` / detect — systemd `chrome-headless`, Puppeteer `~/.cache/puppeteer/chrome`, CDP `:9222` (+ `FORCE_CHROME_CDP`)
 - Fix: `redis sites` — po skanie przywraca poprzedni kontekst REPL (`hm_clear_site_context` / `use`)
 - Fix: `exit` / `quit` w kontekście `use <domena>` — powrót do `hmtools>` (nie wyjście z REPL)
