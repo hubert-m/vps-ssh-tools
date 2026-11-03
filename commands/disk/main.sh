@@ -34,8 +34,10 @@ hm_disk_section_home() {
   fi
   echo "${C_BOLD}Top katalogi w /home${C_RESET}"
   hm_status_line "Obliczanie rozmiaru katalogów w /home..."
-  du -h --max-depth=1 /home 2>/dev/null | sort -hr | head -25
+  local out=""
+  out="$(du -h --max-depth=1 /home 2>/dev/null | sort -hr | head -25)" || true
   hm_status_clear
+  [[ -n "${out}" ]] && printf '%s\n' "${out}"
 }
 
 hm_disk_section_summary() {
@@ -98,6 +100,11 @@ hm_disk_heavy_walk() {
     [[ -n "${line}" ]] && rows+=("${line}")
   done < <(hm_disk_top_entries "${path}" "${count}")
 
+  # Status (\r) musi zniknąć PRZED pierwszym echo — inaczej wynik dokleja się do „…potrwać…”
+  if [[ "${level}" -eq 1 ]]; then
+    hm_status_clear
+  fi
+
   if [[ "${#rows[@]}" -eq 0 ]]; then
     echo "${indent}${C_DIM}(brak wpisów / brak dostępu)${C_RESET}"
     return 0
@@ -123,7 +130,6 @@ hm_disk_section_heavy() {
   echo "${C_BOLD}Najcięższe w /${C_RESET}  (top ${count}, głębokość ${deep})"
   hm_status_line "Skanowanie najcięższych ścieżek od / (może chwilę potrwać)..."
   hm_disk_heavy_walk "/" "${count}" "${deep}" 1
-  hm_status_clear
 }
 
 cmd_disk() {

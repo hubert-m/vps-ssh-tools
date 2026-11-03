@@ -17,6 +17,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 ## [Unreleased] / [v0.1.10]
 
 - Fix: `disk --heavy` — `du -b` (bajty); wcześniej bloki 1K traktowane jak bajty → rozmiary ~1000× za małe
+- Fix: `disk` / `disk --heavy` — `hm_status_clear` przed wypisaniem wyników (status nie dokleja się do pierwszej linii)
 - Feat: `chrome` / detect — systemd `chrome-headless`, Puppeteer `~/.cache/puppeteer/chrome`, CDP `:9222` (+ `FORCE_CHROME_CDP`)
 - Fix: `redis sites` — po skanie przywraca poprzedni kontekst REPL (`hm_clear_site_context` / `use`)
 - Fix: `exit` / `quit` w kontekście `use <domena>` — powrót do `hmtools>` (nie wyjście z REPL)
