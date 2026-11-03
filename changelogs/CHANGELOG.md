@@ -29,6 +29,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `access … <domena>` — `hm_access_resolve_site` bez subshella `$(…)` (HM_SITE_*); `access status` → rc≠0 przy błędzie
 - Fix: `access ssh keys` — odmowa symlinków `~/.ssh`/`authorized_keys` (bez zapisu/chown do plików poza home)
 - Fix: `redis` — parse ERR/(error) przy config set / client kill; wartość ze spacjami; UX sites/clients/slowlog/restart/NOAUTH
+- Fix: `redis flushdb N` — `redis-cli -n N FLUSHDB` (osobny SELECT nie zmienia DB; wcześniej czyściło db0)
 
 ## [v0.1.8]
 

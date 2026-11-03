@@ -320,18 +320,24 @@ hm_redis_cmd_flushdb() {
   hm_redis_require || return 1
   if ! hm_confirm_plan "redis flushdb ${n}" \
     "Usunie WSZYSTKIE klucze w bazie db${n}." \
-    "SELECT ${n}" \
-    "FLUSHDB"; then
+    "redis-cli -n ${n} FLUSHDB (jedno połączenie — SELECT w osobnym procesie nie działa)"; then
     return 1
   fi
+  # WAŻNE: SELECT + FLUSHDB w osobnych redis-cli = zawsze czyści db0.
+  # Użyj -n N w tym samym procesie.
   local out
-  out="$(hm_redis_cli_checked SELECT "${n}")" || {
-    hm_err "SELECT ${n} nieudany: ${out:-}"
-    return 1
-  }
+  REDIS_CLI_DB="${n}"
   if ! out="$(hm_redis_cli_checked FLUSHDB)"; then
-    hm_err "FLUSHDB nieudany: ${out:-}"
+    unset REDIS_CLI_DB
+    hm_err "FLUSHDB db${n} nieudany: ${out:-}"
     return 1
+  fi
+  # weryfikacja DBSIZE w tej samej bazie
+  local left
+  left="$(REDIS_CLI_DB="${n}" hm_redis_cli DBSIZE 2>/dev/null | tr -d '\r' || true)"
+  unset REDIS_CLI_DB
+  if [[ "${left}" =~ ^[0-9]+$ && "${left}" -ne 0 ]]; then
+    hm_warn "FLUSHDB db${n}: DBSIZE nadal ${left} (oczekiwano 0)."
   fi
   hm_ok "FLUSHDB db${n} OK."
 }

@@ -135,6 +135,7 @@ hm_redis_bind_is_public() {
 }
 
 # Uruchom redis-cli z wykrytymi parametrami; args = komenda Redis
+# Opcjonalnie: REDIS_CLI_DB=N → dodaje -n N (ta sama sesja/połączenie)
 hm_redis_cli() {
   [[ -n "${REDIS_BIN}" && -x "${REDIS_BIN}" ]] || {
     hm_err "Brak redis-cli w PATH."
@@ -145,6 +146,9 @@ hm_redis_cli() {
     args+=(-s "${REDIS_SOCK}")
   else
     args+=(-h "${REDIS_HOST:-127.0.0.1}" -p "${REDIS_PORT:-6379}")
+  fi
+  if [[ -n "${REDIS_CLI_DB:-}" && "${REDIS_CLI_DB}" =~ ^[0-9]+$ ]]; then
+    args+=(-n "${REDIS_CLI_DB}")
   fi
   # AUTH bez hasła w argv innych procesów — REDISCLI_AUTH (redis-cli ≥6)
   if [[ -n "${REDIS_PASS}" ]]; then
