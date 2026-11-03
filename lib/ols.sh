@@ -218,8 +218,10 @@ hm_ols_htaccess_check() {
   local vhost="${3:-${HM_SITE_VHOST:-}}"
 
   [[ -n "${domain}" ]] || { hm_err "Podaj domenę lub wejdź w kontekst (use)."; return 1; }
+  local _sc_pushed=0
   if [[ -z "${docroot}" || -z "${vhost}" ]]; then
-    hm_set_site_context "${domain}" 2>/dev/null || true
+    hm_site_context_push "${domain}" 2>/dev/null || true
+    _sc_pushed=1
     docroot="${HM_SITE_DOCROOT:-${docroot}}"
     vhost="${HM_SITE_VHOST:-${vhost}}"
   fi
@@ -270,6 +272,7 @@ hm_ols_htaccess_check() {
       hm_ok ".htaccess nie wygląda na nowszy niż proces OLS."
     fi
   fi
+  [[ "${_sc_pushed}" -eq 1 ]] && hm_site_context_pop
 }
 
 hm_ols_htaccess_enable() {

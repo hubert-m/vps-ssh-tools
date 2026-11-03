@@ -536,15 +536,7 @@ cmd_pm2() {
       local domain="${1:-${HM_SITE_DOMAIN}}"
       [[ -n "${domain}" ]] || { hm_err "Użycie: pm2 site <domena>"; return 1; }
       domain="$(hm_find_site_by_arg "${domain}")" || return 1
-      # tymczasowy kontekst — nie zmienia aktywnego REPL use
-      local _d="${HM_SITE_DOMAIN:-}" _r="${HM_SITE_ROOT:-}" _u="${HM_SITE_USER:-}" \
-            _dr="${HM_SITE_DOCROOT:-}" _v="${HM_SITE_VHOST:-}" _p="${HM_SITE_PHP:-}" \
-            _l="${HM_SITE_LOGS:-}" _s="${HM_SITE_STATUS:-}"
-      hm_set_site_context "${domain}"
-      cmd_pm2 list
-      HM_SITE_DOMAIN="${_d}" HM_SITE_ROOT="${_r}" HM_SITE_USER="${_u}"
-      HM_SITE_DOCROOT="${_dr}" HM_SITE_VHOST="${_v}" HM_SITE_PHP="${_p}"
-      HM_SITE_LOGS="${_l}" HM_SITE_STATUS="${_s}"
+      hm_with_site_context "${domain}" cmd_pm2 list
       ;;
     ports)
       echo

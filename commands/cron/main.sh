@@ -173,7 +173,7 @@ hm_cron_grep_file_or_text() {
 hm_cron_list_site() {
   local domain="${1:-${HM_SITE_DOMAIN}}"
   [[ -n "${domain}" ]] || { hm_err "Brak domeny — use <domena> albo cron site <domena>."; return 1; }
-  hm_set_site_context "${domain}"
+  hm_site_context_push "${domain}" || return 1
   local user="${HM_SITE_USER:-}"
   local path_n="${HM_SITE_ROOT:-}"
   # nie używaj literału OLS jako ścieżki do grep
@@ -226,6 +226,7 @@ hm_cron_list_site() {
     echo "(brak dopasowań)"
     echo
   fi
+  hm_site_context_pop
 }
 
 hm_cron_edit_user() {
@@ -298,12 +299,13 @@ cmd_cron() {
           return 1
         fi
       fi
-      # jeśli podano domenę zamiast usera
+      # jeśli podano domenę zamiast usera — bez zmiany kontekstu REPL
       if ! id "${who}" >/dev/null 2>&1; then
         local dom
         if dom="$(hm_find_site_by_arg "${who}" 2>/dev/null)"; then
-          hm_set_site_context "${dom}"
+          hm_site_context_push "${dom}" || return 1
           who="${HM_SITE_USER}"
+          hm_site_context_pop
         fi
       fi
       hm_cron_edit_user "${who}"

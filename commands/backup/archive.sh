@@ -176,7 +176,8 @@ hm_archive_pack_ssl() {
   tar -chzf "${out_tar}" "${paths[@]}" 2>/dev/null
 }
 
-hm_backup_archive_site() {
+# Właściwa logika archiwum — wywoływana z hm_backup_archive_site (push/pop kontekstu REPL).
+_hm_backup_archive_site_body() {
   local domain="${1:-}"
   [[ -n "${domain}" ]] || {
     hm_err "Użycie: webs archive <domena>  /  backup archive <domena>  /  archive (w kontekście)"
@@ -338,16 +339,14 @@ hm_backup_archive_site() {
   local pm2_json="${TMP_DIR}/pm2-${domain}.json"
   echo '[]' > "${pm2_json}"
   if [[ "${#HM_DEL_PM2[@]}" -gt 0 ]]; then
-    local save_d="${HM_SITE_DOMAIN:-}" save_r="${HM_SITE_ROOT:-}" save_u="${HM_SITE_USER:-}"
+    hm_site_context_push
     HM_SITE_DOMAIN="${domain}"
     HM_SITE_ROOT="${HM_DEL_ROOT}"
     HM_SITE_USER="${HM_DEL_USER}"
     local jlist
     jlist="$(hm_pm2_jlist 2>/dev/null || echo '[]')"
     printf '%s\n' "${jlist}" > "${pm2_json}"
-    HM_SITE_DOMAIN="${save_d}"
-    HM_SITE_ROOT="${save_r}"
-    HM_SITE_USER="${save_u}"
+    hm_site_context_pop
   fi
   if [[ -s "${pm2_json}" ]]; then
     hm_rclone_copyto "${pm2_json}" "${remote_base}/pm2-processes.json" \
@@ -403,4 +402,17 @@ EOF
 
   hm_ok "Archiwizacja ${domain} zakończona. Snapshot: ${remote_base}"
   hm_info "Przywrócenie: backup restore ${domain} ${stamp}"
+}
+
+hm_backup_archive_site() {
+  local prev="${HM_SITE_DOMAIN:-}"
+  local rc=0
+  hm_site_context_push
+  _hm_backup_archive_site_body "$@" || rc=$?
+  hm_site_context_pop
+  # archiwum może usunąć stronę — nie zostawiaj kontekstu usuniętej domeny
+  if [[ -n "${prev}" ]] && ! hm_find_site_by_arg "${prev}" >/dev/null 2>&1; then
+    hm_clear_site_context
+  fi
+  return "${rc}"
 }

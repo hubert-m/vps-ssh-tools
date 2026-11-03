@@ -361,8 +361,8 @@ hm_site_collect_delete_inventory() {
     done < <(hm_del_mysql_users_for_db "${name}")
   done
 
-  # PM2 (tymczasowy kontekst strony)
-  local save_d="${HM_SITE_DOMAIN:-}" save_r="${HM_SITE_ROOT:-}" save_u="${HM_SITE_USER:-}"
+  # PM2 (tymczasowy kontekst strony — bez zmiany REPL)
+  hm_site_context_push
   HM_SITE_DOMAIN="${domain}"
   HM_SITE_ROOT="${HM_DEL_ROOT}"
   HM_SITE_USER="${HM_DEL_USER}"
@@ -378,9 +378,7 @@ hm_site_collect_delete_inventory() {
     [[ -z "${pm2home}" ]] && pm2home="$(hm_pm2_home_dirs 2>/dev/null | head -1 || true)"
     HM_DEL_PM2+=("${pname}|${pid}|${port:-}|${pm2home:-}")
   done < <(hm_pm2_parse_apps 2>/dev/null | hm_pm2_match_site "${domain}" "${HM_DEL_ROOT}" || true)
-  HM_SITE_DOMAIN="${save_d}"
-  HM_SITE_ROOT="${save_r}"
-  HM_SITE_USER="${save_u}"
+  hm_site_context_pop
 
   # OLS vhost dir + conf maps
   if [[ -n "${OLS_VHOSTS:-}" && -d "${OLS_VHOSTS}/${domain}" ]]; then

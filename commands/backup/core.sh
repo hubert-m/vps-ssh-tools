@@ -241,7 +241,7 @@ hm_backup_site() {
   hm_rclone_check || return 1
   hm_backup_check_space || return 1
 
-  hm_set_site_context "${domain}"
+  hm_site_context_push "${domain}" || return 1
   local stamp remote_base
   stamp="$(hm_backup_stamp)"
   # Drive: <root>/<domena>/<stamp>/
@@ -282,6 +282,7 @@ hm_backup_site() {
   fi
   if [[ -z "${backup_root}" || ! -d "${backup_root}" ]]; then
     hm_err "Brak katalogu strony do backupu."
+    hm_site_context_pop
     return 1
   fi
   local files_ok=1
@@ -294,6 +295,7 @@ hm_backup_site() {
     hm_err "Backup ${domain} niekompletny — usuwam niepełny snapshot z Drive (${remote_base})."
     rclone purge "${remote_base}" 2>/dev/null || rclone delete "${remote_base}" --rmdirs 2>/dev/null || true
     rm -f "${manifest}"
+    hm_site_context_pop
     return 1
   fi
 
@@ -331,6 +333,7 @@ EOF
     rm -f "${manifest}"
     hm_err "Upload manifest.json nieudany — usuwam niepełny snapshot ${remote_base}."
     rclone purge "${remote_base}" 2>/dev/null || true
+    hm_site_context_pop
     return 1
   fi
   rm -f "${manifest}"
@@ -338,9 +341,11 @@ EOF
   if [[ "${status}" != "ok" ]]; then
     hm_err "Backup ${domain} NIEKOMPLETNY → ${remote_base} (status=${status}; błędy DB: ${db_fail})."
     [[ "${#failed_dbs[@]}" -gt 0 ]] && hm_warn "Nieudane bazy: ${failed_dbs[*]}"
+    hm_site_context_pop
     return 1
   fi
   hm_ok "Backup strony ${domain} zakończony → ${remote_base}"
+  hm_site_context_pop
 }
 
 hm_backup_system_configs() {
@@ -444,6 +449,7 @@ hm_backup_full() {
   hm_discover_sites
   local domain
   local si=0 stotal="${#HM_SITES_LIST[@]}"
+  hm_site_context_push
   for domain in "${HM_SITES_LIST[@]}"; do
     si=$((si + 1))
     hm_progress_bar "${si}" "${stotal}" "Backup strony: ${domain}"
@@ -464,6 +470,7 @@ hm_backup_full() {
       hm_warn "Brak plików dla ${domain}."
     fi
   done
+  hm_site_context_pop
   hm_progress_done
 
   local status="ok"

@@ -412,11 +412,15 @@ cmd_security_scan() {
   [[ -n "${domain}" ]] || { hm_err "Użycie: security scan (w use <domena>) lub security scan <domena>"; return 1; }
   if [[ -z "${HM_SITE_DOMAIN}" || "${HM_SITE_DOMAIN}" != "${domain}" ]]; then
     domain="$(hm_find_site_by_arg "${domain}" 2>/dev/null || echo "${domain}")"
-    hm_set_site_context "${domain}" || true
   fi
+  hm_site_context_push "${domain}" || return 1
   local doc="${HM_SITE_DOCROOT:-}"
   local root="${HM_SITE_ROOT:-}"
-  [[ -n "${doc}" && -d "${doc}" ]] || { hm_err "Brak docroot dla ${domain}."; return 1; }
+  if [[ -z "${doc}" || ! -d "${doc}" ]]; then
+    hm_err "Brak docroot dla ${domain}."
+    hm_site_context_pop
+    return 1
+  fi
 
   echo "${C_BOLD}Skan bezpieczeństwa — ${domain}${C_RESET}"
   echo "  Docroot: ${doc}"
@@ -492,6 +496,7 @@ cmd_security_scan() {
   else
     hm_warn "Skan: ${issues} kategori(e) z alertami."
   fi
+  hm_site_context_pop
 }
 
 _hm_cmd_register security cmd_security 0 sec

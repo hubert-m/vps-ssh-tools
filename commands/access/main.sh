@@ -47,24 +47,29 @@ cmd_access() {
   shift || true
   hm_detect_all
 
+  # resolve_site ustawia HM_SITE_* na czas komendy — nie zostawiaj use <domena> w REPL
+  hm_site_context_push
+  local rc=0
   case "${sub}" in
     status|stat|info|"")
-      hm_access_status "$@"
+      hm_access_status "$@" || rc=$?
       ;;
     ssh)
-      hm_access_ssh_dispatch "$@"
+      hm_access_ssh_dispatch "$@" || rc=$?
       ;;
     ftp)
-      hm_access_ftp_dispatch "$@"
+      hm_access_ftp_dispatch "$@" || rc=$?
       ;;
     help|-h|--help)
-      hm_help_topic access
+      hm_help_topic access || rc=$?
       ;;
     *)
       hm_err "Nieznane: ${sub}. access help"
-      return 1
+      rc=1
       ;;
   esac
+  hm_site_context_pop
+  return "${rc}"
 }
 
 _hm_cmd_register access cmd_access 0

@@ -69,7 +69,7 @@ hm_print_site_info() {
   local domain="${1:-${HM_SITE_DOMAIN}}"
   [[ -n "${domain}" ]] || { hm_err "Brak domeny w kontekście."; return 1; }
 
-  hm_set_site_context "${domain}"
+  hm_site_context_push "${domain}" || return 1
 
   local size_root=0 size_doc=0
   hm_progress_bar 1 3 "Rozmiar środowiska"
@@ -102,6 +102,7 @@ ${C_BOLD}Szczegóły: ${domain}${C_RESET}
 ${C_BOLD}Bazy danych:${C_RESET}
 EOF
   hm_print_dbs_for_site "${domain}" "${HM_SITE_DOCROOT}" "${HM_SITE_ROOT}" "${HM_SITE_USER}"
+  hm_site_context_pop
 }
 
 hm_print_site_ssl() {
@@ -197,7 +198,7 @@ hm_print_site_logs() {
   local domain="${1:-${HM_SITE_DOMAIN}}"
   local lines="${2:-40}"
   hm_detect_all 2>/dev/null || true
-  hm_set_site_context "${domain}"
+  hm_site_context_push "${domain}" || return 1
   local f found=0
   while IFS= read -r f; do
     [[ -n "${f}" ]] || continue
@@ -218,13 +219,14 @@ hm_print_site_logs() {
       fi
     fi
   fi
+  hm_site_context_pop
 }
 
 hm_site_logs_errors() {
   local domain="${1:-${HM_SITE_DOMAIN}}"
   local lines="${2:-80}"
   hm_detect_all 2>/dev/null || true
-  hm_set_site_context "${domain}"
+  hm_site_context_push "${domain}" || return 1
   local tmp pattern
   tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-err.XXXXXX")"
   pattern='\[ERROR\]|\[CRIT\]|\[ALERT\]|PHP Fatal|PHP Parse|PHP Warning| 500 | 502 | 503 | 504 |" 500 |" 502 |" 503 |" 504 |upstream|segfault|Out of memory'
@@ -257,6 +259,7 @@ hm_site_logs_errors() {
   if [[ "${any}" -eq 0 && ! -s "${tmp}" ]]; then
     hm_warn "Brak plików error/stderr."
     rm -f "${tmp}"
+    hm_site_context_pop
     return 0
   fi
 
@@ -272,12 +275,13 @@ hm_site_logs_errors() {
     echo "  (brak)"
   fi
   rm -f "${tmp}"
+  hm_site_context_pop
 }
 
 hm_site_logs_stats() {
   local domain="${1:-${HM_SITE_DOMAIN}}"
   hm_detect_all 2>/dev/null || true
-  hm_set_site_context "${domain}"
+  hm_site_context_push "${domain}" || return 1
   local access="" f
   while IFS= read -r f; do
     [[ -n "${f}" ]] || continue
@@ -287,6 +291,7 @@ hm_site_logs_stats() {
 
   if [[ -z "${access}" || ! -f "${access}" ]]; then
     hm_err "Brak access.log dla ${domain}."
+    hm_site_context_pop
     return 1
   fi
 
@@ -340,12 +345,13 @@ hm_site_logs_stats() {
     | sort | uniq -c | sort -nr | head -15 \
     | awk '{printf "  %6s  %s\n", $1, substr($0, index($0,$2))}'
   hm_progress_done
+  hm_site_context_pop
 }
 
 hm_site_logs_follow() {
   local domain="${1:-${HM_SITE_DOMAIN}}"
   hm_detect_all 2>/dev/null || true
-  hm_set_site_context "${domain}"
+  hm_site_context_push "${domain}" || return 1
   local -a files=()
   local f
   while IFS= read -r f; do
@@ -353,8 +359,10 @@ hm_site_logs_follow() {
   done < <(hm_site_log_candidates "${domain}" all)
   if [[ "${#files[@]}" -eq 0 ]]; then
     hm_err "Brak plików logów do śledzenia."
+    hm_site_context_pop
     return 1
   fi
   hm_info "tail -F (${#files[@]} plików) — Ctrl+C wraca do hmtools"
   hm_run_on_tty tail -n 20 -F "${files[@]}"
+  hm_site_context_pop
 }

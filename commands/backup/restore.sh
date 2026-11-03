@@ -347,7 +347,7 @@ hm_backup_restore_ols_from_archive() {
   return 0
 }
 
-hm_backup_restore() {
+_hm_backup_restore_body() {
   local domain="${1:-}"
   shift || true
   local stamp="" files_only=0 db_only=0
@@ -531,4 +531,12 @@ hm_backup_restore() {
 
   hm_backup_ols_reload
   hm_ok "Restore ${domain} (${stamp}) zakończony."
+}
+
+hm_backup_restore() {
+  local rc=0
+  hm_site_context_push
+  _hm_backup_restore_body "$@" || rc=$?
+  hm_site_context_pop
+  return "${rc}"
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regresja: redis sites przywraca kontekst REPL po skanie
+# Regresja: redis sites przywraca kontekst REPL po skanie (push/pop)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="${ROOT}/commands/redis/main.sh"
@@ -7,23 +7,17 @@ SRC="${ROOT}/commands/redis/main.sh"
 block="$(sed -n '/^hm_redis_cmd_sites()/,/^hm_redis_cmd_flushdb()/p' "${SRC}" | sed '$d')"
 
 fail=0
-if ! printf '%s\n' "${block}" | grep -q 'prev_domain'; then
-  echo "FAIL brak zapisu prev_domain"
+if ! printf '%s\n' "${block}" | grep -q 'hm_site_context_push'; then
+  echo "FAIL brak hm_site_context_push"
   fail=1
 else
-  echo "OK   zapis prev_domain"
+  echo "OK   hm_site_context_push"
 fi
-if ! printf '%s\n' "${block}" | grep -q 'hm_clear_site_context'; then
-  echo "FAIL brak hm_clear_site_context przy pustym kontekście"
+if ! printf '%s\n' "${block}" | grep -q 'hm_site_context_pop'; then
+  echo "FAIL brak hm_site_context_pop"
   fail=1
 else
-  echo "OK   clear gdy był hmtools>"
-fi
-if ! printf '%s\n' "${block}" | grep -q 'hm_set_site_context "${prev_domain}"'; then
-  echo "FAIL brak przywrócenia prev_domain"
-  fail=1
-else
-  echo "OK   restore poprzedniego use"
+  echo "OK   hm_site_context_pop"
 fi
 
 if [[ "${fail}" -ne 0 ]]; then

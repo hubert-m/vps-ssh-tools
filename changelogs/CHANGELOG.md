@@ -20,6 +20,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Feat: `chrome` / detect — systemd `chrome-headless`, Puppeteer `~/.cache/puppeteer/chrome`, CDP `:9222` (+ `FORCE_CHROME_CDP`)
 - Fix: `redis sites` — po skanie przywraca poprzedni kontekst REPL (`hm_clear_site_context` / `use`)
 - Fix: `exit` / `quit` w kontekście `use <domena>` — powrót do `hmtools>` (nie wyjście z REPL)
+- Fix: tymczasowy `hm_set_site_context` (redis/cron/security/backup/access/pm2/logs/ols/archive/restore) — `hm_site_context_push`/`pop` wraca do poprzedniego REPL
 
 ## [v0.1.9]
 
