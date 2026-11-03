@@ -73,18 +73,42 @@ _hm_os_do_firewall_ban() {
   return 1
 }
 
-# Exact token: reguła DENY/REJECT z tym IP (nie ALLOW from IP, nie substring 1.2.3.4 ⊂ 1.2.3.45)
-_hm_os_ufw_has_deny_from() {
+# Pełny ban: DENY/REJECT z To=Anywhere|Anywhere (v6) i From=IP (ew. /32|/128).
+# Port-specific (np. „80 DENY from IP”) ≠ ban — stdin = wyjście ufw status.
+_hm_os_ufw_parse_has_full_deny() {
   local ip="${1:-}"
   [[ -n "${ip}" ]] || return 1
-  ufw status 2>/dev/null | awk -v ip="${ip}" '
-    $0 ~ /(^|[[:space:]])(DENY|REJECT)([[:space:]]|$)/ {
-      for (i = 1; i <= NF; i++) {
-        if ($i == ip) { found = 1; exit }
+  awk -v ip="${ip}" '
+    BEGIN { found = 0 }
+    {
+      line = $0
+      # status numbered: "[ 1] Anywhere ..."
+      sub(/^[[:space:]]*\[[[:space:]]*[0-9]+\][[:space:]]*/, "", line)
+      # To musi być Anywhere / Anywhere (v6) — bez portu/protokołu
+      if (line ~ /^Anywhere \(v6\)[[:space:]]+(DENY|REJECT)([[:space:]]+(IN|OUT))?[[:space:]]+/) {
+        rest = line
+        sub(/^Anywhere \(v6\)[[:space:]]+(DENY|REJECT)([[:space:]]+(IN|OUT))?[[:space:]]+/, "", rest)
+      } else if (line ~ /^Anywhere[[:space:]]+(DENY|REJECT)([[:space:]]+(IN|OUT))?[[:space:]]+/) {
+        rest = line
+        sub(/^Anywhere[[:space:]]+(DENY|REJECT)([[:space:]]+(IN|OUT))?[[:space:]]+/, "", rest)
+      } else {
+        next
       }
+      # From: pierwszy token (IP lub IP/32|128); ignoruj „(v6)” jako osobne pole
+      n = split(rest, a, /[[:space:]]+/)
+      if (n < 1) next
+      from = a[1]
+      gsub(/\/(32|128)$/, "", from)
+      if (from == ip) { found = 1; exit }
     }
     END { exit found ? 0 : 1 }
   '
+}
+
+_hm_os_ufw_has_deny_from() {
+  local ip="${1:-}"
+  [[ -n "${ip}" ]] || return 1
+  ufw status 2>/dev/null | _hm_os_ufw_parse_has_full_deny "${ip}"
 }
 
 # Alias (stare wywołania) — tylko DENY/REJECT

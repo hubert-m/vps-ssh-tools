@@ -8,4 +8,5 @@
 - Fix: `chrome version` — zachowanie rc timeoutu (124), bez `if ! …; then $?` (fałszywe rc=0)
 - Feat: `redis` — detekcja, status/memory/dbs/clients/slowlog/sites, config/flush/restart/client kill
 - Fix: zapis `httpd_config.conf` przez `cat >` (nie `mv` z mktemp 0600); bez narastających pustych linii przy archive/restore
+- Fix: `security ban` — pełny ban ufw tylko przy DENY `Anywhere`/`Anywhere (v6)` (nie DENY na pojedynczy port)
 
