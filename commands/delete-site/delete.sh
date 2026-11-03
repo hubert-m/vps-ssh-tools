@@ -540,22 +540,45 @@ hm_ols_remove_domain_from_conf() {
   local tmp
   tmp="$(mktemp)"
   # virtualHost / virtualhost / map — case-insensitive; też osierocone
-  # „# hmtools restore — <domena>” (zostawały po archive/delete, kumulowały się)
+  # „# hmtools restore — <domena>” (zostawały po archive/delete, kumulowały się).
+  # Bufor prev: kasując marker/blok/mapę usuwamy też poprzedzającą pustą linię
+  # (restore dopisywał „\\n# hmtools restore” — bez tego plik puchnie po cyklach).
+  # Zapis: cat > conf (nie mv z mktemp) — zachowuje mode/owner jak lib/ols.sh.
   awk -v dom="${domain}" '
-    BEGIN { skip=0; depth=0 }
+    BEGIN { skip=0; depth=0; have_prev=0; prev="" }
+    function flush_prev() {
+      if (have_prev) print prev
+      have_prev=0
+      prev=""
+    }
+    function drop_prev_if_blank() {
+      if (have_prev && prev ~ /^[[:space:]]*$/) {
+        have_prev=0
+        prev=""
+      }
+    }
+    function hold(l) {
+      flush_prev()
+      prev=l
+      have_prev=1
+    }
     {
       line=$0
       first=$1
       second=$2
       gsub(/\{/,"",second)
     }
-    # komentarz markera restore: „# hmtools restore — <domena>” (dowolny separator po restore)
+    # komentarz markera restore: „# hmtools restore — <domena>”
     line ~ /^[[:space:]]*#/ && line ~ /hmtools[[:space:]]+restore/ {
       n = split(line, parts, /[[:space:]]+/)
-      if (n >= 1 && parts[n] == dom) next
+      if (n >= 1 && parts[n] == dom) {
+        drop_prev_if_blank()
+        next
+      }
     }
     tolower(first)=="virtualhost" {
       if (second == dom) {
+        drop_prev_if_blank()
         skip=1
         depth=0
         if (line ~ /\{/) depth=1
@@ -570,9 +593,18 @@ hm_ols_remove_domain_from_conf() {
       }
       next
     }
-    tolower(first)=="map" && second == dom { next }
-    { print }
-  ' "${conf}" > "${tmp}" && mv "${tmp}" "${conf}" || rm -f "${tmp}"
+    tolower(first)=="map" && second == dom {
+      drop_prev_if_blank()
+      next
+    }
+    { hold(line) }
+    END { flush_prev() }
+  ' "${conf}" > "${tmp}" || { rm -f "${tmp}"; return 1; }
+  if ! cat "${tmp}" > "${conf}"; then
+    rm -f "${tmp}"
+    return 1
+  fi
+  rm -f "${tmp}"
 }
 
 hm_site_execute_delete() {

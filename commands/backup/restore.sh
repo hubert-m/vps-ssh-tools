@@ -168,7 +168,13 @@ hm_ols_insert_maps_into_listeners() {
       }
       print
     }
-  ' "${conf}" > "${tmp}" && mv "${tmp}" "${conf}" || rm -f "${tmp}"
+  ' "${conf}" > "${tmp}" || { rm -f "${tmp}"; return 1; }
+  # cat > conf — zachowaj mode/owner (mv z mktemp = 0600)
+  if ! cat "${tmp}" > "${conf}"; then
+    rm -f "${tmp}"
+    return 1
+  fi
+  rm -f "${tmp}"
 }
 
 # Scal ols-httpd-snippet (virtualhost + map) do OLS_CONF — z kopią .hmtools.bak.
@@ -229,7 +235,14 @@ hm_ols_apply_httpd_snippet() {
 
   if [[ -s "${vh_tmp}" ]]; then
     {
-      echo
+      # jedna pusta linia-separator tylko gdy plik nie kończy się już pustą
+      if [[ -s "${conf}" ]]; then
+        local last
+        last="$(tail -n 1 "${conf}" 2>/dev/null || true)"
+        if [[ -n "${last}" ]]; then
+          echo
+        fi
+      fi
       echo "# hmtools restore — ${domain}"
       cat "${vh_tmp}"
     } >> "${conf}"

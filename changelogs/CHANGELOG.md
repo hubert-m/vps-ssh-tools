@@ -23,6 +23,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `security ban` / ufw — `prepend deny` (v4+v6), DETEKCJA tylko DENY/REJECT; rc≠0 przy całkowitej porażce
 - Fix: `chrome version` — zachowanie rc timeoutu (124), bez `if ! …; then $?` (fałszywe rc=0)
 - Feat: `redis` — detekcja, status/memory/dbs/clients/slowlog/sites, config/flush/restart/client kill
+- Fix: zapis `httpd_config.conf` przez `cat >` (nie `mv` z mktemp 0600); bez narastających pustych linii przy archive/restore
 
 ## [v0.1.8]
 

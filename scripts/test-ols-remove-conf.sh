@@ -298,6 +298,60 @@ else
   echo "OK   re-apply: pojedynczy komentarz restore (count=1)"
 fi
 
+# --- cat > conf zachowuje mode (nie mv 0600) ---
+cat > "${conf}" <<'EOF'
+listener Default {
+  address *:80
+  map mode.pl mode.pl
+}
+virtualhost mode.pl {
+  vhRoot /home/mode.pl
+}
+EOF
+chmod 644 "${conf}" 2>/dev/null || true
+mode_before="$(stat -c '%a' "${conf}" 2>/dev/null || stat -f '%OLp' "${conf}" 2>/dev/null || echo '?')"
+hm_ols_remove_domain_from_conf "mode.pl"
+mode_after="$(stat -c '%a' "${conf}" 2>/dev/null || stat -f '%OLp' "${conf}" 2>/dev/null || echo '?')"
+if [[ "${mode_before}" != "?" && "${mode_after}" != "${mode_before}" ]]; then
+  echo "FAIL mode changed ${mode_before} → ${mode_after} (oczekiwano bez zmian)"
+  fail=1
+else
+  echo "OK   mode preserved after remove (${mode_before})"
+fi
+
+# --- cykl remove+apply nie mnoży pustych linii na końcu ---
+cat > "${conf}" <<'EOF'
+listener Default {
+  address *:80
+}
+EOF
+cat > "${snip}" <<'EOF'
+virtualhost cycle.pl {
+  vhRoot /home/cycle.pl
+}
+map cycle.pl cycle.pl
+EOF
+hm_ols_apply_httpd_snippet "cycle.pl" "${snip}"
+hm_ols_remove_domain_from_conf "cycle.pl"
+hm_ols_apply_httpd_snippet "cycle.pl" "${snip}"
+hm_ols_remove_domain_from_conf "cycle.pl"
+hm_ols_apply_httpd_snippet "cycle.pl" "${snip}"
+# nie więcej niż jedna pusta linia przed markerem restore
+blank_before="$(awk '
+  /^[[:space:]]*# hmtools restore — cycle\.pl$/ {
+    if (prev ~ /^[[:space:]]*$/) n++
+  }
+  { prev=$0 }
+  END { print n+0 }
+' "${conf}")"
+if [[ "${blank_before}" -gt 1 ]]; then
+  echo "FAIL too many blank lines before restore marker (${blank_before})"
+  cat -A "${conf}"
+  fail=1
+else
+  echo "OK   cycle apply/remove: blank before marker=${blank_before}"
+fi
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"
   exit 1
