@@ -176,6 +176,43 @@ hm_redis_cli_checked() {
   return 0
 }
 
+# Liczba baz z CONFIG GET databases (domyślnie 16). Potrzebne przed flushdb -n N —
+# redis-cli przy złym SELECT i tak wykonuje komendę na db0.
+hm_redis_databases_count() {
+  local out n
+  out="$(hm_redis_cli CONFIG GET databases 2>/dev/null || true)"
+  n="$(printf '%s\n' "${out}" | awk '
+    BEGIN { v = "" }
+    tolower($0) ~ /^databases$/ { getline; gsub(/[^0-9]/, "", $0); if ($0 != "") { print $0; exit } }
+    /^[0-9]+$/ { v = $0 }
+    END { if (v != "") print v }
+  ')"
+  if [[ "${n}" =~ ^[1-9][0-9]*$ ]]; then
+    printf '%s' "${n}"
+    return 0
+  fi
+  printf '%s' "16"
+  return 0
+}
+
+# Czy indeks DB jest bezpieczny do -n / FLUSHDB (przed confirm).
+hm_redis_db_index_ok() {
+  local n="${1:-}"
+  local max
+  [[ "${n}" =~ ^[0-9]+$ ]] || return 1
+  # zbyt długa liczba → overflow w redis-cli (np. SELECT -1) i ryzyko FLUSHDB na db0
+  if [[ "${#n}" -gt 6 ]]; then
+    hm_err "Numer bazy zbyt duży (${#n} cyfr) — odmowa (ryzyko czyszczenia db0)."
+    return 1
+  fi
+  max="$(hm_redis_databases_count)"
+  if [[ "${n}" -ge "${max}" ]]; then
+    hm_err "db${n} poza zakresem (databases=${max}, dozwolone 0…$((max - 1)))."
+    return 1
+  fi
+  return 0
+}
+
 hm_redis_require() {
   hm_redis_detect
   if [[ -z "${REDIS_BIN}" ]]; then

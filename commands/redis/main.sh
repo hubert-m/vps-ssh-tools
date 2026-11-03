@@ -318,13 +318,16 @@ hm_redis_cmd_flushdb() {
     return 1
   }
   hm_redis_require || return 1
+  # WAŻNE: redis-cli -n N przy N≥databases robi „SELECT failed” i i tak FLUSHDB na db0.
+  # Walidacja ZAKRESU przed confirm — inaczej „nieudany” + utrata danych w db0.
+  hm_redis_db_index_ok "${n}" || return 1
   if ! hm_confirm_plan "redis flushdb ${n}" \
     "Usunie WSZYSTKIE klucze w bazie db${n}." \
-    "redis-cli -n ${n} FLUSHDB (jedno połączenie — SELECT w osobnym procesie nie działa)"; then
+    "redis-cli -n ${n} FLUSHDB (jedno połączenie; N sprawdzone vs CONFIG databases)"; then
     return 1
   fi
-  # WAŻNE: SELECT + FLUSHDB w osobnych redis-cli = zawsze czyści db0.
-  # Użyj -n N w tym samym procesie.
+  # Ponowna walidacja po confirm (config mógł się zmienić) + -n w tym samym procesie
+  hm_redis_db_index_ok "${n}" || return 1
   local out
   REDIS_CLI_DB="${n}"
   if ! out="$(hm_redis_cli_checked FLUSHDB)"; then
@@ -332,7 +335,12 @@ hm_redis_cmd_flushdb() {
     hm_err "FLUSHDB db${n} nieudany: ${out:-}"
     return 1
   fi
-  # weryfikacja DBSIZE w tej samej bazie
+  # obrona: jeśli CLI mimo wszystko zgłosiło SELECT failed — nie raportuj OK
+  if printf '%s' "${out}" | grep -qiE 'SELECT .*failed|out of range'; then
+    unset REDIS_CLI_DB
+    hm_err "FLUSHDB db${n} przerwany (SELECT nieudany) — sprawdź db0 ręcznie."
+    return 1
+  fi
   local left
   left="$(REDIS_CLI_DB="${n}" hm_redis_cli DBSIZE 2>/dev/null | tr -d '\r' || true)"
   unset REDIS_CLI_DB
