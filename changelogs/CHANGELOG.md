@@ -14,7 +14,9 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ---
 
-## [Unreleased] / [v0.1.9]
+## [Unreleased] / [v0.1.10]
+
+## [v0.1.9]
 
 - Fix: `hm_ols_remove_domain_from_conf` — usuwa też `# hmtools restore — <domena>` (bez kumulacji po archive→restore)
 - Fix: polszczyzna „1 dzień temu” (wiek indeksu apt/rpm; cert SSL) zamiast „1 dni temu”
