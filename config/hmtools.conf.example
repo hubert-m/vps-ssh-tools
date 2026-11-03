@@ -14,6 +14,7 @@
 # FORCE_PKG_MANAGER="dnf"           # apt|dnf|yum — wymuszenie adaptera pakietów (testy)
 # FORCE_SUPERVISOR="yes"            # yes|no — wymuszenie wyniku detekcji Supervisor
 # FORCE_CHROME_BIN="/usr/bin/google-chrome-stable"  # wymusza CHROME=yes + ścieżkę binarki
+# FORCE_CHROME_CDP="http://127.0.0.1:9222"          # lub samo 9222 — DevTools headless daemona
 # Gdy OS nie jest na liście wsparcia (Ubuntu/Debian/Alma/Rocky/CentOS/RHEL),
 # hmtools wchodzi w tryb awaryjny (tylko uninstall-hmtools). Bypass:
 # ALLOW_UNSUPPORTED_OS=1

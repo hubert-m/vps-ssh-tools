@@ -1,2 +1,4 @@
 # hmtools v0.1.10
 
+- Fix: `disk --heavy` — `du -b` (bajty); wcześniej bloki 1K traktowane jak bajty → rozmiary ~1000× za małe
+- Feat: `chrome` / detect — systemd `chrome-headless`, Puppeteer `~/.cache/puppeteer/chrome`, CDP `:9222` (+ `FORCE_CHROME_CDP`)

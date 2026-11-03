@@ -16,6 +16,9 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [v0.1.10]
 
+- Fix: `disk --heavy` — `du -b` (bajty); wcześniej bloki 1K traktowane jak bajty → rozmiary ~1000× za małe
+- Feat: `chrome` / detect — systemd `chrome-headless`, Puppeteer `~/.cache/puppeteer/chrome`, CDP `:9222` (+ `FORCE_CHROME_CDP`)
+
 ## [v0.1.9]
 
 - Fix: `hm_ols_remove_domain_from_conf` — usuwa też `# hmtools restore — <domena>` (bez kumulacji po archive→restore)

@@ -3,13 +3,15 @@
 
 _hm_cmd_help chrome <<'EOF'
 Użycie:
-  chrome | info | status   Binarka, wersja, źródło detekcji
+  chrome | info | status   Binarka, wersja, CDP, unit systemd
   chrome which             Tylko ścieżka binarki
-  chrome version           Pełne --version
-  chrome test              Smoke headless (--dump-dom about:blank)
+  chrome version           Pełne --version (lub CDP Browser)
+  chrome test              Smoke: CDP /json/version albo --headless --dump-dom
 
 Aliasy: chromium, headless
-Nadpisanie: FORCE_CHROME_BIN=/ścieżka w hmtools.conf
+Detekcja: PATH → ścieżki systemowe → systemd (chrome-headless) →
+  Puppeteer ~/.cache/puppeteer/chrome → CDP :9222
+Nadpisanie: FORCE_CHROME_BIN=/ścieżka  FORCE_CHROME_CDP=http://127.0.0.1:9222
 EOF
 
 hm_chrome_require() {
@@ -25,10 +27,21 @@ hm_chrome_require() {
       hm_warn "FORCE_CHROME_BIN nie jest wykonywalne: ${FORCE_CHROME_BIN}"
     fi
   fi
-  if [[ "${CHROME:-no}" != "yes" || -z "${CHROME_BIN:-}" || ! -x "${CHROME_BIN}" ]]; then
-    hm_err "Brak Chrome/Chromium — nie wykryto binarki."
-    hm_info "Szukane: google-chrome-stable, google-chrome, chromium, chromium-browser, chrome, /snap/bin/chromium"
-    hm_info "Nadpisanie: FORCE_CHROME_BIN=/ścieżka w hmtools.conf   | detect"
+  if [[ "${CHROME:-no}" != "yes" ]]; then
+    hm_err "Brak Chrome/Chromium — nie wykryto binarki ani CDP."
+    hm_info "Szukane: PATH (google-chrome…), /opt/google/chrome, systemd chrome-headless,"
+    hm_info "  /home/*/.cache/puppeteer/chrome/…/chrome, CDP http://127.0.0.1:9222"
+    hm_info "Nadpisanie: FORCE_CHROME_BIN=…  FORCE_CHROME_CDP=…  | detect"
+    return 1
+  fi
+  return 0
+}
+
+hm_chrome_require_bin() {
+  hm_chrome_require || return 1
+  if [[ -z "${CHROME_BIN:-}" || ! -x "${CHROME_BIN}" ]]; then
+    hm_err "Wykryto Chrome (CDP/usługa), ale brak lokalnej binarki do tej komendy."
+    hm_info "Ustaw FORCE_CHROME_BIN=… albo użyj: chrome info / chrome test (CDP)."
     return 1
   fi
   return 0
@@ -37,15 +50,33 @@ hm_chrome_require() {
 cmd_chrome_info() {
   # Nie wołaj hm_detect_all — wystarczy chrome (+ już znany stos ze startu)
   hm_chrome_require || true
-  if [[ "${CHROME:-no}" == "yes" && -n "${CHROME_BIN:-}" && -z "${CHROME_VERSION:-}" ]]; then
+  if [[ -n "${CHROME_BIN:-}" && -x "${CHROME_BIN}" && -z "${CHROME_VERSION:-}" ]]; then
     hm_chrome_fetch_version "${CHROME_BIN}" || true
+  fi
+  # odśwież CDP (port mógł wstać po detect na starcie)
+  if [[ -z "${CHROME_CDP_URL:-}" ]]; then
+    hm_chrome_cdp_probe 2>/dev/null || true
   fi
   echo "${C_BOLD}Chrome / Chromium (headless)${C_RESET}"
   echo "  Detected : ${CHROME:-no}${CHROME_SOURCE:+  [${CHROME_SOURCE}]}"
   echo "  Binary   : ${CHROME_BIN:--}"
-  echo "  Version  : ${CHROME_VERSION:--}"
-  if [[ "${CHROME:-no}" == "yes" && -n "${CHROME_BIN:-}" ]]; then
+  echo "  Version  : ${CHROME_VERSION:-${CHROME_CDP_BROWSER:--}}"
+  if [[ -n "${CHROME_SERVICE:-}" ]]; then
+    local st="unknown"
+    if hm_have_cmd systemctl; then
+      st="$(systemctl is-active "${CHROME_SERVICE}" 2>/dev/null || echo inactive)"
+    fi
+    echo "  Service  : ${CHROME_SERVICE} (${st})"
+  fi
+  if [[ -n "${CHROME_CDP_URL:-}" ]]; then
+    echo "  CDP      : ${CHROME_CDP_URL}  (${CHROME_CDP_BROWSER:-ok})"
+  else
+    echo "  CDP      : —"
+  fi
+  if [[ -n "${CHROME_BIN:-}" && -x "${CHROME_BIN}" ]]; then
     echo "  Headless : tak (--headless; smoke: chrome test)"
+  elif [[ -n "${CHROME_CDP_URL:-}" ]]; then
+    echo "  Headless : daemon CDP (smoke: chrome test → /json/version)"
   else
     echo "  Headless : —"
   fi
@@ -53,6 +84,24 @@ cmd_chrome_info() {
 
 cmd_chrome_test() {
   hm_chrome_require || return 1
+
+  # Preferuj żywy CDP (typowy chrome-headless.service + Puppeteer)
+  if [[ -z "${CHROME_CDP_URL:-}" ]]; then
+    hm_chrome_cdp_probe 2>/dev/null || true
+  fi
+  if [[ -n "${CHROME_CDP_URL:-}" ]]; then
+    echo "${C_BOLD}Chrome CDP smoke test${C_RESET}"
+    echo "  URL: ${CHROME_CDP_URL}/json/version"
+    local raw
+    raw="$(curl -sf --max-time 3 "${CHROME_CDP_URL}/json/version" 2>/dev/null || true)"
+    if [[ -n "${raw}" ]] && printf '%s' "${raw}" | grep -qiE '"Browser"|"webSocketDebuggerUrl"'; then
+      hm_ok "CDP OK — $(printf '%s' "${raw}" | sed -n 's/.*"Browser"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+      return 0
+    fi
+    hm_warn "CDP ${CHROME_CDP_URL} nie odpowiada — próbuję lokalny --headless…"
+  fi
+
+  hm_chrome_require_bin || return 1
   echo "${C_BOLD}Chrome headless smoke test${C_RESET}"
   echo "  Bin: ${CHROME_BIN}"
   hm_status_line "Uruchamianie --headless --dump-dom about:blank..."
@@ -89,22 +138,34 @@ cmd_chrome() {
       cmd_chrome_info
       ;;
     which|path|bin)
-      hm_chrome_require || return 1
+      hm_chrome_require_bin || return 1
       printf '%s\n' "${CHROME_BIN}"
       ;;
     version|ver|-v|--version)
       hm_chrome_require || return 1
-      # Nie: `if ! cmd; then rc=$?` — po `!` $? = 0 (sukces negacji), gubi 124.
-      local vrc=0
-      hm_run_timeout 3 "${CHROME_BIN}" --version || vrc=$?
-      if [[ "${vrc}" -ne 0 ]]; then
-        if [[ "${vrc}" -eq 124 ]]; then
-          hm_err "Timeout (3s) przy „${CHROME_BIN} --version” — binarka nie odpowiada (zawieszona?)."
-        else
-          hm_err "Nie udało się odczytać wersji (rc=${vrc}): ${CHROME_BIN}"
+      if [[ -n "${CHROME_BIN:-}" && -x "${CHROME_BIN}" ]]; then
+        # Nie: `if ! cmd; then rc=$?` — po `!` $? = 0 (sukces negacji), gubi 124.
+        local vrc=0
+        hm_run_timeout 3 "${CHROME_BIN}" --version || vrc=$?
+        if [[ "${vrc}" -ne 0 ]]; then
+          if [[ "${vrc}" -eq 124 ]]; then
+            hm_err "Timeout (3s) przy „${CHROME_BIN} --version” — binarka nie odpowiada (zawieszona?)."
+          else
+            hm_err "Nie udało się odczytać wersji (rc=${vrc}): ${CHROME_BIN}"
+          fi
+          return "${vrc}"
         fi
-        return "${vrc}"
+        return 0
       fi
+      if [[ -z "${CHROME_CDP_URL:-}" ]]; then
+        hm_chrome_cdp_probe 2>/dev/null || true
+      fi
+      if [[ -n "${CHROME_CDP_BROWSER:-}" ]]; then
+        printf '%s\n' "${CHROME_CDP_BROWSER}"
+        return 0
+      fi
+      hm_err "Brak binarki i CDP — nie da się odczytać wersji."
+      return 1
       ;;
     test|smoke|check)
       cmd_chrome_test

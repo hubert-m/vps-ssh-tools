@@ -327,13 +327,97 @@ hm_chrome_fetch_version() {
   [[ -n "${ver}" ]]
 }
 
+# Binarka z działającego unit systemd (MainPID → /proc/PID/exe) lub ExecStart.
+hm_chrome_bin_from_systemd() {
+  local unit="${1:-}"
+  local pid exe line
+  [[ -n "${unit}" ]] || return 1
+  hm_have_cmd systemctl || return 1
+  systemctl cat "${unit}" >/dev/null 2>&1 || return 1
+
+  pid="$(systemctl show -p MainPID --value "${unit}" 2>/dev/null || true)"
+  if [[ -n "${pid}" && "${pid}" != "0" && -r "/proc/${pid}/exe" ]]; then
+    exe="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+    if [[ -n "${exe}" && -x "${exe}" ]]; then
+      printf '%s' "${exe}"
+      return 0
+    fi
+  fi
+  # fallback: pierwszy token ścieżki z ExecStart=
+  line="$(systemctl show -p ExecStart --value "${unit}" 2>/dev/null | head -1 || true)"
+  # format: { path=/foo/chrome ; argv[]=... }
+  if [[ "${line}" =~ path=([^[:space:];]+) ]]; then
+    exe="${BASH_REMATCH[1]}"
+    if [[ -x "${exe}" ]]; then
+      printf '%s' "${exe}"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+# Najnowsza binarka Puppeteer pod /home/*/.cache/puppeteer/chrome/
+hm_chrome_bin_from_puppeteer() {
+  local cand newest="" newest_mtime=0 mt
+  # typowe layouty Chrome for Testing (Puppeteer)
+  for cand in \
+    /home/*/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome \
+    /home/*/.cache/puppeteer/chrome/linux-*/chrome-linux/chrome \
+    /root/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome \
+    /root/.cache/puppeteer/chrome/linux-*/chrome-linux/chrome
+  do
+    [[ -e "${cand}" ]] || continue
+    [[ -x "${cand}" ]] || continue
+    mt="$(stat -c '%Y' "${cand}" 2>/dev/null || stat -f '%m' "${cand}" 2>/dev/null || echo 0)"
+    if [[ "${mt}" -ge "${newest_mtime}" ]]; then
+      newest_mtime="${mt}"
+      newest="${cand}"
+    fi
+  done
+  [[ -n "${newest}" ]] || return 1
+  printf '%s' "${newest}"
+  return 0
+}
+
+# CDP DevTools (np. chrome --remote-debugging-port=9222)
+hm_chrome_cdp_probe() {
+  local url="${1:-http://127.0.0.1:9222}"
+  local base port raw
+  CHROME_CDP_URL=""
+  CHROME_CDP_BROWSER=""
+  # FORCE_CHROME_CDP=http://127.0.0.1:9222 lub samo 9222
+  if [[ -n "${FORCE_CHROME_CDP:-}" ]]; then
+    if [[ "${FORCE_CHROME_CDP}" =~ ^[0-9]+$ ]]; then
+      url="http://127.0.0.1:${FORCE_CHROME_CDP}"
+    else
+      url="${FORCE_CHROME_CDP}"
+    fi
+  fi
+  base="${url%/}"
+  [[ "${base}" == http://* || "${base}" == https://* ]] || base="http://${base}"
+
+  if ! hm_have_cmd curl; then
+    return 1
+  fi
+  raw="$(curl -sf --max-time 2 "${base}/json/version" 2>/dev/null || true)"
+  [[ -n "${raw}" ]] || return 1
+  CHROME_CDP_URL="${base}"
+  CHROME_CDP_BROWSER="$(printf '%s' "${raw}" | sed -n 's/.*"Browser"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  [[ -n "${CHROME_CDP_BROWSER}" ]] || CHROME_CDP_BROWSER="yes"
+  return 0
+}
+
 hm_detect_chrome() {
   CHROME="no"
   CHROME_BIN=""
   CHROME_SOURCE=""
   CHROME_VERSION=""
+  CHROME_SERVICE=""
+  CHROME_CDP_URL=""
+  CHROME_CDP_BROWSER=""
 
-  local name bin
+  local name bin unit
+
   for name in google-chrome-stable google-chrome chromium chromium-browser chrome; do
     if hm_have_cmd "${name}"; then
       bin="$(command -v "${name}")"
@@ -341,6 +425,7 @@ hm_detect_chrome() {
       CHROME_BIN="${bin}"
       CHROME_SOURCE="bin:${name}"
       # wersja dopiero w detect / chrome / health (hm_chrome_fetch_version)
+      hm_chrome_cdp_probe 2>/dev/null || true
       return 0
     fi
   done
@@ -357,9 +442,42 @@ hm_detect_chrome() {
       CHROME="yes"
       CHROME_BIN="${bin}"
       CHROME_SOURCE="path:${bin}"
+      hm_chrome_cdp_probe 2>/dev/null || true
       return 0
     fi
   done
+
+  # systemd: chrome-headless / chromium-headless (Puppeteer daemon na VPS)
+  for unit in chrome-headless chromium-headless google-chrome-headless; do
+    bin="$(hm_chrome_bin_from_systemd "${unit}" 2>/dev/null || true)"
+    if [[ -n "${bin}" && -x "${bin}" ]]; then
+      CHROME="yes"
+      CHROME_BIN="${bin}"
+      CHROME_SOURCE="systemd:${unit}"
+      CHROME_SERVICE="${unit}"
+      hm_chrome_cdp_probe 2>/dev/null || true
+      return 0
+    fi
+  done
+
+  # Puppeteer cache (Chrome for Testing) — bez wpisu w PATH
+  bin="$(hm_chrome_bin_from_puppeteer 2>/dev/null || true)"
+  if [[ -n "${bin}" && -x "${bin}" ]]; then
+    CHROME="yes"
+    CHROME_BIN="${bin}"
+    CHROME_SOURCE="puppeteer:${bin}"
+    hm_chrome_cdp_probe 2>/dev/null || true
+    return 0
+  fi
+
+  # Sam CDP (binarka niedostępna, ale DevTools żyje)
+  if hm_chrome_cdp_probe 2>/dev/null; then
+    CHROME="yes"
+    CHROME_BIN=""
+    CHROME_SOURCE="cdp:${CHROME_CDP_URL}"
+    CHROME_VERSION="${CHROME_CDP_BROWSER}"
+    return 0
+  fi
 }
 
 hm_detect_apply_overrides() {

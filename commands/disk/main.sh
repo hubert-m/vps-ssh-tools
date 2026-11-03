@@ -51,8 +51,9 @@ hm_disk_top_entries() {
   path_r="${path_r%/}"
   [[ -n "${path_r}" ]] || path_r="/"
 
+  # -b: rozmiar w BAJTACH (domyślny du = bloki 1K — myliło human_size ~1000×)
   # -a: pliki i katalogi; -d 1: tylko poziom niżej; -x: ten sam FS
-  du -axd 1 -- "${path_r}" 2>/dev/null \
+  du -axbd 1 -- "${path_r}" 2>/dev/null \
     | awk -v base="${path_r}" '
         NF >= 2 {
           sz = $1
