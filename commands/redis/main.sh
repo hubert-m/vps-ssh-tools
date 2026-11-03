@@ -226,6 +226,8 @@ hm_redis_cmd_sites() {
     return 0
   fi
 
+  # Zachowaj kontekst REPL — po skanie wróć (pusty = hmtools> bez strony).
+  local prev_domain="${HM_SITE_DOMAIN:-}"
   local any=0 domain root doc f hint rp
   local seen="|"
   for domain in "${domains[@]}"; do
@@ -257,6 +259,11 @@ hm_redis_cmd_sites() {
       printf '  %-28s %s  %s\n' "${domain}" "${hint}" "${f}"
     done
   done
+  if [[ -n "${prev_domain}" ]]; then
+    hm_set_site_context "${prev_domain}" 2>/dev/null || hm_clear_site_context
+  else
+    hm_clear_site_context
+  fi
   if [[ "${any}" -eq 0 ]]; then
     echo "  (brak heurystycznych trafień .env / WP / Laravel)"
   fi

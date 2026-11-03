@@ -54,7 +54,22 @@ hm_dispatch() {
   # pusta linia / exit — rdzeń (nie są narzędziami-modułami)
   case "${cmd}" in
     "") return 0 ;;
-    exit|quit|q) return 99 ;;
+    exit|quit|q|back|\.\.)
+      # W kontekście use <domena>: exit = powrót do hmtools>, nie wyjście z REPL
+      if [[ -n "${HM_SITE_DOMAIN:-}" ]]; then
+        hm_ok "Wyjście z kontekstu ${HM_SITE_DOMAIN}."
+        hm_clear_site_context
+        return 0
+      fi
+      # tylko q/quit/exit na poziomie głównym kończą; back/.. bez kontekstu = noop
+      case "${cmd}" in
+        exit|quit|q) return 99 ;;
+        *)
+          hm_info "Nie jesteś w kontekście strony (hmtools>). Użyj: use <domena>"
+          return 0
+          ;;
+      esac
+      ;;
   esac
 
   # Niewspierany OS — whitelist z HM_CMD_RESTRICTED (moduł)
@@ -64,7 +79,7 @@ hm_dispatch() {
     return 1
   fi
 
-  # Kontekst strony — lokalne handlery (site + wyjątki)
+  # Kontekst strony — lokalne handlery (site + wyjątki); exit już obsłużony wyżej
   if [[ -n "${HM_SITE_DOMAIN:-}" ]]; then
     local _hm_site_rc=0
     hm_site_try_dispatch "${cmd}" "$@" || _hm_site_rc=$?
@@ -129,7 +144,7 @@ if [[ "${HMTOOLS_RESTRICTED:-0}" -eq 1 ]]; then
 else
   # cache domen na start — Tab nie czeka na discovery (i nie gubi promptu)
   hm_ensure_sites_cached
-  hm_info "Wpisz 'help' aby zobaczyć komendy. 'exit' kończy. Tab — uzupełnianie (np. use <domena>)."
+  hm_info "Wpisz 'help' aby zobaczyć komendy. 'exit' w kontekście strony wraca do hmtools>; na głównej kończy. Tab — use <domena>."
   hm_info "Logi: ${LOG_DIR}/hmtools-$(date +%Y-%m-%d).log"
   hm_welcome_update_notice
 fi

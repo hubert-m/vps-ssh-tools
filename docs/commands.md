@@ -36,7 +36,7 @@
 | `redis …` | Redis: status/memory/dbs/clients/slowlog/sites; `config`/`flush*`/`restart`/`client kill` |
 | `detect` | Wypisz wykryty panel / webserver / DB |
 | `help [polecenie]` | Lista komend lub pomoc do wybranej (np. `help use`) |
-| `exit` | Wyjście |
+| `exit` | Na głównej: wyjście z hmtools; w `[domena]>`: powrót do `hmtools>` |
 
 ## W kontekście strony (`[domena]>`)
 
