@@ -300,6 +300,23 @@ hm_tab_complete() {
         done
         eval "${oldnull}" 2>/dev/null || shopt -u nullglob
         ;;
+      redis)
+        local re_redis_cfg='redis[[:space:]]+config[[:space:]]'
+        local re_redis_client='redis[[:space:]]+client[[:space:]]'
+        if [[ "${prefix}" =~ $re_redis_cfg ]]; then
+          for m in get set help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ $re_redis_client ]]; then
+          for m in kill help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in status detect info memory dbs keyspace clients slowlog monitor sites who config flushdb flushall restart client help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
       access)
         local re_access_ssh_keys='access[[:space:]]+ssh[[:space:]]+keys[[:space:]]'
         local re_access_ssh='access[[:space:]]+ssh[[:space:]]'

@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# redis — detekcja, CLI wrapper, parse conf
+
+REDIS_BIN=""
+REDIS_HOST="127.0.0.1"
+REDIS_PORT="6379"
+REDIS_SOCK=""
+REDIS_PASS=""
+REDIS_SERVICE=""
+REDIS_CONF=""
+
+# Wyciągnięcie wartości dyrektywy z redis.conf (ignoruj komentarze; ostatnia wygrywa)
+hm_redis_conf_get() {
+  local conf="$1" key="$2"
+  [[ -n "${conf}" && -f "${conf}" && -n "${key}" ]] || return 1
+  awk -v k="${key}" '
+    $0 ~ /^[[:space:]]*#/ { next }
+    $1 == k {
+      val = $2
+      for (i = 3; i <= NF; i++) {
+        if ($i ~ /^#/) break
+        val = val " " $i
+      }
+      gsub(/^"/, "", val); gsub(/"$/, "", val)
+      out = val
+    }
+    END { if (out != "") print out; else exit 1 }
+  ' "${conf}"
+}
+
+hm_redis_find_conf() {
+  local c
+  for c in \
+    /etc/redis/redis.conf \
+    /etc/redis.conf \
+    /etc/redis/redis-server.conf \
+    /usr/local/etc/redis.conf \
+    /etc/redis/redis/redis.conf; do
+    if [[ -f "${c}" ]]; then
+      printf '%s' "${c}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+hm_redis_detect_service() {
+  local u
+  if ! hm_have_cmd systemctl; then
+    return 1
+  fi
+  for u in redis-server redis redis-server.service redis.service; do
+    if systemctl list-unit-files "${u}" >/dev/null 2>&1 \
+      || systemctl status "${u}" >/dev/null 2>&1; then
+      printf '%s' "${u%.service}"
+      return 0
+    fi
+  done
+  # template / alias
+  if systemctl list-units --type=service --all 2>/dev/null | grep -qE 'redis(-server)?\.service'; then
+    printf 'redis-server'
+    return 0
+  fi
+  return 1
+}
+
+hm_redis_detect() {
+  REDIS_BIN=""
+  REDIS_HOST="127.0.0.1"
+  REDIS_PORT="6379"
+  REDIS_SOCK=""
+  REDIS_PASS=""
+  REDIS_SERVICE=""
+  REDIS_CONF=""
+
+  if hm_have_cmd redis-cli; then
+    REDIS_BIN="$(command -v redis-cli)"
+  fi
+
+  REDIS_CONF="$(hm_redis_find_conf 2>/dev/null || true)"
+  if [[ -n "${REDIS_CONF}" ]]; then
+    local v
+    v="$(hm_redis_conf_get "${REDIS_CONF}" port 2>/dev/null || true)"
+    [[ -n "${v}" && "${v}" =~ ^[0-9]+$ ]] && REDIS_PORT="${v}"
+    v="$(hm_redis_conf_get "${REDIS_CONF}" bind 2>/dev/null || true)"
+    # bind może być listą — bierzemy pierwszy nie-publiczny preferencyjnie
+    if [[ -n "${v}" ]]; then
+      local first
+      first="$(printf '%s' "${v}" | awk '{print $1}')"
+      case "${first}" in
+        0.0.0.0|*::*|127.0.0.1|::1|localhost)
+          REDIS_HOST="127.0.0.1"
+          [[ "${first}" == "0.0.0.0" || "${first}" == *"::"* && "${first}" != "::1" ]] && REDIS_HOST="${first}"
+          ;;
+        *)
+          REDIS_HOST="${first}"
+          ;;
+      esac
+      # dla połączenia lokalnego zawsze 127.0.0.1 gdy bind zawiera loopback
+      if printf '%s' "${v}" | grep -qE '(^|[[:space:]])(127\.0\.0\.1|::1)([[:space:]]|$)'; then
+        REDIS_HOST="127.0.0.1"
+      fi
+    fi
+    v="$(hm_redis_conf_get "${REDIS_CONF}" unixsocket 2>/dev/null || true)"
+    [[ -n "${v}" && -S "${v}" ]] && REDIS_SOCK="${v}"
+    # sock z conf nawet jeśli jeszcze nie istnieje (daemon down)
+    if [[ -z "${REDIS_SOCK}" ]]; then
+      v="$(hm_redis_conf_get "${REDIS_CONF}" unixsocket 2>/dev/null || true)"
+      [[ -n "${v}" ]] && REDIS_SOCK="${v}"
+    fi
+    v="$(hm_redis_conf_get "${REDIS_CONF}" requirepass 2>/dev/null || true)"
+    [[ -n "${v}" ]] && REDIS_PASS="${v}"
+  fi
+
+  REDIS_SERVICE="$(hm_redis_detect_service 2>/dev/null || true)"
+  return 0
+}
+
+# Czy bind wygląda na publiczny (ostrzeżenie)
+hm_redis_bind_is_public() {
+  local conf="${REDIS_CONF:-}"
+  [[ -n "${conf}" && -f "${conf}" ]] || return 1
+  local bind
+  bind="$(hm_redis_conf_get "${conf}" bind 2>/dev/null || true)"
+  [[ -n "${bind}" ]] || return 1
+  printf '%s' "${bind}" | grep -qE '(^|[[:space:]])(0\.0\.0\.0|\*|::)([[:space:]]|$)'
+}
+
+# Uruchom redis-cli z wykrytymi parametrami; args = komenda Redis
+hm_redis_cli() {
+  [[ -n "${REDIS_BIN}" && -x "${REDIS_BIN}" ]] || {
+    hm_err "Brak redis-cli w PATH."
+    return 1
+  }
+  local -a args=()
+  if [[ -n "${REDIS_SOCK}" && -S "${REDIS_SOCK}" ]]; then
+    args+=(-s "${REDIS_SOCK}")
+  else
+    args+=(-h "${REDIS_HOST:-127.0.0.1}" -p "${REDIS_PORT:-6379}")
+  fi
+  # AUTH bez hasła w argv innych procesów — REDISCLI_AUTH (redis-cli ≥6)
+  if [[ -n "${REDIS_PASS}" ]]; then
+    export REDISCLI_AUTH="${REDIS_PASS}"
+  else
+    unset REDISCLI_AUTH 2>/dev/null || true
+  fi
+  "${REDIS_BIN}" "${args[@]}" --no-auth-warning "$@"
+}
+
+hm_redis_require() {
+  hm_redis_detect
+  if [[ -z "${REDIS_BIN}" ]]; then
+    hm_err "Brak redis-cli — zainstaluj redis-tools / redis."
+    hm_info "Na Debian/Ubuntu: apt install redis-tools. Na RHEL: dnf install redis."
+    return 1
+  fi
+  local pong
+  pong="$(hm_redis_cli PING 2>/dev/null | tr -d '\r' || true)"
+  if [[ "${pong}" != "PONG" ]]; then
+    hm_err "Redis nie odpowiada na PING (${REDIS_SOCK:-${REDIS_HOST}:${REDIS_PORT}})."
+    [[ -n "${REDIS_SERVICE}" ]] && hm_info "Sprawdź: systemctl status ${REDIS_SERVICE}"
+    return 1
+  fi
+  return 0
+}
+
+# INFO field → wartość (pierwsza linia key:value)
+hm_redis_info_field() {
+  local section="$1" field="$2"
+  hm_redis_cli INFO "${section}" 2>/dev/null | awk -F: -v f="${field}" '
+    $0 ~ /^#/ { next }
+    $1 == f { gsub(/\r/, "", $2); print $2; exit }
+  '
+}

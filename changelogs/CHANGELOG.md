@@ -22,6 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `backup site` / `backup full` — błąd mysqldump → `status: partial`, NIEKOMPLETNY, rc≠0 (nie cichy sukces)
 - Fix: `security ban` / ufw — `prepend deny` (v4+v6), DETEKCJA tylko DENY/REJECT; rc≠0 przy całkowitej porażce
 - Fix: `chrome version` — zachowanie rc timeoutu (124), bez `if ! …; then $?` (fałszywe rc=0)
+- Feat: `redis` — detekcja, status/memory/dbs/clients/slowlog/sites, config/flush/restart/client kill
 
 ## [v0.1.8]
 

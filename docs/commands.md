@@ -33,6 +33,7 @@
 | `health` | Load, RAM, dysk, OLS/MySQL, certy &lt;14 dni, wrażliwe porty |
 | `security …` | Audyt: `ports`, `ssh`, Fail2Ban `ban`/`unban`, `scan` docroot |
 | `access …` | SSH/FTP strony: `ssh` (passwd/shell/keys), `ftp` (list/add/passwd/delete) |
+| `redis …` | Redis: status/memory/dbs/clients/slowlog/sites; `config`/`flush*`/`restart`/`client kill` |
 | `detect` | Wypisz wykryty panel / webserver / DB |
 | `help [polecenie]` | Lista komend lub pomoc do wybranej (np. `help use`) |
 | `exit` | Wyjście |
@@ -58,6 +59,7 @@
 | `delete-site […]` | Usuń bieżącą stronę (inwentaryzacja + plan critical) |
 | `archive` | Archiwum Drive → verify → usunięcie tej strony |
 | `access …` | SSH/FTP bieżącej strony (`status` / `ssh` / `ftp`) |
+| `redis …` | Status/memory/sites (filtr domeny); mutacje jak globalnie |
 | `exit` | Wyjście z kontekstu |
 
 ## PM2 / Node / Next
