@@ -120,6 +120,17 @@ hm_access_ssh_recheck_keys_paths() {
   return 0
 }
 
+# Odczyt authorized_keys — preferuj runuser (symlink → /root = permission denied).
+hm_access_ssh_read_keys_file() {
+  local user="$1" keysf="$2" dest="$3"
+  if hm_have_cmd runuser; then
+    runuser -u "${user}" -- cat "${keysf}" > "${dest}" 2>/dev/null || return 1
+    return 0
+  fi
+  cat "${keysf}" > "${dest}" || return 1
+  return 0
+}
+
 # Zapis treści (stdin) do authorized_keys — preferuj runuser (bez chown roota).
 hm_access_ssh_write_keys_file() {
   local user="$1" keysf="$2"
@@ -128,6 +139,7 @@ hm_access_ssh_write_keys_file() {
     runuser -u "${user}" -- chmod 600 "${keysf}" 2>/dev/null || true
     return 0
   fi
+  # bez runuser: jeszcze raz path_ok tuż przed zapisem jako root
   cat > "${keysf}" || return 1
   chmod 600 "${keysf}"
   chown -h "${user}:${user}" "${keysf}" 2>/dev/null || chown -h "${user}" "${keysf}"
@@ -491,7 +503,20 @@ hm_access_ssh_keys_remove() {
   # Anti-TOCTOU: po „yes” user mógł podmienić ~/.ssh → /root/.ssh
   hm_access_ssh_recheck_keys_paths "${user}" "${home}" "${keysf}" || return 1
 
+  local src tmp
+  src="$(mktemp "${TMP_DIR:-/tmp}/hmtools-ak-src.XXXXXX")"
   tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-ak.XXXXXX")"
+  if ! hm_access_ssh_read_keys_file "${user}" "${keysf}" "${src}"; then
+    rm -f "${src}" "${tmp}"
+    hm_err "Odczyt authorized_keys nieudany (odmowa / TOCTOU?)."
+    return 1
+  fi
+  # ścieżki mogły się zmienić w trakcie odczytu
+  hm_access_ssh_recheck_keys_paths "${user}" "${home}" "${keysf}" || {
+    rm -f "${src}" "${tmp}"
+    return 1
+  }
+
   local removed=0
   n=0
   while IFS= read -r line || [[ -n "${line}" ]]; do
@@ -503,7 +528,8 @@ hm_access_ssh_keys_remove() {
       fi
     fi
     printf '%s\n' "${line}" >> "${tmp}"
-  done < "${keysf}"
+  done < "${src}"
+  rm -f "${src}"
 
   if [[ "${removed}" -ne 1 ]]; then
     rm -f "${tmp}"

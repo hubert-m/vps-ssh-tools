@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regresja TOCTOU: podmiana ~/.ssh → /root/.ssh między path_ok a zapisem (po „confirm”)
+# Regresja TOCTOU: podmiana ~/.ssh → /root/.ssh między path_ok a I/O (po „confirm”)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -27,54 +27,95 @@ chmod 600 "${HOME_U}/.ssh/authorized_keys"
 ME="$(whoami)"
 hm_access_unix_home() { printf '%s' "${HOME_U}"; }
 
-# Symulacja TOCTOU: po „bezpiecznym” stanie — podmiana katalogu przed recheck
+root_unchanged() {
+  if [[ "$(cat "${ROOT_SSH}/authorized_keys")" == "${ORIG}" ]]; then
+    echo "OK   plik roota bez zmian"
+  else
+    echo "FAIL plik roota zmodyfikowany"
+    fail=1
+  fi
+}
+
+# Czy OS w ogóle tworzy prawdziwe symlinki?
 if ! ln -sfn "${ROOT_SSH}" "${TMP}/evil-ssh" 2>/dev/null || [[ ! -L "${TMP}/evil-ssh" ]]; then
-  echo "SKIP TOCTOU (OS nie tworzy symlinków)"
+  echo "SKIP symlink TOCTOU (OS nie tworzy prawdziwych symlinków)"
+  # nadal testujemy logikę zakresów / recheck na bezpiecznej ścieżce
+  if hm_access_ssh_recheck_keys_paths "${ME}" "${HOME_U}" "${HOME_U}/.ssh/authorized_keys"; then
+    echo "OK   recheck OK na prawidłowym .ssh"
+  else
+    echo "FAIL recheck na prawidłowym .ssh"
+    fail=1
+  fi
   rm -rf "${TMP}"
+  if [[ "${fail}" -ne 0 ]]; then
+    echo "FAILED"
+    exit 1
+  fi
   echo "ALL PASSED"
   exit 0
 fi
 rm -f "${TMP}/evil-ssh"
 
-# 1) recheck odmawia gdy .ssh jest symlinkiem do root
+# --- 1) statyczny symlink katalogu .ssh ---
 mv "${HOME_U}/.ssh" "${HOME_U}/.ssh.old"
 ln -sfn "${ROOT_SSH}" "${HOME_U}/.ssh"
-if [[ -L "${HOME_U}/.ssh" ]]; then
-  if hm_access_ssh_recheck_keys_paths "${ME}" "${HOME_U}" "${HOME_U}/.ssh/authorized_keys" 2>/dev/null; then
-    echo "FAIL recheck powinien odmówić przy symlinku .ssh"
-    fail=1
-  else
-    echo "OK   recheck odmawia symlink .ssh → root"
-  fi
-  assert_eq_root() {
-    if [[ "$(cat "${ROOT_SSH}/authorized_keys")" == "${ORIG}" ]]; then
-      echo "OK   plik roota bez zmian"
-    else
-      echo "FAIL plik roota zmodyfikowany"
-      fail=1
-    fi
-  }
-  assert_eq_root
+if hm_access_ssh_recheck_keys_paths "${ME}" "${HOME_U}" "${HOME_U}/.ssh/authorized_keys" 2>/dev/null; then
+  echo "FAIL recheck powinien odmówić przy symlinku .ssh"
+  fail=1
 else
-  echo "SKIP dir symlink"
+  echo "OK   recheck odmawia symlink .ssh → root"
+fi
+root_unchanged
+
+# --- 2) Wyścig jak w reteście: OK → confirm → podmiana → recheck FAIL ---
+rm -f "${HOME_U}/.ssh"
+mv "${HOME_U}/.ssh.old" "${HOME_U}/.ssh"
+KEYS="${HOME_U}/.ssh/authorized_keys"
+
+if ! hm_access_ssh_recheck_keys_paths "${ME}" "${HOME_U}" "${KEYS}"; then
+  echo "FAIL recheck przed confirm (stan bezpieczny)"
+  fail=1
+else
+  echo "OK   recheck OK przed confirm"
 fi
 
-# 2) write_keys_file nie powinien chown-ować pliku roota gdy ścieżka to symlink katalogu
-# (recheck musi być wywołane PRZED write — tu sprawdzamy, że write przez runuser failuje na /root)
-# Przywróć stan: bez runuser jako ME zapis do pliku przez symlink mógłby zadziałać —
-# kluczowe jest recheck przed write.
+# symulacja: w trakcie promptu user podmienia ~/.ssh
+mv "${HOME_U}/.ssh" "${HOME_U}/.ssh.old"
+ln -sfn "${ROOT_SSH}" "${HOME_U}/.ssh"
+
+if hm_access_ssh_recheck_keys_paths "${ME}" "${HOME_U}" "${HOME_U}/.ssh/authorized_keys" 2>/dev/null; then
+  echo "FAIL recheck po TOCTOU powinien odmówić"
+  fail=1
+else
+  echo "OK   recheck po TOCTOU (podmiana w trakcie promptu) → odmowa"
+fi
+root_unchanged
+
+# zapis jako root na ścieżce po TOCTOU — nie wolno wywoływać bez recheck;
+# upewnij się, że write_keys_file z runuser nie zmieni roota (permission denied)
+# (bez runuser pomijamy — root mógłby nadpisać; produkcja ma runuser)
+if hm_have_cmd runuser; then
+  if printf 'evil\n' | hm_access_ssh_write_keys_file "${ME}" "${HOME_U}/.ssh/authorized_keys" 2>/dev/null; then
+    # na niektórych setupach ME ma dostęp do TMP/root — sprawdź treść
+    if [[ "$(cat "${ROOT_SSH}/authorized_keys")" != "${ORIG}" ]]; then
+      echo "FAIL write_keys_file zmienił plik roota"
+      fail=1
+    else
+      echo "OK   write_keys_file nie zmienił treści roota"
+    fi
+  else
+    echo "OK   write_keys_file odmówił po TOCTOU (rc≠0)"
+  fi
+  root_unchanged
+else
+  echo "SKIP write_keys_file runuser (brak runuser)"
+fi
+
+# przywróć
 rm -f "${HOME_U}/.ssh"
 mv "${HOME_U}/.ssh.old" "${HOME_U}/.ssh"
 
-# recheck OK na bezpiecznym stanie
-if hm_access_ssh_recheck_keys_paths "${ME}" "${HOME_U}" "${HOME_U}/.ssh/authorized_keys"; then
-  echo "OK   recheck OK na prawidłowym .ssh"
-else
-  echo "FAIL recheck na prawidłowym .ssh"
-  fail=1
-fi
-
-# Zakres idx przed confirm — logika jak w remove
+# zakres idx
 n_avail=0
 while IFS= read -r line || [[ -n "${line}" ]]; do
   hm_access_is_valid_ssh_key_line "${line}" && n_avail=$((n_avail + 1))
@@ -87,13 +128,7 @@ else
   fail=1
 fi
 
-if [[ "$(cat "${ROOT_SSH}/authorized_keys")" == "${ORIG}" ]]; then
-  echo "OK   root keys final"
-else
-  echo "FAIL root keys final"
-  fail=1
-fi
-
+root_unchanged
 rm -rf "${TMP}"
 
 if [[ "${fail}" -ne 0 ]]; then
