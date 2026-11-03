@@ -115,7 +115,7 @@ hm_redis_cmd_dbs() {
 hm_redis_cmd_clients() {
   hm_redis_require || return 1
   echo "${C_BOLD}Redis — clients${C_RESET}"
-  printf '  %-8s %-22s %-16s %-12s %s\n' "id" "addr" "name" "cmd" "age"
+  printf '  %-8s %-18s %-16s %-12s %s\n' "id" "addr" "name" "cmd" "age"
   hm_redis_cli CLIENT LIST 2>/dev/null | while IFS= read -r line; do
     [[ -n "${line}" ]] || continue
     local id addr name cmd age
@@ -124,12 +124,20 @@ hm_redis_cmd_clients() {
     name="$(printf '%s' "${line}" | sed -n 's/.*\bname=\([^ ]*\).*/\1/p')"
     cmd="$(printf '%s' "${line}" | sed -n 's/.*\bcmd=\([^ ]*\).*/\1/p')"
     age="$(printf '%s' "${line}" | sed -n 's/.*\bage=\([0-9]*\).*/\1/p')"
-    printf '  %-8s %-22s %-16s %-12s %s\n' "${id:--}" "${addr:--}" "${name:--}" "${cmd:--}" "${age:--}"
+    # unix socket — skróć do basename
+    if [[ "${addr}" == /* ]]; then
+      addr="unix:$(basename "${addr}")"
+    fi
+    printf '  %-8s %-18s %-16s %-12s %s\n' "${id:--}" "${addr:--}" "${name:--}" "${cmd:--}" "${age:--}"
   done
 }
 
 hm_redis_cmd_slowlog() {
   local n="${1:-10}"
+  if [[ -n "${1:-}" && ! "${1}" =~ ^[0-9]+$ ]]; then
+    hm_err "Użycie: redis slowlog [N] — N musi być liczbą całkowitą ≥0."
+    return 1
+  fi
   [[ "${n}" =~ ^[0-9]+$ ]] || n=10
   hm_redis_require || return 1
   echo "${C_BOLD}Redis — slowlog (ostatnie ${n})${C_RESET}"
@@ -163,20 +171,32 @@ hm_redis_cmd_monitor() {
 # --- sites ---
 
 hm_redis_scan_file_hints() {
-  # stdout: hint lines for one file; stdin unused; args: file
+  # stdout: hint tags; args: file
   local f="$1"
+  local base
+  base="$(basename "${f}")"
   [[ -f "${f}" ]] || return 1
   local hits=""
-  if grep -qiE 'REDIS_(HOST|URL|PASSWORD|PORT)|CACHE_DRIVER[[:space:]]*=[[:space:]]*redis|SESSION_DRIVER[[:space:]]*=[[:space:]]*redis|QUEUE_CONNECTION[[:space:]]*=[[:space:]]*redis' "${f}" 2>/dev/null; then
+  # WP najpierw — WP_REDIS_HOST nie oznaczaj jako „env”
+  if [[ "${base}" == wp-config.php || "${base}" == object-cache.php ]] \
+    || grep -qiE 'WP_REDIS_|object-cache|RedisObjectCache' "${f}" 2>/dev/null; then
+    if grep -qiE 'WP_REDIS_|object-cache|RedisObjectCache|define\s*\(\s*['\''\"]REDIS' "${f}" 2>/dev/null; then
+      hits="${hits}wp "
+    fi
+  fi
+  if [[ "${base}" == .env || "${base}" == .env.* || "${base}" =~ ^\.env ]]; then
+    if grep -qiE '(^|[[:space:]])REDIS_(HOST|URL|PASSWORD|PORT)=|CACHE_DRIVER[[:space:]]*=[[:space:]]*redis|SESSION_DRIVER[[:space:]]*=[[:space:]]*redis|QUEUE_CONNECTION[[:space:]]*=[[:space:]]*redis' "${f}" 2>/dev/null; then
+      hits="${hits}env "
+    fi
+  elif [[ -z "${hits}" ]] && grep -qiE '(^|[[:space:]])REDIS_(HOST|URL|PASSWORD|PORT)=|CACHE_DRIVER[[:space:]]*=[[:space:]]*redis' "${f}" 2>/dev/null; then
     hits="${hits}env "
   fi
-  if grep -qiE 'WP_REDIS_|define\s*\(\s*['\''\"]REDIS|object-cache|RedisObjectCache' "${f}" 2>/dev/null; then
-    hits="${hits}wp "
+  if [[ "${f}" == */config/cache.php || "${f}" == */config/database.php || "${f}" == */config/queue.php ]] \
+    || grep -qiE "driver[[:space:]]*=>[[:space:]]*['\"]redis['\"]|RedisManager|phpredis" "${f}" 2>/dev/null; then
+    if grep -qiE "['\"]redis['\"]|RedisManager|phpredis|driver[[:space:]]*=>[[:space:]]*['\"]redis['\"]" "${f}" 2>/dev/null; then
+      [[ "${hits}" == *laravel* ]] || hits="${hits}laravel "
+    fi
   fi
-  if grep -qiE "['\"]redis['\"]|RedisManager|phpredis|driver[[:space:]]*=>[[:space:]]*['\"]redis['\"]" "${f}" 2>/dev/null; then
-    hits="${hits}laravel "
-  fi
-  # prostszy fallback: słowo redis w kontekście cache/session
   if [[ -z "${hits}" ]] && grep -qiE 'redis' "${f}" 2>/dev/null; then
     if grep -qiE 'cache|session|queue|REDIS' "${f}" 2>/dev/null; then
       hits="redis "
@@ -206,7 +226,8 @@ hm_redis_cmd_sites() {
     return 0
   fi
 
-  local any=0 domain root doc f hint
+  local any=0 domain root doc f hint rp
+  local seen="|"
   for domain in "${domains[@]}"; do
     hm_set_site_context "${domain}" 2>/dev/null || true
     root="${HM_SITE_ROOT:-}"
@@ -216,7 +237,11 @@ hm_redis_cmd_sites() {
     for base in "${root}" "${doc}"; do
       [[ -n "${base}" && -d "${base}" ]] || continue
       while IFS= read -r f; do
-        [[ -n "${f}" ]] && files+=("${f}")
+        [[ -n "${f}" ]] || continue
+        rp="$(realpath -m "${f}" 2>/dev/null || echo "${f}")"
+        [[ "${seen}" == *"|${rp}|"* ]] && continue
+        seen="${seen}${rp}|"
+        files+=("${rp}")
       done < <(
         find "${base}" -maxdepth 4 \( \
           -name '.env' -o -name '.env.*' -o -name 'wp-config.php' \
@@ -249,9 +274,19 @@ hm_redis_cmd_config() {
       hm_redis_cli CONFIG GET "${pat}"
       ;;
     set)
-      local key="${1:-}" val="${2:-}"
+      local key="${1:-}"
+      shift || true
+      # reszta args = jedna wartość (np. save "3600 1")
+      local val="$*"
+      # zdejmij otaczające cudzysłowy z CLI użytkownika
+      if [[ "${val}" =~ ^\".*\"$ ]]; then
+        val="${val:1:${#val}-2}"
+      elif [[ "${val}" =~ ^\'.*\'$ ]]; then
+        val="${val:1:${#val}-2}"
+      fi
       [[ -n "${key}" && -n "${val}" ]] || {
         hm_err "Użycie: redis config set <key> <value>"
+        hm_info "Wartość ze spacjami: redis config set save \"3600 1\""
         return 1
       }
       local cur
@@ -261,13 +296,13 @@ hm_redis_cmd_config() {
         "CONFIG SET ${key} ${val} (obecnie: ${cur:--})"; then
         return 1
       fi
-      if hm_redis_cli CONFIG SET "${key}" "${val}"; then
-        hm_ok "CONFIG SET ${key} OK."
-        hm_info "Aby utrwalić: edytuj ${REDIS_CONF:-(conf)} lub redis-cli CONFIG REWRITE (ręcznie)."
-      else
-        hm_err "CONFIG SET nieudany."
+      local out
+      if ! out="$(hm_redis_cli_checked CONFIG SET "${key}" "${val}")"; then
+        hm_err "CONFIG SET nieudany: ${out:-?(brak odpowiedzi)}"
         return 1
       fi
+      hm_ok "CONFIG SET ${key} OK."
+      hm_info "Aby utrwalić: edytuj ${REDIS_CONF:-(conf)} lub redis-cli CONFIG REWRITE (ręcznie)."
       ;;
     *)
       hm_err "Użycie: redis config get|set …"
@@ -289,13 +324,16 @@ hm_redis_cmd_flushdb() {
     "FLUSHDB"; then
     return 1
   fi
-  hm_redis_cli SELECT "${n}" >/dev/null || return 1
-  if hm_redis_cli FLUSHDB; then
-    hm_ok "FLUSHDB db${n} OK."
-  else
-    hm_err "FLUSHDB nieudany."
+  local out
+  out="$(hm_redis_cli_checked SELECT "${n}")" || {
+    hm_err "SELECT ${n} nieudany: ${out:-}"
+    return 1
+  }
+  if ! out="$(hm_redis_cli_checked FLUSHDB)"; then
+    hm_err "FLUSHDB nieudany: ${out:-}"
     return 1
   fi
+  hm_ok "FLUSHDB db${n} OK."
 }
 
 hm_redis_cmd_flushall() {
@@ -305,12 +343,12 @@ hm_redis_cmd_flushall() {
     "FLUSHALL"; then
     return 1
   fi
-  if hm_redis_cli FLUSHALL; then
-    hm_ok "FLUSHALL OK."
-  else
-    hm_err "FLUSHALL nieudany."
+  local out
+  if ! out="$(hm_redis_cli_checked FLUSHALL)"; then
+    hm_err "FLUSHALL nieudany: ${out:-}"
     return 1
   fi
+  hm_ok "FLUSHALL OK."
 }
 
 hm_redis_cmd_restart() {
@@ -321,15 +359,25 @@ hm_redis_cmd_restart() {
     "systemctl restart ${svc} (lub service)"; then
     return 1
   fi
+  local used=""
   if hm_have_cmd systemctl; then
-    if systemctl restart "${svc}" 2>/dev/null || systemctl restart redis 2>/dev/null \
-      || systemctl restart redis-server 2>/dev/null; then
-      hm_ok "Redis restart OK (${svc})."
-      return 0
+    if systemctl restart "${svc}" 2>/dev/null; then
+      used="systemctl:${svc}"
+    elif systemctl restart redis 2>/dev/null; then
+      used="systemctl:redis"
+    elif systemctl restart redis-server 2>/dev/null; then
+      used="systemctl:redis-server"
     fi
   fi
-  if service redis-server restart 2>/dev/null || service redis restart 2>/dev/null; then
-    hm_ok "Redis restart OK (service)."
+  if [[ -z "${used}" ]]; then
+    if service redis-server restart 2>/dev/null; then
+      used="service:redis-server"
+    elif service redis restart 2>/dev/null; then
+      used="service:redis"
+    fi
+  fi
+  if [[ -n "${used}" ]]; then
+    hm_ok "Redis restart OK (${used})."
     return 0
   fi
   hm_err "Nie udało się zrestartować Redis (brak unit/service?)."
@@ -344,7 +392,7 @@ hm_redis_cmd_client_kill() {
   }
   hm_redis_require || return 1
   local mode="ID"
-  if [[ "${target}" == *.* || "${target}" == *:* ]]; then
+  if [[ "${target}" == *.* || "${target}" == *:* || "${target}" == /* ]]; then
     mode="ADDR"
   fi
   if ! hm_confirm_plan "redis client kill — ${mode} ${target}" \
@@ -352,12 +400,30 @@ hm_redis_cmd_client_kill() {
     "CLIENT KILL ${mode} ${target}"; then
     return 1
   fi
-  if hm_redis_cli CLIENT KILL "${mode}" "${target}"; then
-    hm_ok "CLIENT KILL OK."
-  else
-    hm_err "CLIENT KILL nieudany."
+  local out
+  out="$(hm_redis_cli CLIENT KILL "${mode}" "${target}" 2>&1)" || true
+  if hm_redis_reply_is_error "${out}"; then
+    hm_err "CLIENT KILL nieudany: ${out}"
     return 1
   fi
+  # odpowiedź: OK albo (integer) N — N=0 oznacza brak klientów
+  local n=""
+  if [[ "${out}" =~ \(integer\)[[:space:]]*([0-9]+) ]]; then
+    n="${BASH_REMATCH[1]}"
+  elif [[ "${out}" =~ ^[0-9]+$ ]]; then
+    n="${out}"
+  elif [[ "${out}" =~ ^OK ]]; then
+    n=1
+  fi
+  if [[ -z "${n}" ]]; then
+    hm_err "CLIENT KILL: nieoczekiwana odpowiedź: ${out:-pusto}"
+    return 1
+  fi
+  if [[ "${n}" -lt 1 ]]; then
+    hm_err "CLIENT KILL: nie zabito żadnego klienta (odpowiedź ${out})."
+    return 1
+  fi
+  hm_ok "CLIENT KILL OK (zabito: ${n})."
 }
 
 cmd_redis() {

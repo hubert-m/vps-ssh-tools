@@ -83,22 +83,30 @@ hm_redis_detect() {
     v="$(hm_redis_conf_get "${REDIS_CONF}" port 2>/dev/null || true)"
     [[ -n "${v}" && "${v}" =~ ^[0-9]+$ ]] && REDIS_PORT="${v}"
     v="$(hm_redis_conf_get "${REDIS_CONF}" bind 2>/dev/null || true)"
-    # bind może być listą — bierzemy pierwszy nie-publiczny preferencyjnie
+    # bind może być listą — do połączenia lokalnego preferuj 127.0.0.1
+    # (nie ustawiaj REDIS_HOST=* — wygląda jak *:port w statusie)
     if [[ -n "${v}" ]]; then
-      local first
-      first="$(printf '%s' "${v}" | awk '{print $1}')"
-      case "${first}" in
-        0.0.0.0|*::*|127.0.0.1|::1|localhost)
-          REDIS_HOST="127.0.0.1"
-          [[ "${first}" == "0.0.0.0" || "${first}" == *"::"* && "${first}" != "::1" ]] && REDIS_HOST="${first}"
-          ;;
-        *)
-          REDIS_HOST="${first}"
-          ;;
-      esac
-      # dla połączenia lokalnego zawsze 127.0.0.1 gdy bind zawiera loopback
       if printf '%s' "${v}" | grep -qE '(^|[[:space:]])(127\.0\.0\.1|::1)([[:space:]]|$)'; then
         REDIS_HOST="127.0.0.1"
+      else
+        local first
+        first="$(printf '%s' "${v}" | awk '{print $1}')"
+        case "${first}" in
+          0.0.0.0|\*|::|localhost)
+            REDIS_HOST="127.0.0.1"
+            ;;
+          ::1)
+            REDIS_HOST="127.0.0.1"
+            ;;
+          *)
+            # inne IPv6 (np. fe80::1) / konkretny interfejs — zostaw jako host CLI
+            if [[ "${first}" == *:* ]]; then
+              REDIS_HOST="127.0.0.1"
+            else
+              REDIS_HOST="${first}"
+            fi
+            ;;
+        esac
       fi
     fi
     v="$(hm_redis_conf_get "${REDIS_CONF}" unixsocket 2>/dev/null || true)"
@@ -147,6 +155,23 @@ hm_redis_cli() {
   "${REDIS_BIN}" "${args[@]}" --no-auth-warning "$@"
 }
 
+# Czy odpowiedź redis-cli to błąd protokołu (rc CLI bywa 0)
+hm_redis_reply_is_error() {
+  local out="${1:-}"
+  printf '%s' "${out}" | grep -qiE '(^|[[:space:]])(\(error\)|ERR |WRONGTYPE|NOAUTH|WRONGPASS|NOPERM|BUSY|NOSCRIPT)' 
+}
+
+# Uruchom komendę; stdout = odpowiedź; return ≠0 przy rc≠0 lub ERR w treści
+hm_redis_cli_checked() {
+  local out rc=0
+  out="$(hm_redis_cli "$@" 2>&1)" || rc=$?
+  printf '%s\n' "${out}"
+  if [[ "${rc}" -ne 0 ]] || hm_redis_reply_is_error "${out}"; then
+    return 1
+  fi
+  return 0
+}
+
 hm_redis_require() {
   hm_redis_detect
   if [[ -z "${REDIS_BIN}" ]]; then
@@ -155,13 +180,21 @@ hm_redis_require() {
     return 1
   fi
   local pong
-  pong="$(hm_redis_cli PING 2>/dev/null | tr -d '\r' || true)"
-  if [[ "${pong}" != "PONG" ]]; then
-    hm_err "Redis nie odpowiada na PING (${REDIS_SOCK:-${REDIS_HOST}:${REDIS_PORT}})."
-    [[ -n "${REDIS_SERVICE}" ]] && hm_info "Sprawdź: systemctl status ${REDIS_SERVICE}"
+  pong="$(hm_redis_cli PING 2>&1 | tr -d '\r' || true)"
+  if [[ "${pong}" == "PONG" ]]; then
+    return 0
+  fi
+  if printf '%s' "${pong}" | grep -qiE 'NOAUTH|WRONGPASS|invalid password|Authentication required'; then
+    hm_err "Redis wymaga hasła (NOAUTH/WRONGPASS) — sprawdź requirepass w ${REDIS_CONF:-(conf)}."
     return 1
   fi
-  return 0
+  if hm_redis_reply_is_error "${pong}"; then
+    hm_err "Redis PING błąd: ${pong}"
+    return 1
+  fi
+  hm_err "Redis nie odpowiada na PING (${REDIS_SOCK:-${REDIS_HOST}:${REDIS_PORT}})."
+  [[ -n "${REDIS_SERVICE}" ]] && hm_info "Sprawdź: systemctl status ${REDIS_SERVICE}"
+  return 1
 }
 
 # INFO field → wartość (pierwsza linia key:value)

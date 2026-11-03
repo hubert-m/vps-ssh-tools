@@ -28,6 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `access ftp` (pure-pw) — passwd/delete tylko dla kont należących do strony; `ftp add` respektuje ścieżkę w root
 - Fix: `access … <domena>` — `hm_access_resolve_site` bez subshella `$(…)` (HM_SITE_*); `access status` → rc≠0 przy błędzie
 - Fix: `access ssh keys` — odmowa symlinków `~/.ssh`/`authorized_keys` (bez zapisu/chown do plików poza home)
+- Fix: `redis` — parse ERR/(error) przy config set / client kill; wartość ze spacjami; UX sites/clients/slowlog/restart/NOAUTH
 
 ## [v0.1.8]
 
