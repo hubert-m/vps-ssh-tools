@@ -25,6 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Feat: `redis` — detekcja, status/memory/dbs/clients/slowlog/sites, config/flush/restart/client kill
 - Fix: zapis `httpd_config.conf` przez `cat >` (nie `mv` z mktemp 0600); bez narastających pustych linii przy archive/restore
 - Fix: `security ban` — pełny ban ufw tylko przy DENY `Anywhere`/`Anywhere (v6)` (nie DENY na pojedynczy port)
+- Fix: `access ftp` (pure-pw) — passwd/delete tylko dla kont należących do strony; `ftp add` respektuje ścieżkę w root
 
 ## [v0.1.8]
 

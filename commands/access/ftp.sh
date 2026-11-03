@@ -46,6 +46,115 @@ hm_access_is_valid_ftp_user() {
   [[ "${u}" =~ ^[a-zA-Z0-9][a-zA-Z0-9._@-]{0,62}$ ]]
 }
 
+# pure-pw show tekst → Directory (stdout)
+hm_access_pure_pw_parse_dir() {
+  local show="${1:-}"
+  printf '%s\n' "${show}" | awk -F: '
+    BEGIN { IGNORECASE=1 }
+    $1 ~ /^[[:space:]]*Directory[[:space:]]*$/ || $1 ~ /^[[:space:]]*Dir[[:space:]]*$/ {
+      val = $0
+      sub(/^[^:]*:[[:space:]]*/, "", val)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+      sub(/\/\.\/?$/, "/", val)
+      print val
+      exit
+    }
+  '
+}
+
+# pure-pw show tekst → UID numeryczny
+hm_access_pure_pw_parse_uid() {
+  local show="${1:-}"
+  printf '%s\n' "${show}" | awk -F: '
+    BEGIN { IGNORECASE=1 }
+    $1 ~ /^[[:space:]]*UID[[:space:]]*$/ {
+      if (match($0, /[0-9]+/)) {
+        print substr($0, RSTART, RLENGTH)
+        exit
+      }
+    }
+  '
+}
+
+# Czy katalog konta leży w root strony (realpath + prefiks)
+hm_access_ftp_dir_under_site() {
+  local dir="${1:-}" site_root="${2:-}"
+  local rd rr
+  [[ -n "${dir}" && -n "${site_root}" ]] || return 1
+  rr="$(realpath -m "${site_root}" 2>/dev/null || echo "${site_root}")"
+  rd="$(realpath -m "${dir}" 2>/dev/null || echo "${dir}")"
+  rr="${rr%/}"
+  rd="${rd%/}"
+  [[ "${rd}" == "${rr}" || "${rd}" == "${rr}"/* ]]
+}
+
+# Konto pure-pw należy do HM_SITE_* (Directory ⊆ root i/lub UID = site user)
+hm_access_pure_pw_belongs_to_site() {
+  local ftp_user="$1"
+  local show dir uid site_root site_uid
+  show="$(pure-pw show "${ftp_user}" 2>/dev/null)" || return 1
+  [[ -n "${show}" ]] || return 1
+  dir="$(hm_access_pure_pw_parse_dir "${show}")"
+  uid="$(hm_access_pure_pw_parse_uid "${show}")"
+  site_root="${HM_SITE_ROOT:-${HM_SITE_DOCROOT:-}}"
+  site_uid=""
+  [[ -n "${HM_SITE_USER:-}" ]] && site_uid="$(id -u "${HM_SITE_USER}" 2>/dev/null || true)"
+
+  local dir_ok=0 uid_ok=0
+  if [[ -n "${dir}" && -n "${site_root}" ]] && hm_access_ftp_dir_under_site "${dir}" "${site_root}"; then
+    dir_ok=1
+  fi
+  if [[ -n "${uid}" && -n "${site_uid}" && "${uid}" == "${site_uid}" ]]; then
+    uid_ok=1
+  fi
+  # wymagamy Directory w root strony; UID jako dodatkowe potwierdzenie gdy dostępne
+  if [[ "${dir_ok}" -eq 1 ]]; then
+    return 0
+  fi
+  # brak Directory w show — fallback wyłącznie UID (rzadsze)
+  if [[ -z "${dir}" && "${uid_ok}" -eq 1 ]]; then
+    return 0
+  fi
+  return 1
+}
+
+# Rozwiąż chroot FTP względem root strony; odmowa poza root / z „..”
+# path: / | . | względna | absolutna pod root | styl CP /public_html
+hm_access_ftp_resolve_chroot() {
+  local site_root="$1" path="${2:-/}"
+  local target rr first
+  [[ -n "${site_root}" ]] || return 1
+  [[ "${path}" != *..* ]] || return 1
+  rr="$(realpath -m "${site_root}" 2>/dev/null || echo "${site_root}")"
+  rr="${rr%/}"
+  if [[ -z "${path}" || "${path}" == "/" || "${path}" == "." ]]; then
+    printf '%s' "${rr}"
+    return 0
+  fi
+  if [[ "${path}" == /* ]]; then
+    if [[ "${path}" == "${rr}" || "${path}" == "${rr}"/* ]]; then
+      target="$(realpath -m "${path}" 2>/dev/null || echo "${path}")"
+    elif [[ "${path}" =~ ^/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]*)*$ ]]; then
+      # styl CyberPanel: /public_html — nie /tmp /etc /home /var …
+      first="${path#/}"
+      first="${first%%/*}"
+      case "${first}" in
+        tmp|etc|var|usr|home|opt|root|boot|srv|proc|sys|run|dev|mnt|media)
+          return 1
+          ;;
+      esac
+      target="$(realpath -m "${rr}${path}" 2>/dev/null || echo "${rr}${path}")"
+    else
+      return 1
+    fi
+  else
+    target="$(realpath -m "${rr}/${path}" 2>/dev/null || echo "${rr}/${path}")"
+  fi
+  target="${target%/}"
+  [[ "${target}" == "${rr}" || "${target}" == "${rr}"/* ]] || return 1
+  printf '%s' "${target}"
+}
+
 hm_access_ftp_list() {
   local domain backend
   domain="$(hm_access_resolve_site "${1:-}")" || return 1
@@ -101,7 +210,8 @@ hm_access_ftp_add() {
     fi
     if [[ -z "${ftp_user}" ]]; then
       ftp_user="${a}"
-    elif [[ "${a}" == /* || "${a}" == "." ]]; then
+    else
+      # ścieżka: absolutna, względna, „.” lub styl CP /public_html
       path="${a}"
     fi
   done
@@ -126,8 +236,25 @@ hm_access_ftp_add() {
     hm_err "Brak HM_SITE_ROOT/docroot — nie ustalę katalogu chroot."
     return 1
   }
-  # path w CP to względna od home strony (np. / lub /public_html)
   [[ "${path}" == "." ]] && path="/"
+
+  local chroot_abs cp_rel="${path}"
+  chroot_abs="$(hm_access_ftp_resolve_chroot "${home_path}" "${path}")" || {
+    hm_err "Ścieżka FTP poza root strony lub niebezpieczna: ${path}"
+    hm_info "Root strony: ${home_path}"
+    return 1
+  }
+  # CyberPanel: względna od home (np. /public_html); pure-pw: absolutna
+  if [[ "${chroot_abs}" == "$(realpath -m "${home_path}" 2>/dev/null || echo "${home_path}")" \
+     || "${chroot_abs}" == "$(realpath -m "${home_path}" 2>/dev/null || echo "${home_path}")/" ]]; then
+    cp_rel="/"
+  else
+    local hr
+    hr="$(realpath -m "${home_path}" 2>/dev/null || echo "${home_path}")"
+    hr="${hr%/}"
+    cp_rel="${chroot_abs#"${hr}"}"
+    [[ "${cp_rel}" == /* ]] || cp_rel="/${cp_rel}"
+  fi
 
   pass="$(hm_gen_password)"
   [[ -n "${pass}" && ${#pass} -ge 12 ]] || { hm_err "Nie udało się wygenerować hasła."; return 1; }
@@ -135,8 +262,8 @@ hm_access_ftp_add() {
   if ! hm_confirm_plan "access ftp add — ${domain}" \
     "Hasło FTP zostanie wypisane po utworzeniu." \
     "Backend: ${backend}" \
-    "Utworzenie konta FTP '${ftp_user}' (path=${path})" \
-    "Katalog strony (chroot/home): ${home_path}"; then
+    "Utworzenie konta FTP '${ftp_user}' (path=${path} → ${chroot_abs})" \
+    "Katalog strony (root): ${home_path}"; then
     return 1
   fi
 
@@ -146,7 +273,7 @@ hm_access_ftp_add() {
         hm_err "Konto FTP już istnieje: ${ftp_user}"
         return 1
       fi
-      hm_access_cp_ftp_create "${domain}" "${ftp_user}" "${pass}" "${path}" || {
+      hm_access_cp_ftp_create "${domain}" "${ftp_user}" "${pass}" "${cp_rel}" || {
         hm_err "Nie udało się utworzyć konta FTP."
         return 1
       }
@@ -156,14 +283,11 @@ hm_access_ftp_add() {
         hm_err "Brak pure-pw."
         return 1
       fi
-      local pdb="/etc/pure-ftpd/pureftpd.passwd"
-      [[ -f "${pdb}" ]] || pdb="/etc/pureftpd.passwd"
-      # pure-pw useradd USER -u UID -g GID -d DIR
       local uid gid
       uid="$(id -u "${HM_SITE_USER}")"
       gid="$(id -g "${HM_SITE_USER}")"
       if ! printf '%s\n%s\n' "${pass}" "${pass}" | pure-pw useradd "${ftp_user}" \
-        -u "${uid}" -g "${gid}" -d "${home_path}" -m; then
+        -u "${uid}" -g "${gid}" -d "${chroot_abs}" -m; then
         hm_err "pure-pw useradd nieudany."
         return 1
       fi
@@ -174,7 +298,7 @@ hm_access_ftp_add() {
   echo
   echo "  ${C_BOLD}FTP user:${C_RESET} ${ftp_user}"
   echo "  ${C_BOLD}Hasło:${C_RESET}    ${pass}"
-  echo "  ${C_BOLD}Path:${C_RESET}     ${path} (root strony: ${home_path})"
+  echo "  ${C_BOLD}Path:${C_RESET}     ${path} → ${chroot_abs}"
   echo "  ${C_DIM}Zapisz hasło — nie będzie ponownie pokazane.${C_RESET}"
 }
 
@@ -207,6 +331,10 @@ hm_access_ftp_passwd() {
     pure-ftpd)
       pure-pw show "${ftp_user}" >/dev/null 2>&1 || {
         hm_err "Brak konta pure-pw: ${ftp_user}"
+        return 1
+      }
+      hm_access_pure_pw_belongs_to_site "${ftp_user}" || {
+        hm_err "Konto FTP '${ftp_user}' nie należy do ${domain} (Directory/UID ≠ strona)."
         return 1
       }
       ;;
@@ -271,6 +399,10 @@ hm_access_ftp_delete() {
     pure-ftpd)
       pure-pw show "${ftp_user}" >/dev/null 2>&1 || {
         hm_err "Brak konta pure-pw: ${ftp_user}"
+        return 1
+      }
+      hm_access_pure_pw_belongs_to_site "${ftp_user}" || {
+        hm_err "Konto FTP '${ftp_user}' nie należy do ${domain} (Directory/UID ≠ strona)."
         return 1
       }
       ;;
