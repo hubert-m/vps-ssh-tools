@@ -18,4 +18,5 @@
 - Fix: `access ssh keys` — anti-TOCTOU (recheck `-L`/path_ok po confirm; odczyt/zapis przez runuser); zakres #N przed planem; shell już włączony → skip
 - Fix: `hm_run` / `hm_run_quiet` — redakcja `--password`/`--pass`/`-p` w logu RUN/RUN_END (FTP CyberPanel)
 - Feat: `disk` — flagi `--drive` / `--inodes` / `--home`; `--heavy [--count N] [--deep N]` (domyślnie 3/5) — rekurencyjny top najcięższych od `/`
+- Fix: `security ban` / ufw — pełny DENY liczy się tylko przed pierwszym ALLOW (v4/v6); DENY za ALLOW → prepend, nie fałszywe OK
 

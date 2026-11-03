@@ -73,28 +73,43 @@ _hm_os_do_firewall_ban() {
   return 1
 }
 
-# Pełny ban: DENY/REJECT z To=Anywhere|Anywhere (v6) i From=IP (ew. /32|/128).
-# Port-specific (np. „80 DENY from IP”) ≠ ban — stdin = wyjście ufw status.
+# Pełny ban: DENY/REJECT z To=Anywhere|Anywhere (v6) i From=IP (ew. /32|/128),
+# stojący PRZED pierwszą regułą ALLOW tej samej rodziny (v4/v6).
+# DENY dopisany za ALLOW 22/80/443 jest nieskuteczny (ufw = first match) → nie liczy się.
+# Port-specific (np. „80 DENY from IP”) ≠ ban — stdin = ufw status [numbered].
 _hm_os_ufw_parse_has_full_deny() {
   local ip="${1:-}"
   [[ -n "${ip}" ]] || return 1
   awk -v ip="${ip}" '
-    BEGIN { found = 0 }
+    BEGIN { found = 0; seen_allow_v4 = 0; seen_allow_v6 = 0 }
     {
       line = $0
-      # status numbered: "[ 1] Anywhere ..."
+      # status numbered: "[ 1] Anywhere ..." / "[10] ..."
       sub(/^[[:space:]]*\[[[:space:]]*[0-9]+\][[:space:]]*/, "", line)
+      # Pomiń nagłówki
+      if (line ~ /^To[[:space:]]+Action/ || line ~ /^--+/) next
+      if (line ~ /^Status:/ || line ~ /^[[:space:]]*$/) next
+
+      # Śledź pierwszą ALLOW per rodzina (v6 jeśli linia zawiera "(v6)")
+      if (line ~ /[[:space:]]ALLOW([[:space:]]|$)/) {
+        if (line ~ /\(v6\)/) seen_allow_v6 = 1
+        else seen_allow_v4 = 1
+      }
+
       # To musi być Anywhere / Anywhere (v6) — bez portu/protokołu
       if (line ~ /^Anywhere \(v6\)[[:space:]]+(DENY|REJECT)([[:space:]]+(IN|OUT))?[[:space:]]+/) {
+        # nieskuteczne, jeśli wcześniej był już ALLOW v6
+        if (seen_allow_v6) next
         rest = line
         sub(/^Anywhere \(v6\)[[:space:]]+(DENY|REJECT)([[:space:]]+(IN|OUT))?[[:space:]]+/, "", rest)
       } else if (line ~ /^Anywhere[[:space:]]+(DENY|REJECT)([[:space:]]+(IN|OUT))?[[:space:]]+/) {
+        if (seen_allow_v4) next
         rest = line
         sub(/^Anywhere[[:space:]]+(DENY|REJECT)([[:space:]]+(IN|OUT))?[[:space:]]+/, "", rest)
       } else {
         next
       }
-      # From: pierwszy token (IP lub IP/32|128); ignoruj „(v6)” jako osobne pole
+      # From: pierwszy token (IP lub IP/32|128)
       n = split(rest, a, /[[:space:]]+/)
       if (n < 1) next
       from = a[1]
@@ -108,7 +123,10 @@ _hm_os_ufw_parse_has_full_deny() {
 _hm_os_ufw_has_deny_from() {
   local ip="${1:-}"
   [[ -n "${ip}" ]] || return 1
-  ufw status 2>/dev/null | _hm_os_ufw_parse_has_full_deny "${ip}"
+  # numbered = jawna kolejność reguł (ważne dla pozycji DENY vs ALLOW)
+  local out=""
+  out="$(ufw status numbered 2>/dev/null)" || out="$(ufw status 2>/dev/null)" || return 1
+  printf '%s\n' "${out}" | _hm_os_ufw_parse_has_full_deny "${ip}"
 }
 
 # Alias (stare wywołania) — tylko DENY/REJECT
