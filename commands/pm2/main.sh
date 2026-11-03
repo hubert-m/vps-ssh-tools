@@ -299,7 +299,7 @@ hm_pm2_parse_apps() {
               | dash)
           end
         ),
-        (((.monit.memory // 0) / 1048576 * 10 | floor) / 10 | tostring),
+        ((.monit.memory // 0) | tostring),
         ((.pm2_env.restart_time // 0) | tostring)
       ] | @tsv
     ' 2>/dev/null | while IFS=$'\t' read -r name pid status cwd script porthint mem restarts; do
@@ -405,25 +405,30 @@ hm_pm2_print_table() {
     rows+=("${sortkey}|${name}|${pid}|${status}|${cwd}|${script}|${port}|${mem}|${restarts}")
   done
 
-  printf '  %s%-24s %-8s %-10s %6s %8s %5s  %s%s\n' \
-    "${C_DIM}" "NAME" "PID" "STATUS" "PORT" "MEM(MB)" "RST" "CWD" "${C_RESET}"
-  printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..78})" "${C_RESET}"
+  printf '  %s%-24s %-8s %-10s %6s %12s %5s  %s%s\n' \
+    "${C_DIM}" "NAME" "PID" "STATUS" "PORT" "MEM" "RST" "CWD" "${C_RESET}"
+  printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..82})" "${C_RESET}"
 
   if [[ "${#rows[@]}" -eq 0 ]]; then
     echo "  (brak procesów PM2 — sprawdź PM2_HOME użytkownika strony)"
     return 0
   fi
 
-  local stc
+  local stc mem_h
   while IFS='|' read -r sortkey name pid status cwd script port mem restarts; do
     [[ -n "${name}" ]] || continue
     stc="$(hm_pm2_status_color "${status}")"
-    printf '  %-24s %-8s %s%-10s%s %6s %8s %5s  %s\n' \
+    if [[ "${mem}" =~ ^[0-9]+$ ]]; then
+      mem_h="$(hm_human_size "${mem}")"
+    else
+      mem_h="${mem:--}"
+    fi
+    printf '  %-24s %-8s %s%-10s%s %6s %12s %5s  %s\n' \
       "${name:0:24}" \
       "${pid}" \
       "${stc}" "${status:0:10}" "${C_RESET}" \
       "${port:--}" \
-      "${mem:--}" \
+      "${mem_h}" \
       "${restarts:--}" \
       "${cwd:--}"
   done < <(printf '%s\n' "${rows[@]}" | sort -t'|' -k1,1)

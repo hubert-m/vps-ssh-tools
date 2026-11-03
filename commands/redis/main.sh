@@ -45,9 +45,14 @@ hm_redis_cmd_detect() {
 
 hm_redis_cmd_status() {
   hm_redis_require || return 1
-  local ver used clients role mode
+  local ver used_b used clients role mode
   ver="$(hm_redis_info_field server redis_version)"
-  used="$(hm_redis_info_field memory used_memory_human)"
+  used_b="$(hm_redis_info_field memory used_memory)"
+  if [[ "${used_b}" =~ ^[0-9]+$ ]]; then
+    used="$(hm_human_size "${used_b}")"
+  else
+    used="${used_b:--}"
+  fi
   clients="$(hm_redis_info_field clients connected_clients)"
   role="$(hm_redis_info_field replication role)"
   mode="$(hm_redis_info_field server redis_mode)"
@@ -56,7 +61,7 @@ hm_redis_cmd_status() {
   echo "  Endpoint  : ${REDIS_SOCK:-${REDIS_HOST}:${REDIS_PORT}}"
   echo "  Version   : ${ver:--}"
   echo "  Mode/role : ${mode:--} / ${role:--}"
-  echo "  Memory    : ${used:--}"
+  echo "  Memory    : ${used}"
   echo "  Clients   : ${clients:--}"
   echo "  Conf      : ${REDIS_CONF:--}"
   echo "  Service   : ${REDIS_SERVICE:--}"
@@ -79,8 +84,15 @@ hm_redis_cmd_memory() {
   hm_redis_require || return 1
   echo "${C_BOLD}Redis — memory${C_RESET}"
   local k v
-  for k in used_memory_human used_memory_peak_human used_memory_rss_human \
-           mem_fragmentation_ratio maxmemory_human maxmemory_policy; do
+  for k in used_memory used_memory_peak used_memory_rss maxmemory; do
+    v="$(hm_redis_info_field memory "${k}")"
+    if [[ "${v}" =~ ^[0-9]+$ ]]; then
+      printf '  %-28s %s\n' "${k}" "$(hm_human_size "${v}")"
+    else
+      printf '  %-28s %s\n' "${k}" "${v:--}"
+    fi
+  done
+  for k in mem_fragmentation_ratio maxmemory_policy; do
     v="$(hm_redis_info_field memory "${k}")"
     printf '  %-28s %s\n' "${k}" "${v:--}"
   done

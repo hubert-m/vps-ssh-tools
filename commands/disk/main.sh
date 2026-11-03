@@ -34,8 +34,9 @@ hm_disk_section_home() {
   fi
   echo "${C_BOLD}Top katalogi w /home${C_RESET}"
   hm_status_line "Obliczanie rozmiaru katalogów w /home..."
+  # zbierz najpierw — status (\r) nie może doklejać się do pierwszej linii
   local out=""
-  out="$(du -h --max-depth=1 /home 2>/dev/null | sort -hr | head -25)" || true
+  out="$(hm_print_du_depth /home 1 25 "")" || true
   hm_status_clear
   [[ -n "${out}" ]] && printf '%s\n' "${out}"
 }
@@ -72,19 +73,9 @@ hm_disk_top_entries() {
     | head -n "${count}"
 }
 
+# Alias — wszędzie ten sam format co mysql (np. „6.44 GB”), nie „6.4G”.
 hm_disk_human_size() {
-  local bytes="${1:-0}"
-  if hm_have_cmd numfmt; then
-    numfmt --to=iec --suffix=B --format='%.1f' "${bytes}" 2>/dev/null | sed 's/\.0B$/B/;s/B$//'
-    return 0
-  fi
-  # fallback bez numfmt
-  local u=0 units=(B K M G T P) v="${bytes}"
-  while (( v >= 1024 && u < ${#units[@]} - 1 )); do
-    v=$((v / 1024))
-    u=$((u + 1))
-  done
-  printf '%s%s' "${v}" "${units[$u]}"
+  hm_human_size "${1:-0}"
 }
 
 # Rekurencja: na każdym poziomie top `count` pozycji; zejście w katalogi max `deep` poziomów (1 = tylko bieżący).
@@ -113,7 +104,7 @@ hm_disk_heavy_walk() {
   for line in "${rows[@]}"; do
     sz="${line%%$'\t'*}"
     ent="${line#*$'\t'}"
-    human="$(hm_disk_human_size "${sz}")"
+    human="$(hm_human_size "${sz}")"
     if [[ -d "${ent}" && ! -L "${ent}" ]]; then
       echo "${indent}${C_BOLD}${human}${C_RESET}  ${ent}/"
       if [[ "${level}" -lt "${deep}" ]]; then

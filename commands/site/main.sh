@@ -81,16 +81,19 @@ cmd_site_size() {
   echo
   echo "${C_BOLD}Top katalogi (środowisko)${C_RESET} ${C_DIM}— max-depth 1${C_RESET}"
   hm_status_line "Analiza top katalogów w root..."
-  du -h --max-depth=1 "${root}" 2>/dev/null | sort -hr | head -20 | sed 's/^/  /'
+  local _du_out=""
+  _du_out="$(hm_print_du_depth "${root}" 1 20)" || true
   hm_status_clear
+  [[ -n "${_du_out}" ]] && printf '%s\n' "${_du_out}"
 
   # drugi poziom: wnętrze docroot / public_html
   if [[ -n "${doc}" && -d "${doc}" ]]; then
     echo
     echo "${C_BOLD}Top w $(basename "${doc}")${C_RESET} ${C_DIM}— ${doc}${C_RESET}"
     hm_status_line "Analiza top w docroot..."
-    du -h --max-depth=1 "${doc}" 2>/dev/null | sort -hr | head -25 | sed 's/^/  /'
+    _du_out="$(hm_print_du_depth "${doc}" 1 25)" || true
     hm_status_clear
+    [[ -n "${_du_out}" ]] && printf '%s\n' "${_du_out}"
   fi
 
   # jeśli największe katalogi poza docroot zasługują na 2. poziom (.npm, .nvm, .cache…)
@@ -103,7 +106,7 @@ cmd_site_size() {
       if [[ "${sz}" =~ ^[0-9]+$ ]] && [[ "${sz}" -ge 52428800 ]]; then
         echo
         echo "${C_BOLD}Top w ${sub}${C_RESET} ${C_DIM}— ${root}/${sub}${C_RESET}"
-        du -h --max-depth=1 "${root}/${sub}" 2>/dev/null | sort -hr | head -15 | sed 's/^/  /'
+        hm_print_du_depth "${root}/${sub}" 1 15
       fi
     fi
   done

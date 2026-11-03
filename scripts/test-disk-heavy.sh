@@ -10,6 +10,16 @@ hm_warn() { :; }
 hm_have_cmd() { command -v "$1" >/dev/null 2>&1; }
 hm_status_line() { :; }
 hm_status_clear() { :; }
+hm_human_size() {
+  local bytes="${1:-0}"
+  awk -v b="${bytes}" 'BEGIN {
+    split("B KB MB GB TB PB", u, " ");
+    i=1;
+    while (b >= 1024 && i < 6) { b/=1024; i++ }
+    if (i==1) printf "%d %s", b, u[i];
+    else printf "%.2f %s", b, u[i];
+  }'
+}
 C_BOLD=""; C_RESET=""; C_DIM=""
 
 # shellcheck disable=SC1091
@@ -64,12 +74,12 @@ else
   fail=1
 fi
 
-# human size
+# human size — format jak mysql (KB/MB/GB)
 h="$(hm_disk_human_size 1024)"
-if [[ -n "${h}" ]]; then
+if [[ "${h}" == "1.00 KB" ]]; then
   echo "OK   human_size(1024)=${h}"
 else
-  echo "FAIL human_size"
+  echo "FAIL human_size got='${h}' want='1.00 KB'"
   fail=1
 fi
 
