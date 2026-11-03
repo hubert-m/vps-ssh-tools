@@ -14,4 +14,5 @@
 - Fix: `access ssh keys` — odmowa symlinków `~/.ssh`/`authorized_keys` (bez zapisu/chown do plików poza home)
 - Fix: `redis` — parse ERR/(error) przy config set / client kill; wartość ze spacjami; UX sites/clients/slowlog/restart/NOAUTH
 - Fix: `redis flushdb N` — `redis-cli -n N FLUSHDB` (osobny SELECT nie zmienia DB; wcześniej czyściło db0)
+- Fix: `access ssh` — status bez „0\\n0” kluczy; `keys remove 0` → błąd; duplikat klucza przed confirm; CP FTP bez SQL plaintext hasła
 

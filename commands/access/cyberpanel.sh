@@ -45,66 +45,43 @@ hm_access_cp_ftp_exists() {
   [[ "${n}" =~ ^[1-9] ]]
 }
 
-# Utwórz konto FTP — CLI CyberPanel, fallback INSERT (hasło plaintext jak CP przy create; CP hashuje przy CLI)
+# Utwórz konto FTP — wyłącznie CLI CyberPanel (bez SQL INSERT hasła plaintext)
 hm_access_cp_ftp_create() {
   local domain="$1"
   local ftp_user="$2"
   local pass="$3"
   local path="${4:-/}"
-  local wid
 
-  if hm_have_cmd cyberpanel; then
-    if hm_run cyberpanel createFTPAccount \
-      --domainName "${domain}" \
-      --userName "${ftp_user}" \
-      --password "${pass}" \
-      --path "${path}" 2>/dev/null; then
-      return 0
-    fi
-    hm_warn "cyberpanel createFTPAccount nieudane — próbuję SQL."
-  fi
-
-  wid="$(hm_access_cp_website_id "${domain}")"
-  [[ -n "${wid}" ]] || {
-    hm_err "Brak website id CyberPanel dla ${domain}."
-    return 1
-  }
-  hm_access_cp_ftp_table_ok || {
-    hm_err "Brak tabeli cyberpanel.ftp_ftp."
-    return 1
-  }
-  if hm_access_cp_ftp_exists "${ftp_user}"; then
-    hm_err "Konto FTP już istnieje: ${ftp_user}"
+  if ! hm_have_cmd cyberpanel; then
+    hm_err "Brak binary cyberpanel — nie tworzę FTP przez SQL (hasło byłoby plaintext)."
     return 1
   fi
-  # Uwaga: bezpośredni INSERT z plaintext może nie działać z Pure-FTPd (oczekuje hash) —
-  # dlatego CLI jest preferowane. SQL jako ostatnia deska.
-  local uq pq pq_path
-  uq="$(hm_sql_quote "${ftp_user}")"
-  pq="$(hm_sql_quote "${pass}")"
-  pq_path="$(hm_sql_quote "${path}")"
-  hm_mysql_exec cyberpanel -e \
-    "INSERT INTO ftp_ftp (user, password, path, owner_id) VALUES (${uq}, ${pq}, ${pq_path}, ${wid});" \
-    || return 1
-  return 0
+  if hm_run cyberpanel createFTPAccount \
+    --domainName "${domain}" \
+    --userName "${ftp_user}" \
+    --password "${pass}" \
+    --path "${path}" 2>/dev/null; then
+    return 0
+  fi
+  hm_err "cyberpanel createFTPAccount nieudane — bez fallbacku SQL (plaintext)."
+  return 1
 }
 
 hm_access_cp_ftp_set_password() {
   local ftp_user="$1"
   local pass="$2"
 
-  if hm_have_cmd cyberpanel; then
-    # nowsze CP: changeFTPPassword; starsze mogą nie mieć — wtedy SQL
-    if cyberpanel changeFTPPassword --ftpUserName "${ftp_user}" --password "${pass}" >/dev/null 2>&1 \
-      || cyberpanel changeFTPPass --ftpUserName "${ftp_user}" --password "${pass}" >/dev/null 2>&1; then
-      return 0
-    fi
+  if ! hm_have_cmd cyberpanel; then
+    hm_err "Brak binary cyberpanel — nie ustawiam hasła FTP przez SQL (plaintext)."
+    return 1
   fi
-  local uq pq
-  uq="$(hm_sql_quote "${ftp_user}")"
-  pq="$(hm_sql_quote "${pass}")"
-  hm_mysql_exec cyberpanel -e \
-    "UPDATE ftp_ftp SET password=${pq} WHERE user=${uq};" || return 1
+  # nowsze CP: changeFTPPassword; starsze: changeFTPPass — bez UPDATE plaintext
+  if cyberpanel changeFTPPassword --ftpUserName "${ftp_user}" --password "${pass}" >/dev/null 2>&1 \
+    || cyberpanel changeFTPPass --ftpUserName "${ftp_user}" --password "${pass}" >/dev/null 2>&1; then
+    return 0
+  fi
+  hm_err "cyberpanel changeFTPPassword nieudane — bez fallbacku SQL (plaintext)."
+  return 1
 }
 
 hm_access_cp_ftp_delete() {

@@ -129,7 +129,9 @@ hm_access_ssh_status() {
     if [[ -L "${home}/.ssh" || -L "${keysf}" ]]; then
       hm_warn "Klucze   : odmowa odczytu — ~/.ssh lub authorized_keys jest symlinkiem"
     elif [[ -f "${keysf}" ]] && hm_access_ssh_path_ok "${user}" "${home}" "${keysf}" 2>/dev/null; then
-      nkeys="$(grep -cE '^[[:space:]]*(ssh-|ecdsa-|sk-)' "${keysf}" 2>/dev/null || echo 0)"
+      # grep -c przy 0 trafieniach: stdout „0” + rc=1 — NIE używać `|| echo 0` (dałoby „0\n0”)
+      nkeys="$(grep -cE '^[[:space:]]*(ssh-|ecdsa-|sk-)' "${keysf}" 2>/dev/null || true)"
+      [[ "${nkeys}" =~ ^[0-9]+$ ]] || nkeys=0
       echo "  Klucze   : ${nkeys} w ${keysf}"
     elif [[ -f "${keysf}" ]]; then
       hm_warn "Klucze   : plik istnieje, ale ścieżka/właściciel niebezpieczne — pomijam odczyt"
@@ -339,6 +341,18 @@ hm_access_ssh_keys_add() {
     return 1
   fi
 
+  # Duplikat — przed confirm (gdy plik już istnieje i jest bezpieczny)
+  local home keys_existing
+  home="$(hm_access_unix_home "${user}")"
+  keys_existing="$(hm_access_ssh_keys_file "${user}" 2>/dev/null || true)"
+  if [[ -n "${keys_existing}" && -f "${keys_existing}" ]] \
+    && [[ ! -L "${home}/.ssh" && ! -L "${keys_existing}" ]] \
+    && hm_access_ssh_path_ok "${user}" "${home}" "${keys_existing}" 2>/dev/null \
+    && grep -Fqx "${key_line}" "${keys_existing}" 2>/dev/null; then
+    hm_ok "Klucz już jest w ${keys_existing}."
+    return 0
+  fi
+
   if ! hm_confirm_plan "access ssh keys add — ${domain}" \
     "Klucz zostanie dopisany do authorized_keys użytkownika ${user}." \
     "Utworzenie ~/.ssh (700) i authorized_keys (600) jeśli brak" \
@@ -349,8 +363,6 @@ hm_access_ssh_keys_add() {
   keysf="$(hm_access_ssh_keys_ensure_dir "${user}")" || return 1
   # po ensure_dir: bez symlinków; jeszcze raz przed zapisem
   [[ -L "${keysf}" ]] && { hm_err "Odmowa: ${keysf} jest symlinkiem."; return 1; }
-  local home
-  home="$(hm_access_unix_home "${user}")"
   hm_access_ssh_path_ok "${user}" "${home}" "${keysf}" || return 1
   if grep -Fqx "${key_line}" "${keysf}" 2>/dev/null; then
     hm_ok "Klucz już jest w ${keysf}."
@@ -388,6 +400,11 @@ hm_access_ssh_keys_remove() {
     hm_info "Numer z: access ssh keys list"
     return 1
   }
+  # list numeruje od 1 — #0 nigdy nie wskazuje klucza, ale wcześniej fałszywie „Usunięto”
+  if [[ "${idx}" -lt 1 ]]; then
+    hm_err "Numer klucza musi być ≥ 1 (patrz: access ssh keys list)."
+    return 1
+  fi
 
   hm_access_resolve_site "${domain_arg}" || return 1
   domain="${HM_SITE_DOMAIN}"
@@ -412,17 +429,19 @@ hm_access_ssh_keys_remove() {
   fi
 
   tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-ak.XXXXXX")"
+  local removed=0
   while IFS= read -r line || [[ -n "${line}" ]]; do
     if hm_access_is_valid_ssh_key_line "${line}"; then
       n=$((n + 1))
       if [[ "${n}" -eq "${idx}" ]]; then
+        removed=1
         continue
       fi
     fi
     printf '%s\n' "${line}" >> "${tmp}"
   done < "${keysf}"
 
-  if [[ "${n}" -lt "${idx}" ]]; then
+  if [[ "${removed}" -ne 1 ]]; then
     rm -f "${tmp}"
     hm_err "Brak klucza o numerze ${idx} (jest ${n})."
     return 1

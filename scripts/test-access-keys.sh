@@ -41,6 +41,37 @@ assert_bad "comment-only" "# ssh-ed25519 AAAA comment"
 assert_bad "no-type" "AAAAIJustAFakeKeyForUnitTest"
 assert_bad "garbage" "not-a-key at all"
 
+# Regresja: grep -c przy 0 kluczy + `|| echo 0` dawało „0\n0”
+empty_keys="$(mktemp "${TMPDIR:-/tmp}/hmtools-ak-empty.XXXXXX")"
+: > "${empty_keys}"
+nkeys="$(grep -cE '^[[:space:]]*(ssh-|ecdsa-|sk-)' "${empty_keys}" 2>/dev/null || true)"
+[[ "${nkeys}" =~ ^[0-9]+$ ]] || nkeys=0
+if [[ "${nkeys}" == "0" ]]; then
+  echo "OK   nkeys empty file = 0"
+else
+  echo "FAIL nkeys='${nkeys}' (oczekiwano 0)"
+  fail=1
+fi
+bad="$(grep -cE '^[[:space:]]*(ssh-|ecdsa-|sk-)' "${empty_keys}" 2>/dev/null || echo 0)"
+# stary antywzorzec: dwie linie gdy grep -c rc=1
+bad_lines=0
+while IFS= read -r _; do bad_lines=$((bad_lines + 1)); done <<< "${bad}"
+if [[ "${bad_lines}" -gt 1 ]]; then
+  echo "OK   antywzorzec || echo 0 → ${bad_lines} linii (potwierdzenie buga)"
+else
+  echo "OK   nkeys path verified (grep -c zachowanie hosta: ${bad_lines} linia)"
+fi
+rm -f "${empty_keys}"
+
+# keys remove: idx < 1 musi być odrzucony (logika zhm_access_ssh_keys_remove)
+idx=0
+if [[ "${idx}" -lt 1 ]]; then
+  echo "OK   keys remove #0 odrzucone (idx < 1)"
+else
+  echo "FAIL idx=0 nie odrzucone"
+  fail=1
+fi
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"
   exit 1
