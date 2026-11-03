@@ -157,7 +157,8 @@ hm_access_ftp_resolve_chroot() {
 
 hm_access_ftp_list() {
   local domain backend
-  domain="$(hm_access_resolve_site "${1:-}")" || return 1
+  hm_access_resolve_site "${1:-}" || return 1
+  domain="${HM_SITE_DOMAIN}"
   backend="$(hm_access_ftp_detect)"
 
   echo "${C_BOLD}FTP — ${domain}${C_RESET} ${C_DIM}(backend: ${backend})${C_RESET}"
@@ -217,7 +218,8 @@ hm_access_ftp_add() {
   done
 
   local domain backend pass home_path
-  domain="$(hm_access_resolve_site "${domain_arg}")" || return 1
+  hm_access_resolve_site "${domain_arg}" || return 1
+  domain="${HM_SITE_DOMAIN}"
   hm_access_require_site_user "${domain}" >/dev/null || return 1
   backend="$(hm_access_ftp_detect)"
   hm_access_ftp_backend_ok || return 1
@@ -312,7 +314,8 @@ hm_access_ftp_passwd() {
   fi
 
   local domain backend pass
-  domain="$(hm_access_resolve_site "${domain_arg}")" || return 1
+  hm_access_resolve_site "${domain_arg}" || return 1
+  domain="${HM_SITE_DOMAIN}"
   hm_access_ftp_backend_ok || return 1
   backend="$(hm_access_ftp_detect)"
 
@@ -380,7 +383,8 @@ hm_access_ftp_delete() {
   fi
 
   local domain backend
-  domain="$(hm_access_resolve_site "${domain_arg}")" || return 1
+  hm_access_resolve_site "${domain_arg}" || return 1
+  domain="${HM_SITE_DOMAIN}"
   hm_access_ftp_backend_ok || return 1
   backend="$(hm_access_ftp_detect)"
 

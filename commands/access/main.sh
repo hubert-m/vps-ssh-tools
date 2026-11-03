@@ -33,11 +33,13 @@ source "${_HM_ACCESS_DIR}/cyberpanel.sh"
 source "${_HM_ACCESS_DIR}/ftp.sh"
 
 hm_access_status() {
-  local domain
-  domain="$(hm_access_resolve_site "${1:-}")" || return 1
-  hm_access_ssh_status "${domain}"
+  local domain rc=0
+  hm_access_resolve_site "${1:-}" || return 1
+  domain="${HM_SITE_DOMAIN}"
+  hm_access_ssh_status || rc=$?
   echo
-  hm_access_ftp_list "${domain}" || true
+  hm_access_ftp_list || rc=$?
+  return "${rc}"
 }
 
 cmd_access() {

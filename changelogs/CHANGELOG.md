@@ -26,6 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: zapis `httpd_config.conf` przez `cat >` (nie `mv` z mktemp 0600); bez narastających pustych linii przy archive/restore
 - Fix: `security ban` — pełny ban ufw tylko przy DENY `Anywhere`/`Anywhere (v6)` (nie DENY na pojedynczy port)
 - Fix: `access ftp` (pure-pw) — passwd/delete tylko dla kont należących do strony; `ftp add` respektuje ścieżkę w root
+- Fix: `access … <domena>` — `hm_access_resolve_site` bez subshella `$(…)` (HM_SITE_*); `access status` → rc≠0 przy błędzie
 
 ## [v0.1.8]
 

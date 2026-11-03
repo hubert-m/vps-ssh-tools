@@ -15,7 +15,8 @@ hm_access_user_is_protected() {
   return 1
 }
 
-# Ustaw kontekst strony; stdout: domain. Ustawia HM_SITE_* .
+# Ustaw kontekst strony (HM_SITE_*). NIE wołać w $(…) — subshell gubi kontekst.
+# Po sukcesie: HM_SITE_DOMAIN / HM_SITE_USER / … są ustawione w bieżącej powłoce.
 hm_access_resolve_site() {
   local arg="${1:-}"
   local domain=""
@@ -28,7 +29,8 @@ hm_access_resolve_site() {
     hm_err "Podaj domenę lub wejdź w kontekst: use <domena>"
     return 1
   fi
-  printf '%s' "${domain}"
+  [[ -n "${HM_SITE_DOMAIN:-}" ]] || return 1
+  return 0
 }
 
 hm_access_require_site_user() {
@@ -76,7 +78,8 @@ hm_access_is_valid_ssh_key_line() {
 
 hm_access_ssh_status() {
   local domain user home shell keysf nkeys=0
-  domain="$(hm_access_resolve_site "${1:-}")" || return 1
+  hm_access_resolve_site "${1:-}" || return 1
+  domain="${HM_SITE_DOMAIN}"
   user="$(hm_access_require_site_user "${domain}")" || return 1
   home="$(hm_access_unix_home "${user}")"
   shell="$(hm_access_unix_shell "${user}")"
@@ -101,7 +104,8 @@ hm_access_ssh_status() {
 
 hm_access_ssh_passwd() {
   local domain user pass
-  domain="$(hm_access_resolve_site "${1:-}")" || return 1
+  hm_access_resolve_site "${1:-}" || return 1
+  domain="${HM_SITE_DOMAIN}"
   user="$(hm_access_require_site_user "${domain}")" || return 1
 
   if ! hm_confirm_plan "access ssh passwd — ${domain}" \
@@ -149,7 +153,8 @@ hm_access_ssh_shell() {
       ;;
   esac
 
-  domain="$(hm_access_resolve_site "${domain_arg}")" || return 1
+  hm_access_resolve_site "${domain_arg}" || return 1
+  domain="${HM_SITE_DOMAIN}"
   user="$(hm_access_require_site_user "${domain}")" || return 1
   cur="$(hm_access_unix_shell "${user}")"
 
@@ -168,7 +173,8 @@ hm_access_ssh_shell() {
 
 hm_access_ssh_keys_list() {
   local domain user keysf line i=0
-  domain="$(hm_access_resolve_site "${1:-}")" || return 1
+  hm_access_resolve_site "${1:-}" || return 1
+  domain="${HM_SITE_DOMAIN}"
   user="$(hm_access_require_site_user "${domain}")" || return 1
   keysf="$(hm_access_ssh_keys_file "${user}" 2>/dev/null || true)"
 
@@ -224,7 +230,8 @@ hm_access_ssh_keys_add() {
   fi
 
   local domain user keysf
-  domain="$(hm_access_resolve_site "${domain_arg}")" || return 1
+  hm_access_resolve_site "${domain_arg}" || return 1
+  domain="${HM_SITE_DOMAIN}"
   user="$(hm_access_require_site_user "${domain}")" || return 1
 
   if [[ -z "${key_line}" ]]; then
@@ -274,7 +281,8 @@ hm_access_ssh_keys_remove() {
     return 1
   }
 
-  domain="$(hm_access_resolve_site "${domain_arg}")" || return 1
+  hm_access_resolve_site "${domain_arg}" || return 1
+  domain="${HM_SITE_DOMAIN}"
   user="$(hm_access_require_site_user "${domain}")" || return 1
   keysf="$(hm_access_ssh_keys_file "${user}" 2>/dev/null || true)"
   [[ -n "${keysf}" && -f "${keysf}" ]] || {
