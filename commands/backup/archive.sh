@@ -90,7 +90,8 @@ hm_archive_upload_site_files() {
 
   if [[ "${size_b}" -ge "${threshold_b}" ]]; then
     # hm_info/hm_ok idą na stdout — przekieruj, żeby report=$((...)) dostał tylko printf
-    hm_chunked_tar_upload "${src_dir}" "${remote_base}/files.chunks" >&2 || return 1
+    # archive = pełny dump (ARCHIVE_EXCLUDES, domyślnie puste) — potem kasujemy VPS
+    hm_chunked_tar_upload "${src_dir}" "${remote_base}/files.chunks" "archive" >&2 || return 1
     local marker n
     marker="$(rclone cat "${remote_base}/files.chunks/files.tar.gz.chunks.txt" 2>/dev/null || true)"
     n="$(printf '%s' "${marker}" | sed -n 's/^chunks=//p' | tr -d '[:space:]')"
@@ -100,7 +101,7 @@ hm_archive_upload_site_files() {
     fi
     printf 'chunks\t%s\n' "${n:-0}"
   else
-    hm_stream_tar_rcat "${src_dir}" "${remote_base}/files.tar.gz" >&2 || return 1
+    hm_stream_tar_rcat "${src_dir}" "${remote_base}/files.tar.gz" "archive" >&2 || return 1
     printf 'tar\t0\n'
   fi
 }
@@ -172,25 +173,83 @@ hm_archive_pack_ssl() {
     [[ -e "${p}" ]] && paths+=("${p}")
   done
   [[ "${#paths[@]}" -gt 0 ]] || return 1
-  # -h: dereferencja symlinków (live/ → archive/)
-  tar -chzf "${out_tar}" "${paths[@]}" 2>/dev/null
+  # BEZ -h: zachowaj symlinki certbota (live/*.pem → archive/) — renew działa po restore
+  tar -czf "${out_tar}" "${paths[@]}" 2>/dev/null
 }
 
-# Zrzut kont MySQL (CREATE USER + GRANTS, z hashem) — 1:1 przy restore.
-# out_sql: lokalny plik; users: nazwy kont (bez hosta).
-# Zwraca 0 gdy zapisano ≥1 konto, 1 gdy brak kont / błąd.
+# Eksport wierszy CyberPanel (website + childdomains + databases) do SQL INSERT.
+hm_archive_export_cyberpanel_sql() {
+  local domain="$1"
+  local out_sql="$2"
+  local id dumpcli q
+  hm_is_valid_domain "${domain}" || return 1
+  [[ "${PANEL:-}" == "cyberpanel" ]] || return 1
+  q="$(hm_sql_quote "${domain}")"
+  id="$(hm_mysql_exec cyberpanel -e "SELECT id FROM websiteFunctions_websites WHERE domain=${q} LIMIT 1;" 2>/dev/null | tr -d '[:space:]')"
+  [[ -n "${id}" && "${id}" =~ ^[0-9]+$ ]] || return 1
+  dumpcli="$(hm_mysqldump_cli)" || return 1
+  local sock=()
+  [[ -n "${MYSQL_SOCKET:-}" ]] && sock=(--socket="${MYSQL_SOCKET}")
+  {
+    echo "-- hmtools archive: CyberPanel rows for ${domain} (id=${id})"
+    echo "USE \`cyberpanel\`;"
+    "${dumpcli}" "${sock[@]}" cyberpanel websiteFunctions_websites \
+      --where="id=${id}" --no-create-info --complete-insert --skip-lock-tables --skip-comments 2>/dev/null || true
+    "${dumpcli}" "${sock[@]}" cyberpanel websiteFunctions_childdomains \
+      --where="master_id=${id}" --no-create-info --complete-insert --skip-lock-tables --skip-comments 2>/dev/null || true
+    "${dumpcli}" "${sock[@]}" cyberpanel databases_databases \
+      --where="website_id=${id}" --no-create-info --complete-insert --skip-lock-tables --skip-comments 2>/dev/null || true
+  } > "${out_sql}"
+  [[ -s "${out_sql}" ]]
+}
+
+# Czy linia GRANT dotyczy baz ze snapshotu (lub USAGE ON *.*).
+# $1=linia; dalsze args = dozwolone nazwy baz.
+hm_archive_grant_for_snapshot_dbs() {
+  local line="$1"
+  shift || true
+  local -a dbs=("$@")
+  local db esc
+  # USAGE / minimalne na *.* — zostaw (konto musi istnieć)
+  if [[ "${line}" =~ ON[[:space:]]+\*\.\* ]]; then
+    return 0
+  fi
+  [[ "${#dbs[@]}" -eq 0 ]] && return 0
+  for db in "${dbs[@]}"; do
+    [[ -n "${db}" ]] || continue
+    # dopasuj `dbname` oraz wariant z escapowanym \_
+    esc="${db//_/\\_}"
+    if [[ "${line}" == *'`'"${db}"'`'* ]] || [[ "${line}" == *'`'"${esc}"'`'* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Zrzut kont MySQL (CREATE USER + GRANTS) — tylko konta exclusive / podane.
+# Użycie: hm_archive_export_mysql_accounts out.sql [--dbs db1,db2] user1 user2…
+# GRANT-y na bazy spoza --dbs są pomijane (nie psują cudzych serwisów przy restore).
 hm_archive_export_mysql_accounts() {
   local out_sql="$1"
   shift || true
-  local -a users=("$@")
+  local -a allow_dbs=()
+  local -a users=()
+  if [[ "${1:-}" == "--dbs" ]]; then
+    shift
+    local dbs_csv="${1:-}"
+    shift || true
+    IFS=',' read -r -a allow_dbs <<< "${dbs_csv}"
+  fi
+  users=("$@")
   : > "${out_sql}"
   chmod 600 "${out_sql}" 2>/dev/null || true
 
-  local u host n create grants line exported=0
+  local u host create grants line exported=0
   local -a hosts=()
   {
-    echo "-- hmtools archive: MySQL/MariaDB accounts (DROP + CREATE + GRANTS)"
+    echo "-- hmtools archive: MySQL/MariaDB accounts (exclusive; GRANT filtered to snapshot DBs)"
     echo "-- generated: $(date -Iseconds)"
+    echo "-- allow_dbs: ${allow_dbs[*]:-*} "
     echo "FLUSH PRIVILEGES;"
   } >> "${out_sql}"
 
@@ -209,13 +268,14 @@ hm_archive_export_mysql_accounts() {
     for host in "${hosts[@]}"; do
       echo >> "${out_sql}"
       echo "-- account ${u}@${host}" >> "${out_sql}"
+      # DROP tylko gdy konto nie istnieje przy restore — tag dla restore parsera
+      printf '-- HM_DROP_IF_MISSING %s@%s\n' "${u}" "${host}" >> "${out_sql}"
       printf 'DROP USER IF EXISTS %s@%s;\n' "$(hm_sql_quote "${u}")" "$(hm_sql_quote "${host}")" >> "${out_sql}"
 
       create=""
       # -r (raw): batch bez -r podwaja backslashe w SHOW GRANTS (`alpha\_x` → `alpha\\_x`)
       create="$(hm_mysql_exec_raw -e "SHOW CREATE USER $(hm_sql_quote "${u}")@$(hm_sql_quote "${host}");" 2>/dev/null | head -1 || true)"
       if [[ -z "${create}" ]]; then
-        # fallback gdy brak SHOW CREATE USER — authentication_string + plugin
         create="$(hm_mysql_exec_raw -e "
 SELECT CONCAT(
   'CREATE USER ', QUOTE(User), '@', QUOTE(Host),
@@ -231,13 +291,16 @@ LIMIT 1;" 2>/dev/null | head -1 || true)"
         hm_warn "Brak CREATE USER dla ${u}@${host} — pomijam konto."
         continue
       fi
-      # SHOW CREATE USER często bez średnika
       [[ "${create}" == *';' ]] || create="${create};"
       printf '%s\n' "${create}" >> "${out_sql}"
 
       grants="$(hm_mysql_exec_raw -e "SHOW GRANTS FOR $(hm_sql_quote "${u}")@$(hm_sql_quote "${host}");" 2>/dev/null || true)"
       while IFS= read -r line || [[ -n "${line}" ]]; do
         [[ -n "${line}" ]] || continue
+        if [[ "${#allow_dbs[@]}" -gt 0 ]] && ! hm_archive_grant_for_snapshot_dbs "${line}" "${allow_dbs[@]}"; then
+          echo "-- skipped foreign grant: ${line}" >> "${out_sql}"
+          continue
+        fi
         [[ "${line}" == *';' ]] || line="${line};"
         printf '%s\n' "${line}" >> "${out_sql}"
       done <<< "${grants}"
@@ -340,26 +403,18 @@ _hm_backup_archive_site_body() {
 
   local -a archive_dbs=()
   local -a archive_db_users=()
-  local dline dname duser seen_dbu="|"
+  local dline dname
   for dline in "${HM_DEL_DBS[@]}"; do
     [[ -n "${dline}" ]] || continue
-    IFS='|' read -r dname duser _ <<<"${dline}"
+    IFS='|' read -r dname _ <<<"${dline}"
     [[ -n "${dname}" ]] && archive_dbs+=("${dname}")
-    if [[ -n "${duser}" && "${duser}" != "-" ]] && hm_is_valid_db_name "${duser}"; then
-      if [[ "${seen_dbu}" != *"|${duser}|"* ]]; then
-        seen_dbu="${seen_dbu}${duser}|"
-        archive_db_users+=("${duser}")
-      fi
-    fi
   done
+  # TYLKO konta exclusive (HM_DEL_DB_USERS) — współdzielonych NIE eksportujemy (DROP psułby inne serwisy)
   local _du
   for _du in "${HM_DEL_DB_USERS[@]}"; do
     [[ -n "${_du}" ]] || continue
     hm_is_valid_db_name "${_du}" || continue
-    if [[ "${seen_dbu}" != *"|${_du}|"* ]]; then
-      seen_dbu="${seen_dbu}${_du}|"
-      archive_db_users+=("${_du}")
-    fi
+    archive_db_users+=("${_du}")
   done
   # dołącz też nie-shared prefix-match z skip? — tylko pewne z HM_DEL_DBS
 
@@ -389,8 +444,8 @@ _hm_backup_archive_site_body() {
     "[BACKUP] Zrzut i wysyłka baz danych MySQL (${db_desc}) → db/*.sql.gz"
     "[BACKUP] Eksport kont MySQL (CREATE USER + GRANTS / hash): ${dbu_desc} → db-accounts.sql"
     "[BACKUP] Snapshot konta Unix SSH: ${unix_desc} → unix-account.meta + unix-authorized_keys"
-    "[BACKUP] Spakowanie całego katalogu domowego/serwisu ${archive_files_root} ($(hm_human_size "${archive_files_size}")) włącznie z ukrytymi (.ssh, .pm2, .config, …) → files.tar.gz / files.chunks/"
-    "[BACKUP] Zapis konfiguracji vhosta OLS, certyfikatów SSL, crontaba i metadanych PM2 + manifest.json"
+    "[BACKUP] Spakowanie PEŁNEGO katalogu ${archive_files_root} ($(hm_human_size "${archive_files_size}")) bez BACKUP_EXCLUDES (ARCHIVE_EXCLUDES=$(hm_backup_excludes_list archive); ukryte .ssh/.pm2/.git/tmp/… włącznie) → files.tar.gz / files.chunks/"
+    "[BACKUP] OLS vhost + SSL (symlinki live/ zachowane) + crontab + PM2 + cyberpanel-site.sql + manifest.json"
     "[WERYFIKACJA] Twarda kontrola integralności wszystkich plików kopii na Google Drive (rozmiar > 0 B)"
   )
 
@@ -432,7 +487,7 @@ _hm_backup_archive_site_body() {
   local db_acc_sha="" unix_meta_sha=""
   local db_acc_sql="${TMP_DIR}/db-accounts-${domain}-${stamp}.sql"
   if [[ "${#archive_db_users[@]}" -gt 0 ]]; then
-    if hm_archive_export_mysql_accounts "${db_acc_sql}" "${archive_db_users[@]}"; then
+    if hm_archive_export_mysql_accounts "${db_acc_sql}" --dbs "$(IFS=','; echo "${archive_dbs[*]}")" "${archive_db_users[@]}"; then
       local enc_db remote_db
       enc_db="$(hm_backup_maybe_encrypt_file "${db_acc_sql}")"
       remote_db="db-accounts.sql"
@@ -545,7 +600,7 @@ _hm_backup_archive_site_body() {
   fi
   rm -f "${snip}"
 
-  # SSL
+  # SSL (symlinki live/ zachowane)
   local ssl_tar="${TMP_DIR}/ssl-${domain}-${stamp}.tar.gz"
   if hm_archive_pack_ssl "${domain}" "${ssl_tar}"; then
     hm_rclone_copyto "${ssl_tar}" "${remote_base}/ssl.tar.gz" || {
@@ -587,6 +642,22 @@ _hm_backup_archive_site_body() {
       || cat "${pm2_json}" | hm_rclone_rcat "${remote_base}/pm2-processes.json" || true
   fi
   rm -f "${pm2_json}"
+
+  # CyberPanel DB rows (website / childdomains / databases)
+  local has_cp=0
+  local cp_sql="${TMP_DIR}/cyberpanel-${domain}-${stamp}.sql"
+  if hm_archive_export_cyberpanel_sql "${domain}" "${cp_sql}"; then
+    if hm_rclone_copyto "${cp_sql}" "${remote_base}/cyberpanel-site.sql" \
+      || cat "${cp_sql}" | hm_rclone_rcat "${remote_base}/cyberpanel-site.sql"; then
+      has_cp=1
+      hm_ok "Wysłano cyberpanel-site.sql"
+    else
+      hm_warn "Upload cyberpanel-site.sql nieudany (kontynuuję)."
+    fi
+  else
+    hm_info "Brak wierszy CyberPanel do eksportu (lub nie-CP)."
+  fi
+  rm -f "${cp_sql}"
 
   local db_json="" n
   for n in "${archive_dbs[@]}"; do
@@ -630,6 +701,8 @@ _hm_backup_archive_site_body() {
   "unix_account": ${has_unix_account},
   "sha256_db_accounts": "$(hm_json_escape_str "${db_acc_sha}")",
   "sha256_unix_account": "$(hm_json_escape_str "${unix_meta_sha}")",
+  "excludes": "$(hm_json_escape_str "$(hm_backup_excludes_list archive)")",
+  "cyberpanel_site": ${has_cp:-0},
   "files_mode": "${files_mode}",
   "chunks_count": ${chunks_count},
   "remote": "${_j_remote}",

@@ -8,7 +8,10 @@ hm_load_config() {
   CHUNK_SIZE_MB="${CHUNK_SIZE_MB:-512}"
   CHUNK_THRESHOLD_MB="${CHUNK_THRESHOLD_MB:-2048}"
   TMP_DIR="${TMP_DIR:-/tmp/hmtools-backup}"
-  BACKUP_EXCLUDES="${BACKUP_EXCLUDES:-cache node_modules .git *.log tmp temp wp-content/cache}"
+  # Site/full backup — wzorce kotwiczone do korzenia archiwum (./…); bez „tmp” na dowolnej głębokości
+  BACKUP_EXCLUDES="${BACKUP_EXCLUDES:-./node_modules ./.git ./tmp ./temp ./cache ./public_html/wp-content/cache ./public_html/wp-content/uploads/cache *.log}"
+  # Archive (destrukcyjne) — domyślnie PEŁNY dump bez excludes; ewentualnie jawne ARCHIVE_EXCLUDES
+  ARCHIVE_EXCLUDES="${ARCHIVE_EXCLUDES:-}"
   BACKUP_HOST_LABEL="${BACKUP_HOST_LABEL:-}"
   BACKUP_KEEP_DAYS="${BACKUP_KEEP_DAYS:-14}"
   BACKUP_KEEP_MIN="${BACKUP_KEEP_MIN:-3}"

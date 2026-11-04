@@ -12,8 +12,12 @@ Użycie:
   backup archive <domena>   Archiwum (type=archive) → weryfikacja Drive → usunięcie z VPS
   backup list [domena|full] Snapshoty + manifest (w kontekście: bieżąca domena)
   backup restore <domena> [stamp] [--files-only|--db-only]
+                            [--overwrite-db] [--overwrite-files] [--adopt-existing-user]
                             Odtwórz pliki (tar lub chunks) + bazy; bez stamp = najnowszy
                             (działa też dla domen tylko na Drive po webs archive)
+                            --overwrite-db: świadome nadpisanie niepustej bazy
+                            --overwrite-files: świadome nadpisanie niepustego katalogu docelowego
+                            --adopt-existing-user: świadome przejęcie istniejącego konta Unix (hasło/klucze/home)
   backup restore-full [stamp] [--system]
                             Odtwórz snapshot full/ (bazy + db-accounts; --system = system-configs)
   backup prune [--days N] [--dry-run] [--yes]
@@ -40,15 +44,15 @@ Użycie:
 
 1) Pełna kopia archiwalna na Google Drive:
    - bazy MySQL (db/*.sql.gz)
-   - konta MySQL 1:1 (db-accounts.sql — CREATE USER + GRANTS / hash hasła)
+   - konta MySQL exclusive (db-accounts.sql — CREATE + GRANT tylko na bazy snapshotu; bez shared)
    - konto Unix SSH 1:1 (unix-account.meta — uid/gid/shadow + unix-authorized_keys)
    - pliki, OLS, SSL, cron, PM2, manifest.json
 2) Twarda weryfikacja plików na Drive (Atomic Guard)
 3) Dopiero potem całkowite usunięcie serwisu z VPS (jak delete-site)
 
 Snapshot ma type=archive (chroniony przed backup prune).
-Przywrócenie: backup restore <domena> [stamp]
-  (odtwarza też Unix + konta MySQL, gdy są w snapshocie)
+Przywrócenie: backup restore <domena> [stamp] [--overwrite-db|--overwrite-files|--adopt-existing-user]
+  (kolizje Unix/DB/plików → odmowa; shared Unix → bez mutacji konta, pliki → docroot)
 EOF
 
 _hm_cmd_help archive <<'EOF'
@@ -60,15 +64,15 @@ Użycie:
 
 1) Pełna kopia archiwalna na Google Drive:
    - bazy MySQL (db/*.sql.gz)
-   - konta MySQL 1:1 (db-accounts.sql — CREATE USER + GRANTS / hash hasła)
+   - konta MySQL exclusive (db-accounts.sql — CREATE + GRANT tylko na bazy snapshotu; bez shared)
    - konto Unix SSH 1:1 (unix-account.meta — uid/gid/shadow + unix-authorized_keys)
    - pliki, OLS, SSL, cron, PM2, manifest.json
 2) Twarda weryfikacja plików na Drive (Atomic Guard)
 3) Dopiero potem całkowite usunięcie serwisu z VPS (jak delete-site)
 
 Snapshot ma type=archive (chroniony przed backup prune).
-Przywrócenie: backup restore <domena> [stamp]
-  (odtwarza też Unix + konta MySQL, gdy są w snapshocie)
+Przywrócenie: backup restore <domena> [stamp] [--overwrite-db|--overwrite-files|--adopt-existing-user]
+  (kolizje Unix/DB/plików → odmowa; shared Unix → bez mutacji konta, pliki → docroot)
 EOF
 
 _HM_BACKUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

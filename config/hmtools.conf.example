@@ -43,8 +43,10 @@ CHUNK_THRESHOLD_MB=2048
 # Katalog tymczasowy na bieżący chunk (usuwany po uploadzie)
 TMP_DIR="/tmp/hmtools-backup"
 
-# Wzorce wykluczeń dla tar (oddzielone spacją, składnia --exclude)
-BACKUP_EXCLUDES="cache node_modules .git *.log tmp temp wp-content/cache wp-content/uploads/cache"
+# Wykluczenia tar dla backup site/full (kotwiczone ./ — nie kasują głębokich tmp/.git)
+BACKUP_EXCLUDES="./node_modules ./.git ./tmp ./temp ./cache ./public_html/wp-content/cache ./public_html/wp-content/uploads/cache *.log"
+# Archive (przed usunięciem z VPS): domyślnie puste = pełny dump; nie dziedziczy BACKUP_EXCLUDES
+# ARCHIVE_EXCLUDES=""
 
 # Etykieta hosta w manifestach JSON (domyślnie: hostname -f)
 # BACKUP_HOST_LABEL=""

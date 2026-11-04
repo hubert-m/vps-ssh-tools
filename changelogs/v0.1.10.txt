@@ -18,3 +18,9 @@
 - Feat/Sec: `backup full` — `db-accounts.sql`, `restore-full`; system-configs bez shadow/privkey; opcjonalne `BACKUP_ENCRYPT_PASSPHRASE`; flock; prune grace orphan; sha256 wrażliwych plików archive; child ze współdzielonym home → tylko docroot; umask w subshellu
 - Fix: `hm_find_site_by_arg` — brak cichego partial match; `backup restore`/`archive` używają dokładnej nazwy (`hm_find_site_by_arg_exact`)
 - Fix: `backup archive` db-accounts — `hm_mysql_exec_raw` (`-N -B -r`) dla SHOW CREATE USER/GRANTS (bez podwójnego `\\_` przy bazach z `_`)
+- Fix: `backup archive` — nie stosuje `BACKUP_EXCLUDES` (pełny dump; opcjonalne `ARCHIVE_EXCLUDES`); site backup: kotwiczone `./tmp`/`./.git`/… + `excludes` w manifeście
+- Fix: `backup archive`/`restore` — SSL bez `-h` (symlinki certbota); restore ssl/crontab/cyberpanel-site.sql; PM2 tylko hint; eksport `cyberpanel-site.sql`
+- Fix: `backup archive` db-accounts — tylko exclusive (`HM_DEL_DB_USERS`); GRANT-y filtrowane do baz snapshotu; tag `HM_DROP_IF_MISSING`
+- Fix: `backup restore` db-accounts — istniejący MySQL user → bez DROP/CREATE (zachowane hasło/obce GRANT-y); tylko GRANT-y z pliku
+- Fix: `backup restore` — niepusta baza o tej samej nazwie → KOLIZJA / odmowa; świadome nadpisanie: `--overwrite-db`
+- Fix/Sec: `backup restore` — istniejące konto Unix → odmowa (bez nadpisania hasła/kluczy/home); `--adopt-existing-user`; shared/protected → skip Unix + pliki do docroot; niepusty target → odmowa bez `--overwrite-files`

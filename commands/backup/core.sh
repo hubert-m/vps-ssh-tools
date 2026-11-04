@@ -129,11 +129,32 @@ hm_backup_prefer_docroot_if_shared_home() {
   printf '%s\n' "${root_n}"
 }
 
+# $1 = backup|archive — archive używa ARCHIVE_EXCLUDES (domyślnie puste = pełny dump przed usunięciem)
 hm_backup_tar_excludes() {
-  local e
-  for e in ${BACKUP_EXCLUDES}; do
+  local mode="${1:-backup}"
+  local list e
+  case "${mode}" in
+    archive) list="${ARCHIVE_EXCLUDES:-}" ;;
+    *) list="${BACKUP_EXCLUDES:-}" ;;
+  esac
+  for e in ${list}; do
+    [[ -n "${e}" ]] || continue
     printf -- '--exclude=%s ' "${e}"
   done
+}
+
+hm_backup_excludes_list() {
+  local mode="${1:-backup}"
+  case "${mode}" in
+    archive)
+      if [[ -z "${ARCHIVE_EXCLUDES:-}" ]]; then
+        printf '(brak — pełny dump)'
+      else
+        printf '%s' "${ARCHIVE_EXCLUDES}"
+      fi
+      ;;
+    *) printf '%s' "${BACKUP_EXCLUDES:-}" ;;
+  esac
 }
 
 # Katalog plików do tar: pełny $HOME użytkownika strony, gdy jest bezpieczny
@@ -259,11 +280,12 @@ hm_tar_pipe_ok() {
 hm_stream_tar_rcat() {
   local src_dir="$1"
   local dest="$2"
+  local exclude_mode="${3:-backup}"
   local excludes tar_err tar_rc gzip_rc rcat_rc
-  excludes="$(hm_backup_tar_excludes)"
+  excludes="$(hm_backup_tar_excludes "${exclude_mode}")"
   tar_err="$(mktemp "${TMP_DIR:-/tmp}/hmtools-tar.XXXXXX.err")"
 
-  hm_info "Archiwum (stream) ${src_dir} → ${dest}"
+  hm_info "Archiwum (stream) ${src_dir} → ${dest} [excludes=${exclude_mode}: $(hm_backup_excludes_list "${exclude_mode}")]"
   hm_status_line "tar|gzip|rclone ${src_dir}..."
   set +e
   set +o pipefail
@@ -299,15 +321,16 @@ hm_chunked_tar_upload() {
   # tar|gzip → split na chunki → rclone copy każdego → usuń lokalnie
   local src_dir="$1"
   local remote_dir="$2"   # pełny remote:path/dir
+  local exclude_mode="${3:-backup}"
   local chunk_bytes=$((CHUNK_SIZE_MB * 1024 * 1024))
   local work="${TMP_DIR}/$$"
   local excludes tar_err tar_rc gzip_rc split_rc
-  excludes="$(hm_backup_tar_excludes)"
+  excludes="$(hm_backup_tar_excludes "${exclude_mode}")"
 
   mkdir -p "${work}"
   tar_err="$(mktemp "${work}/tar.XXXXXX.err")"
 
-  hm_info "Tryb chunk (${CHUNK_SIZE_MB} MB): ${src_dir} → ${remote_dir}"
+  hm_info "Tryb chunk (${CHUNK_SIZE_MB} MB): ${src_dir} → ${remote_dir} [excludes=${exclude_mode}: $(hm_backup_excludes_list "${exclude_mode}")]"
   hm_rclone_mkdir "${remote_dir}"
 
   set +e
@@ -371,15 +394,16 @@ hm_chunked_tar_upload() {
 hm_upload_files_smart() {
   local src_dir="$1"
   local remote_base="$2"  # remote:path/stamp
+  local exclude_mode="${3:-backup}"
   local size_b threshold_b
   size_b="$(hm_dir_size_bytes "${src_dir}")"
   threshold_b=$((CHUNK_THRESHOLD_MB * 1024 * 1024))
 
   if [[ "${size_b}" -ge "${threshold_b}" ]]; then
     hm_warn "Duże drzewo ($(hm_human_size "${size_b}")) — używam chunków."
-    hm_chunked_tar_upload "${src_dir}" "${remote_base}/files.chunks"
+    hm_chunked_tar_upload "${src_dir}" "${remote_base}/files.chunks" "${exclude_mode}"
   else
-    hm_stream_tar_rcat "${src_dir}" "${remote_base}/files.tar.gz"
+    hm_stream_tar_rcat "${src_dir}" "${remote_base}/files.tar.gz" "${exclude_mode}"
   fi
 }
 
@@ -475,7 +499,7 @@ hm_backup_site() {
     fail_db_json="$(printf '%s\n' "${failed_dbs[@]}" | awk 'BEGIN{printf "["} {printf sep "\"" $0 "\""; sep=","} END{printf "]"}')"
   fi
 
-  local _j_domain _j_host _j_root _j_doc _j_user _j_php _j_remote
+  local _j_domain _j_host _j_root _j_doc _j_user _j_php _j_remote _j_excl
   _j_domain="$(hm_json_escape_str "${domain}")"
   _j_host="$(hm_json_escape_str "${BACKUP_HOST_LABEL}")"
   _j_root="$(hm_json_escape_str "${backup_root}")"
@@ -483,6 +507,8 @@ hm_backup_site() {
   _j_user="$(hm_json_escape_str "${HM_SITE_USER:-}")"
   _j_php="$(hm_json_escape_str "${HM_SITE_PHP}")"
   _j_remote="$(hm_json_escape_str "${remote_base}")"
+  _j_excl="$(hm_json_escape_str "$(hm_backup_excludes_list backup)")"
+  hm_info "BACKUP_EXCLUDES: $(hm_backup_excludes_list backup)"
   cat > "${manifest}" <<EOF
 {
   "type": "site",
@@ -494,6 +520,7 @@ hm_backup_site() {
   "docroot": "${_j_doc}",
   "site_user": "${_j_user}",
   "php": "${_j_php}",
+  "excludes": "${_j_excl}",
   "databases": [${db_list}],
   "failed_databases": ${fail_db_json},
   "remote": "${_j_remote}",

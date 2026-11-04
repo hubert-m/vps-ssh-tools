@@ -98,8 +98,17 @@ hm_backup_restore_fix_ownership() {
   return 0
 }
 
+# Baza istnieje i ma ≥1 tabelę?
+hm_backup_db_is_nonempty() {
+  local dbname="$1" n
+  hm_is_valid_db_name "${dbname}" || return 1
+  n="$(hm_mysql_exec -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=$(hm_sql_quote "${dbname}");" 2>/dev/null | tr -d '[:space:]')"
+  [[ "${n}" =~ ^[0-9]+$ && "${n}" -gt 0 ]]
+}
+
 hm_backup_restore_dbs() {
   local remote_base="$1"
+  local overwrite_db="${2:-0}"
   local json db_raw name cli sock_args=()
   json="$(hm_backup_cat_manifest "${remote_base}")"
   db_raw="$(hm_backup_json_arr "${json}" "databases")"
@@ -110,7 +119,6 @@ hm_backup_restore_dbs() {
   [[ -n "${MYSQL_SOCKET:-}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
 
   if [[ -z "${db_raw}" ]]; then
-    # spróbuj wylistować pliki db/*.sql.gz
     local f
     while IFS= read -r f; do
       [[ -n "${f}" ]] || continue
@@ -139,6 +147,13 @@ hm_backup_restore_dbs() {
     [[ -n "${db}" ]] || continue
     hm_is_valid_db_name "${db}" || { hm_warn "Pominięto nieprawidłową nazwę bazy: ${db}"; continue; }
     di=$((di + 1))
+    if hm_backup_db_is_nonempty "${db}"; then
+      if [[ "${overwrite_db}" -ne 1 ]]; then
+        hm_err "KOLIZJA: baza \`${db}\` już istnieje i nie jest pusta — odmowa importu (użyj --overwrite-db)."
+        return 1
+      fi
+      hm_warn "KOLIZJA: nadpisuję niepustą bazę \`${db}\` (--overwrite-db)."
+    fi
     hm_progress_bar "${di}" "${dtotal}" "Import DB: ${db}"
     hm_status_clear
     hm_info "Import DB ${db} ← ${remote_base}/db/${db}.sql.gz"
@@ -199,12 +214,50 @@ hm_backup_fetch_maybe_decrypt() {
 
 # Odtwórz konto Unix z unix-account.meta (+ opcjonalnie authorized_keys).
 # home_override: preferowany $HOME (site_root z restore); puste = wartość z meta.
+# Katalog ma jakikolwiek wpis (niepusty)?
+hm_backup_dir_nonempty() {
+  local d="$1"
+  [[ -d "${d}" ]] || return 1
+  local e
+  e="$(find "${d}" -mindepth 1 -maxdepth 1 2>/dev/null | head -1 || true)"
+  [[ -n "${e}" ]]
+}
+
+# Peek unix-account.meta → name/shared/protected/uid/home (stdout: name|shared|protected|uid|home)
+hm_backup_peek_unix_meta() {
+  local remote_base="$1"
+  local meta_tmp line key val
+  local name="" uid="" home="" shared=0 protected=0
+  meta_tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-unix-peek.XXXXXX")"
+  chmod 600 "${meta_tmp}"
+  if ! hm_backup_fetch_maybe_decrypt "${remote_base}" "unix-account.meta" "${meta_tmp}"; then
+    rm -f "${meta_tmp}"
+    return 1
+  fi
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ -n "${line}" && "${line}" == *=* ]] || continue
+    key="${line%%=*}"; val="${line#*=}"
+    case "${key}" in
+      name) name="${val}" ;;
+      uid) uid="${val}" ;;
+      home) home="${val}" ;;
+      shared) shared="${val}" ;;
+      protected) protected="${val}" ;;
+    esac
+  done < "${meta_tmp}"
+  rm -f "${meta_tmp}"
+  printf '%s|%s|%s|%s|%s\n' "${name}" "${shared:-0}" "${protected:-0}" "${uid}" "${home}"
+}
+
+# $3 = adopt (0/1) — świadome nadpisanie istniejącego konta (--adopt-existing-user)
 hm_backup_restore_unix_account() {
   local remote_base="$1"
   local home_override="${2:-}"
+  local adopt="${3:-0}"
   local meta_tmp keys_tmp
   local name uid gid group home shell gecos shadow shared protected
   local line key val
+  local live_uid="" live_home="" live_home_n="" home_n="" collision=0
 
   meta_tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-unix-meta.XXXXXX")"
   chmod 600 "${meta_tmp}"
@@ -246,9 +299,39 @@ hm_backup_restore_unix_account() {
   [[ -n "${home}" ]] || { hm_err "Brak home w unix-account.meta."; return 1; }
   [[ -n "${group}" ]] || group="${name}"
   [[ -n "${shell}" ]] || shell="/bin/bash"
+  home_n="$(realpath -m "${home}" 2>/dev/null || echo "${home}")"
+  home_n="${home_n%/}"
 
   if id "${name}" >/dev/null 2>&1; then
-    hm_info "Konto Unix ${name} już istnieje (shared=${shared}, protected=${protected}) — aktualizuję shell/hasło/klucze (bez zmiany UID)."
+    live_uid="$(id -u "${name}" 2>/dev/null || true)"
+    live_home="$(getent passwd "${name}" 2>/dev/null | cut -d: -f6 || true)"
+    live_home_n="$(realpath -m "${live_home}" 2>/dev/null || echo "${live_home}")"
+    live_home_n="${live_home_n%/}"
+
+    if [[ "${shared}" -eq 1 || "${protected}" -eq 1 ]]; then
+      collision=1
+    fi
+    if [[ -n "${uid}" && "${uid}" =~ ^[0-9]+$ && -n "${live_uid}" && "${uid}" != "${live_uid}" ]]; then
+      collision=1
+    fi
+    if [[ -n "${live_home_n}" && -n "${home_n}" && "${live_home_n}" != "${home_n}" ]]; then
+      collision=1
+    fi
+
+    # Współdzielone/chronione: nigdy nie ruszamy hasła/kluczy/home — pomijamy Unix (pliki: docroot).
+    if [[ "${shared}" -eq 1 || "${protected}" -eq 1 ]]; then
+      hm_warn "KOLIZJA Unix: ${name} shared=${shared} protected=${protected} — pomijam usermod/hasło/klucze (żywy serwis)."
+      HM_SITE_USER="${name}"
+      return 0
+    fi
+
+    if [[ "${adopt}" -ne 1 ]]; then
+      hm_err "KOLIZJA Unix: konto \`${name}\` już istnieje (uid=${live_uid} home=${live_home_n}; meta uid=${uid:-?} home=${home_n})."
+      hm_info "Domyślnie NIE nadpisuję hasła, kluczy SSH ani home. Użyj --adopt-existing-user aby świadomie przejąć konto."
+      return 1
+    fi
+
+    hm_warn "ADOPT (--adopt-existing-user): nadpisuję shell/home/hasło/klucze istniejącego \`${name}\` (collision=${collision})."
     usermod -s "${shell}" "${name}" 2>/dev/null || true
     if [[ -n "${home}" ]]; then
       usermod -d "${home}" "${name}" 2>/dev/null || true
@@ -290,14 +373,12 @@ hm_backup_restore_unix_account() {
     hm_info "Brak użytecznego hasha shadow dla ${name} (konto bez hasła / zablokowane w snapshocie)."
   fi
 
-  # authorized_keys
   keys_tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-unix-keys.XXXXXX")"
   chmod 600 "${keys_tmp}"
   if rclone cat "${remote_base}/unix-authorized_keys" > "${keys_tmp}" 2>/dev/null && [[ -s "${keys_tmp}" ]]; then
     mkdir -p "${home}/.ssh"
     chmod 700 "${home}/.ssh"
     if [[ -f "${home}/.ssh/authorized_keys" ]]; then
-      # scal: dopisz brakujące linie
       local kline
       while IFS= read -r kline || [[ -n "${kline}" ]]; do
         [[ -n "${kline}" ]] || continue
@@ -319,35 +400,212 @@ hm_backup_restore_unix_account() {
   return 0
 }
 
-# Odtwórz konta MySQL z db-accounts.sql (DROP IF EXISTS + CREATE + GRANTS).
+# Czy konto MySQL user@host (lub user@jakikolwiek host) już istnieje?
+hm_backup_mysql_user_exists() {
+  local user="$1" host="${2:-}"
+  local n q
+  hm_is_valid_db_name "${user}" || return 1
+  if [[ -n "${host}" ]]; then
+    q="SELECT COUNT(*) FROM mysql.user WHERE User=$(hm_sql_quote "${user}") AND Host=$(hm_sql_quote "${host}");"
+  else
+    q="SELECT COUNT(*) FROM mysql.user WHERE User=$(hm_sql_quote "${user}");"
+  fi
+  n="$(hm_mysql_exec -e "${q}" 2>/dev/null | tr -d '[:space:]')"
+  [[ "${n}" =~ ^[0-9]+$ && "${n}" -gt 0 ]]
+}
+
+# Odtwórz konta MySQL z db-accounts.sql.
+# Istniejący user@host → pomiń DROP/CREATE (nie nadpisuj hasła ani cudzych grantów);
+# tylko GRANT-y z pliku (archive już filtruje do baz snapshotu).
 hm_backup_restore_db_accounts() {
   local remote_base="$1"
-  local cli sock_args=() sqlf
+  local cli sock_args=() sqlf outf
+  local line skip_ddl=0 cur_user="" cur_host=""
+  local created=0 skipped_ddl=0 grants_applied=0
 
   sqlf="$(mktemp "${TMP_DIR:-/tmp}/hmtools-db-accounts.XXXXXX.sql")"
-  chmod 600 "${sqlf}"
+  outf="$(mktemp "${TMP_DIR:-/tmp}/hmtools-db-accounts-safe.XXXXXX.sql")"
+  chmod 600 "${sqlf}" "${outf}"
   if ! hm_backup_fetch_maybe_decrypt "${remote_base}" "db-accounts.sql" "${sqlf}"; then
-    rm -f "${sqlf}"
+    rm -f "${sqlf}" "${outf}"
     hm_info "Brak db-accounts.sql(.enc) w snapshocie — pomijam odtworzenie kont MySQL."
     return 0
   fi
   if [[ ! -s "${sqlf}" ]]; then
-    rm -f "${sqlf}"
+    rm -f "${sqlf}" "${outf}"
     hm_err "Nie udało się pobrać db-accounts.sql."
     return 1
   fi
 
-  cli="$(hm_mysql_cli)" || { rm -f "${sqlf}"; hm_err "Brak klienta mysql/mariadb."; return 1; }
+  cli="$(hm_mysql_cli)" || { rm -f "${sqlf}" "${outf}"; hm_err "Brak klienta mysql/mariadb."; return 1; }
   [[ -n "${MYSQL_SOCKET:-}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
 
-  hm_info "Odtwarzanie kont MySQL z db-accounts.sql…"
-  if ! "${cli}" "${sock_args[@]}" < "${sqlf}"; then
-    rm -f "${sqlf}"
+  {
+    echo "-- hmtools restore: db-accounts (safe — no DROP/CREATE for existing users)"
+    echo "-- generated: $(date -Iseconds)"
+  } > "${outf}"
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    # Tag z nowych archive: -- HM_DROP_IF_MISSING user@host
+    if [[ "${line}" =~ ^--[[:space:]]*HM_DROP_IF_MISSING[[:space:]]+([^@[:space:]]+)@([^[:space:]]+)[[:space:]]*$ ]]; then
+      cur_user="${BASH_REMATCH[1]}"
+      cur_host="${BASH_REMATCH[2]}"
+      if hm_backup_mysql_user_exists "${cur_user}" "${cur_host}" \
+        || hm_backup_mysql_user_exists "${cur_user}"; then
+        skip_ddl=1
+        printf '-- SKIP DROP/CREATE: %s@%s już istnieje (zachowuję hasło i obce GRANTy)\n' \
+          "${cur_user}" "${cur_host}" >> "${outf}"
+        skipped_ddl=$((skipped_ddl + 1))
+      else
+        skip_ddl=0
+      fi
+      continue
+    fi
+
+    # Stare archive bez tagu: DROP USER [IF EXISTS] 'u'@'h'
+    if [[ "${line}" =~ ^DROP[[:space:]]+USER([[:space:]]+IF[[:space:]]+EXISTS)?[[:space:]]+\'([^\']+)\'@\'([^\']+)\' ]]; then
+      cur_user="${BASH_REMATCH[2]}"
+      cur_host="${BASH_REMATCH[3]}"
+      if hm_backup_mysql_user_exists "${cur_user}" "${cur_host}" \
+        || hm_backup_mysql_user_exists "${cur_user}"; then
+        skip_ddl=1
+        printf '-- skipped DROP (exists): %s\n' "${line}" >> "${outf}"
+        skipped_ddl=$((skipped_ddl + 1))
+        continue
+      fi
+      skip_ddl=0
+      printf '%s\n' "${line}" >> "${outf}"
+      continue
+    fi
+
+    if [[ "${line}" =~ ^CREATE[[:space:]]+USER ]]; then
+      if [[ "${skip_ddl}" -eq 1 ]]; then
+        printf '-- skipped CREATE (exists): %s\n' "${line}" >> "${outf}"
+        continue
+      fi
+      created=$((created + 1))
+      printf '%s\n' "${line}" >> "${outf}"
+      continue
+    fi
+
+    if [[ "${line}" =~ ^[[:space:]]*GRANT[[:space:]] ]]; then
+      grants_applied=$((grants_applied + 1))
+    fi
+    printf '%s\n' "${line}" >> "${outf}"
+  done < "${sqlf}"
+
+  hm_info "Odtwarzanie kont MySQL z db-accounts.sql (safe)…"
+  if ! "${cli}" "${sock_args[@]}" < "${outf}"; then
+    rm -f "${sqlf}" "${outf}"
     hm_err "Import db-accounts.sql nieudany."
     return 1
   fi
+  rm -f "${sqlf}" "${outf}"
+  hm_ok "Konta MySQL: CREATE nowych=${created}, pominięte DROP/CREATE (istniejące)=${skipped_ddl}, GRANT-y zastosowane≈${grants_applied}."
+  return 0
+}
+
+# SSL z archive — rozpakowanie z zachowaniem symlinków (tar bez -h przy pakowaniu).
+hm_backup_restore_ssl() {
+  local remote_base="$1"
+  if ! rclone cat "${remote_base}/ssl.tar.gz" >/dev/null 2>&1; then
+    hm_info "Brak ssl.tar.gz — pomijam SSL."
+    return 0
+  fi
+  hm_info "Odtwarzanie SSL z ssl.tar.gz (ścieżki absolutne → /)…"
+  if rclone cat "${remote_base}/ssl.tar.gz" | tar -xzf - -C /; then
+    hm_ok "SSL rozpakowany (live/archive/renewal / acme.sh)."
+    return 0
+  fi
+  hm_warn "Rozpakowanie ssl.tar.gz nieudane."
+  return 1
+}
+
+# Crontab użytkownika strony z crontab.txt
+hm_backup_restore_crontab() {
+  local remote_base="$1"
+  local user="${2:-${HM_SITE_USER:-}}"
+  local tmp
+  [[ -n "${user}" ]] && id "${user}" >/dev/null 2>&1 || {
+    hm_info "Brak usera Unix — pomijam crontab."
+    return 0
+  }
+  if ! rclone cat "${remote_base}/crontab.txt" >/dev/null 2>&1; then
+    hm_info "Brak crontab.txt — pomijam."
+    return 0
+  fi
+  tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-cron.XXXXXX")"
+  if ! rclone cat "${remote_base}/crontab.txt" > "${tmp}" || [[ ! -s "${tmp}" ]]; then
+    rm -f "${tmp}"
+    return 0
+  fi
+  hm_info "Przywracam crontab użytkownika ${user} ($(wc -l < "${tmp}" | tr -d ' ') linii)…"
+  if crontab -u "${user}" "${tmp}" 2>/dev/null; then
+    hm_ok "crontab -u ${user} odtworzony."
+  else
+    hm_warn "crontab -u ${user} nieudany."
+  fi
+  rm -f "${tmp}"
+  return 0
+}
+
+# PM2 — tylko instrukcja + zapis dump (automatyczny start bywa niebezpieczny bez cwd/env).
+hm_backup_restore_pm2_hint() {
+  local remote_base="$1"
+  local user="${2:-${HM_SITE_USER:-}}"
+  if ! rclone cat "${remote_base}/pm2-processes.json" >/dev/null 2>&1; then
+    return 0
+  fi
+  local n
+  n="$(rclone cat "${remote_base}/pm2-processes.json" 2>/dev/null | head -c 200 || true)"
+  if [[ -z "${n}" || "${n}" == "[]" ]]; then
+    return 0
+  fi
+  hm_warn "Snapshot zawiera pm2-processes.json — automatyczny start PM2 pominięty (bezpieczeństwo)."
+  hm_info "Ręcznie: jako ${user:-\$SITE_USER} → pm2 resurrect / pm2 start …; dump: ${remote_base}/pm2-processes.json"
+  return 0
+}
+
+# CyberPanel website/childdomains/databases INSERT z cyberpanel-site.sql
+hm_backup_restore_cyberpanel_site() {
+  local remote_base="$1"
+  local domain="${2:-}"
+  local cli sock_args=() sqlf
+  if ! rclone cat "${remote_base}/cyberpanel-site.sql" >/dev/null 2>&1; then
+    hm_info "Brak cyberpanel-site.sql — panel CP może nie widzieć domeny (dodaj ręcznie lub pomiń)."
+    return 0
+  fi
+  if [[ "${PANEL:-}" != "cyberpanel" ]]; then
+    hm_warn "PANEL≠cyberpanel — zapisuję cyberpanel-site.sql lokalnie nieaplikowany; dodaj domenę w panelu ręcznie."
+    return 0
+  fi
+  cli="$(hm_mysql_cli)" || { hm_warn "Brak mysql — pomijam cyberpanel-site.sql."; return 0; }
+  [[ -n "${MYSQL_SOCKET:-}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
+  sqlf="$(mktemp "${TMP_DIR:-/tmp}/hmtools-cp.XXXXXX.sql")"
+  chmod 600 "${sqlf}"
+  if ! rclone cat "${remote_base}/cyberpanel-site.sql" > "${sqlf}" || [[ ! -s "${sqlf}" ]]; then
+    rm -f "${sqlf}"
+    return 0
+  fi
+  # Usuń istniejący wpis tej domeny (unikaj duplikatu PK), potem INSERT z dumpa
+  if [[ -n "${domain}" ]] && hm_is_valid_domain "${domain}"; then
+    local dq
+    dq="$(hm_sql_quote "${domain}")"
+    "${cli}" "${sock_args[@]}" cyberpanel -e "
+DELETE d FROM databases_databases d
+  INNER JOIN websiteFunctions_websites w ON d.website_id = w.id WHERE w.domain = ${dq};
+DELETE c FROM websiteFunctions_childdomains c
+  INNER JOIN websiteFunctions_websites w ON c.master_id = w.id WHERE w.domain = ${dq};
+DELETE FROM websiteFunctions_websites WHERE domain = ${dq};
+" 2>/dev/null || true
+  fi
+  hm_info "Import cyberpanel-site.sql…"
+  if "${cli}" "${sock_args[@]}" cyberpanel < "${sqlf}"; then
+    hm_ok "Wpis CyberPanel odtworzony."
+  else
+    hm_warn "Import cyberpanel-site.sql nieudany — dodaj domenę w panelu ręcznie."
+  fi
   rm -f "${sqlf}"
-  hm_ok "Konta MySQL odtworzone (CREATE USER + GRANTS)."
   return 0
 }
 
@@ -593,12 +851,15 @@ hm_backup_restore_ols_from_archive() {
 _hm_backup_restore_body() {
   local domain="${1:-}"
   shift || true
-  local stamp="" files_only=0 db_only=0
+  local stamp="" files_only=0 db_only=0 overwrite_db=0 adopt_user=0 overwrite_files=0
   local a
   for a in "$@"; do
     case "${a}" in
       --files-only) files_only=1 ;;
       --db-only) db_only=1 ;;
+      --overwrite-db) overwrite_db=1 ;;
+      --adopt-existing-user) adopt_user=1 ;;
+      --overwrite-files) overwrite_files=1 ;;
       -*)
         hm_err "Nieznana flaga: ${a}"
         return 1
@@ -622,7 +883,10 @@ _hm_backup_restore_body() {
   if [[ -z "${domain}" ]]; then
     domain="${HM_SITE_DOMAIN:-}"
   fi
-  [[ -n "${domain}" ]] || { hm_err "Użycie: backup restore <domena> [stamp] [--files-only|--db-only]"; return 1; }
+  [[ -n "${domain}" ]] || {
+    hm_err "Użycie: backup restore <domena> [stamp] [--files-only|--db-only] [--overwrite-db] [--overwrite-files] [--adopt-existing-user]"
+    return 1
+  }
 
   hm_load_config
   hm_detect_all
@@ -719,49 +983,157 @@ _hm_backup_restore_body() {
   local restore_ols=0
   local restore_unix=0
   local restore_db_acc=0
+  local restore_ssl=0
+  local restore_cron=0
+  local restore_cp=0
+  local skip_unix_shared=0
+  local unix_collision=0
+  local files_collision=0
   local db_list=""
   local snap_type=""
   local created_target=0
   local man_json
+  local unix_peek="" unix_name="" unix_shared=0 unix_prot=0 unix_uid="" unix_home=""
+  local man_docroot=""
   man_json="$(hm_backup_cat_manifest "${remote_base}")"
   snap_type="$(hm_backup_json_str "${man_json}" "type")"
+  man_docroot="$(hm_backup_json_str "${man_json}" "docroot")"
 
   if rclone cat "${remote_base}/unix-account.meta" >/dev/null 2>&1 \
     || rclone cat "${remote_base}/unix-account.meta.enc" >/dev/null 2>&1; then
     restore_unix=1
+    unix_peek="$(hm_backup_peek_unix_meta "${remote_base}" 2>/dev/null || true)"
+    if [[ -n "${unix_peek}" ]]; then
+      IFS='|' read -r unix_name unix_shared unix_prot unix_uid unix_home <<< "${unix_peek}"
+      unix_shared="${unix_shared:-0}"
+      unix_prot="${unix_prot:-0}"
+      if [[ -n "${unix_name}" ]] && id "${unix_name}" >/dev/null 2>&1; then
+        if [[ "${unix_shared}" -eq 1 || "${unix_prot}" -eq 1 ]]; then
+          skip_unix_shared=1
+          # child/shared: pliki tylko do docroot (nie cały HOME mastera)
+          if [[ -n "${man_docroot}" ]]; then
+            target_dir="${man_docroot}"
+            HM_SITE_DOCROOT="${man_docroot}"
+          fi
+          plan_steps+=("KOLIZJA Unix: \`${unix_name}\` shared/protected — POMIJAM usermod/hasło/klucze; pliki → ${target_dir}")
+        else
+          unix_collision=1
+          if [[ "${adopt_user}" -eq 1 ]]; then
+            plan_steps+=("KOLIZJA Unix: \`${unix_name}\` istnieje — ADOPT (--adopt-existing-user): nadpisanie hasła/kluczy/home")
+          else
+            plan_steps+=("KOLIZJA Unix: \`${unix_name}\` już istnieje — ODMÓW bez --adopt-existing-user")
+          fi
+        fi
+      fi
+    fi
   fi
   if rclone cat "${remote_base}/db-accounts.sql" >/dev/null 2>&1 \
     || rclone cat "${remote_base}/db-accounts.sql.enc" >/dev/null 2>&1; then
     restore_db_acc=1
   fi
+  rclone cat "${remote_base}/ssl.tar.gz" >/dev/null 2>&1 && restore_ssl=1
+  rclone cat "${remote_base}/crontab.txt" >/dev/null 2>&1 && restore_cron=1
+  rclone cat "${remote_base}/cyberpanel-site.sql" >/dev/null 2>&1 && restore_cp=1
 
   if [[ "${db_only}" -eq 0 ]]; then
-    if [[ "${restore_unix}" -eq 1 ]]; then
-      plan_steps+=("Odtworzenie konta Unix SSH z unix-account.meta (useradd/uid/gid/shadow + authorized_keys)")
+    if [[ "${restore_unix}" -eq 1 && "${skip_unix_shared}" -eq 0 ]]; then
+      if [[ "${unix_collision}" -eq 0 ]]; then
+        plan_steps+=("Odtworzenie konta Unix SSH z unix-account.meta (useradd/uid/gid/shadow + authorized_keys)")
+      fi
+    elif [[ "${skip_unix_shared}" -eq 1 ]]; then
+      : # już dodane w KOLIZJA powyżej
     fi
-    plan_steps+=("Pobranie i rozpakowanie archiwum plików z ${remote_base} do ${target_dir} (tar --no-same-owner; nadpisanie plików strony)")
+    if hm_backup_dir_nonempty "${target_dir}"; then
+      files_collision=1
+      if [[ "${overwrite_files}" -eq 1 ]]; then
+        plan_steps+=("KOLIZJA pliki: ${target_dir} niepusty — NADPISANIE (--overwrite-files)")
+      else
+        plan_steps+=("KOLIZJA pliki: ${target_dir} niepusty — ODMÓW bez --overwrite-files")
+      fi
+    fi
+    plan_steps+=("Pobranie i rozpakowanie archiwum plików z ${remote_base} do ${target_dir} (tar --no-same-owner)")
     if rclone cat "${remote_base}/ols-vhost-dir.tar.gz" >/dev/null 2>&1 \
       || rclone cat "${remote_base}/ols-httpd-snippet.conf" >/dev/null 2>&1 \
       || rclone cat "${remote_base}/vhost.conf" >/dev/null 2>&1; then
       restore_ols=1
       plan_steps+=("Odtworzenie vhosta OLS (katalog ${OLS_VHOSTS:-vhosts}/${domain}, blok virtualhost + map w ${OLS_CONF:-httpd_config.conf})")
     fi
+    if [[ "${restore_ssl}" -eq 1 ]]; then
+      plan_steps+=("Odtworzenie SSL z ssl.tar.gz (symlinki live/ → archive/ zachowane)")
+    fi
+    if [[ "${restore_cron}" -eq 1 && "${skip_unix_shared}" -eq 0 ]]; then
+      plan_steps+=("Odtworzenie crontab użytkownika ${HM_SITE_USER:-${unix_name:-?}} z crontab.txt")
+    elif [[ "${restore_cron}" -eq 1 && "${skip_unix_shared}" -eq 1 ]]; then
+      plan_steps+=("crontab: POMINIĘTY (shared/protected Unix — nie nadpisuję crona żywego konta)")
+      restore_cron=0
+    fi
+    if [[ "${restore_cp}" -eq 1 ]]; then
+      plan_steps+=("Odtworzenie wpisu CyberPanel z cyberpanel-site.sql (website/childdomains/databases)")
+    fi
+    if rclone cat "${remote_base}/pm2-processes.json" >/dev/null 2>&1; then
+      plan_steps+=("PM2: tylko wskazówka (pm2-processes.json) — bez automatycznego startu procesów")
+    fi
     if [[ -n "${HM_SITE_USER:-}" ]] || [[ "${restore_unix}" -eq 1 ]]; then
-      plan_steps+=("Właściciel plików: ${HM_SITE_USER:-user}:${HM_SITE_USER:-user} wewnątrz; public_html/docroot → grupa WWW (nogroup/lsadm), nie user:user")
+      plan_steps+=("Właściciel plików: ${HM_SITE_USER:-${unix_name:-user}}:${HM_SITE_USER:-${unix_name:-user}} wewnątrz; public_html/docroot → grupa WWW (nogroup/lsadm), nie user:user")
     fi
   fi
+  local db_collision=0
   if [[ "${files_only}" -eq 0 ]]; then
     db_list="$(rclone lsf "${remote_base}/db/" 2>/dev/null | grep '\.sql\.gz$' | sed 's|.*/||;s|\.sql\.gz$||' | paste -sd',' - || true)"
     [[ -z "${db_list}" ]] && db_list="$(rclone cat "${remote_base}/manifest.json" 2>/dev/null | grep -oE '"databases?"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 || true)"
-    plan_steps+=("Pobranie i import zrzutów baz danych (${db_list:-z snapshota}) z nadpisaniem tabel")
+    plan_steps+=("Pobranie i import zrzutów baz danych (${db_list:-z snapshota})")
+    local _cdb
+    IFS=',' read -r -a _cdb_arr <<< "${db_list}"
+    for _cdb in "${_cdb_arr[@]}"; do
+      _cdb="${_cdb// /}"
+      [[ -n "${_cdb}" ]] || continue
+      hm_is_valid_db_name "${_cdb}" || continue
+      if hm_backup_db_is_nonempty "${_cdb}"; then
+        db_collision=1
+        if [[ "${overwrite_db}" -eq 1 ]]; then
+          plan_steps+=("KOLIZJA: baza \`${_cdb}\` niepusta — NADPISANIE (--overwrite-db)")
+        else
+          plan_steps+=("KOLIZJA: baza \`${_cdb}\` niepusta — ODMÓW bez --overwrite-db")
+        fi
+      fi
+    done
     if [[ "${restore_db_acc}" -eq 1 ]]; then
-      plan_steps+=("Odtworzenie kont MySQL z db-accounts.sql (CREATE USER + GRANTS / ten sam hash hasła)")
+      plan_steps+=("Odtworzenie kont MySQL z db-accounts.sql (istniejące: bez DROP/CREATE; tylko GRANT-y snapshotu; nowe: CREATE + GRANTS)")
     fi
   fi
   plan_steps+=("Przeładowanie OpenLiteSpeed (ols reload)")
 
+  local _ps
+  if [[ "${unix_collision}" -eq 1 && "${adopt_user}" -ne 1 ]]; then
+    hm_err "KOLIZJA Unix: konto ze snapshota już istnieje — odmowa (hasło/klucze/home żywego serwisu)."
+    hm_info "Użyj --adopt-existing-user aby świadomie przejąć konto, albo przywróć na czysty serwer."
+    for _ps in "${plan_steps[@]}"; do
+      [[ "${_ps}" == KOLIZJA:* ]] && printf '  %s\n' "${_ps}"
+    done
+    return 1
+  fi
+  if [[ "${files_collision}" -eq 1 && "${overwrite_files}" -ne 1 ]]; then
+    hm_err "KOLIZJA pliki: katalog docelowy ${target_dir} nie jest pusty — odmowa nadpisania żywego site'u."
+    hm_info "Użyj --overwrite-files aby świadomie nadpisać pliki w miejscu."
+    for _ps in "${plan_steps[@]}"; do
+      [[ "${_ps}" == KOLIZJA:* ]] && printf '  %s\n' "${_ps}"
+    done
+    return 1
+  fi
+  if [[ "${db_collision}" -eq 1 && "${overwrite_db}" -ne 1 ]]; then
+    hm_err "KOLIZJA: co najmniej jedna baza ze snapshota już istnieje i nie jest pusta."
+    hm_info "Uruchom ponownie z --overwrite-db aby świadomie nadpisać (plan powyżej wymienia bazy)."
+    for _ps in "${plan_steps[@]}"; do
+      [[ "${_ps}" == KOLIZJA:* ]] && printf '  %s\n' "${_ps}"
+    done
+    return 1
+  fi
+
   local warn_extra=""
-  [[ "${snap_type}" == "archive" ]] && warn_extra=" Snapshot typu archive — odtwarzanie po usunięciu strony z VPS (Unix + vhost OLS + pliki + DB + konta MySQL)."
+  [[ "${snap_type}" == "archive" ]] && warn_extra=" Snapshot typu archive — Unix + OLS + pliki + SSL + cron + CP + DB + konta MySQL; PM2 ręcznie."
+  [[ "${overwrite_db}" -eq 1 && "${db_collision}" -eq 1 ]] && warn_extra="${warn_extra} NADPISANIE niepustych baz (--overwrite-db)."
+  [[ "${adopt_user}" -eq 1 && "${unix_collision}" -eq 1 ]] && warn_extra="${warn_extra} ADOPT istniejącego Unix (--adopt-existing-user)."
+  [[ "${overwrite_files}" -eq 1 && "${files_collision}" -eq 1 ]] && warn_extra="${warn_extra} NADPISANIE niepustego katalogu (--overwrite-files)."
 
   if ! hm_confirm_plan_critical "${domain}" \
     "backup restore — ${domain} (${stamp})" \
@@ -778,9 +1150,18 @@ _hm_backup_restore_body() {
 
   # Unix PRZED plikami — chown i SSH działają od razu po rozpakowaniu
   if [[ "${db_only}" -eq 0 && "${restore_unix}" -eq 1 ]]; then
-    hm_backup_restore_unix_account "${remote_base}" "${target_dir}" || {
-      hm_warn "Odtworzenie konta Unix nieudane — kontynuuję restore plików/DB."
-    }
+    # shared/protected: funkcja sama pominie mutacje; exclusive+collision wymaga adopt (już sprawdzone)
+    local unix_home_arg="${target_dir}"
+    if [[ "${skip_unix_shared}" -eq 1 ]]; then
+      unix_home_arg=""
+    fi
+    if ! hm_backup_restore_unix_account "${remote_base}" "${unix_home_arg}" "${adopt_user}"; then
+      hm_err "Odtworzenie konta Unix nieudane / kolizja — przerywam restore (pliki/DB nietknięte)."
+      if [[ "${created_target}" -eq 1 ]]; then
+        rmdir "${target_dir}" 2>/dev/null || true
+      fi
+      return 1
+    fi
   fi
 
   if [[ "${db_only}" -eq 0 ]]; then
@@ -800,10 +1181,20 @@ _hm_backup_restore_body() {
       hm_backup_restore_fix_ownership "${target_dir}" "${HM_SITE_USER}" "${HM_SITE_DOCROOT:-}" \
         || hm_warn "chown częściowo nieudany (kontynuuję)."
     fi
+    if [[ "${restore_ssl}" -eq 1 ]]; then
+      hm_backup_restore_ssl "${remote_base}" || hm_warn "SSL restore nieudany — sprawdź certbot/acme."
+    fi
+    if [[ "${restore_cron}" -eq 1 ]]; then
+      hm_backup_restore_crontab "${remote_base}" "${HM_SITE_USER:-}" || true
+    fi
+    if [[ "${restore_cp}" -eq 1 ]]; then
+      hm_backup_restore_cyberpanel_site "${remote_base}" "${domain}" || true
+    fi
+    hm_backup_restore_pm2_hint "${remote_base}" "${HM_SITE_USER:-}"
   fi
 
   if [[ "${files_only}" -eq 0 ]]; then
-    hm_backup_restore_dbs "${remote_base}" || return 1
+    hm_backup_restore_dbs "${remote_base}" "${overwrite_db}" || return 1
     if [[ "${restore_db_acc}" -eq 1 ]]; then
       hm_backup_restore_db_accounts "${remote_base}" || {
         hm_err "Odtworzenie kont MySQL nieudane — bazy są zaimportowane, nadaj GRANT ręcznie."

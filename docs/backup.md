@@ -103,11 +103,11 @@ vps-backups/                          ← root (RCLONE_REMOTE)
 
 Oprócz dumpów baz i plików snapshot typu `archive` zapisuje:
 
-- **db-accounts.sql** — `SHOW CREATE USER` + `SHOW GRANTS` (hash hasła MySQL, bez plaintextu)
+- **db-accounts.sql** — tylko konta exclusive (`HM_DEL_DB_USERS`); `SHOW CREATE USER` + GRANT-y przefiltrowane do baz snapshotu; tag `HM_DROP_IF_MISSING`
 - **unix-account.meta** — passwd/shadow (hash), uid/gid, home, shell
 - **unix-authorized_keys** — kopia `~/.ssh/authorized_keys`
 
-`backup restore` odtwarza konto Unix przed plikami, a konta MySQL po imporcie baz.
+`backup restore` odtwarza konto Unix przed plikami, a konta MySQL po imporcie baz (istniejący MySQL user → bez DROP/CREATE; niepusta baza → odmowa bez `--overwrite-db`; istniejący Unix → odmowa bez `--adopt-existing-user`; niepusty katalog → odmowa bez `--overwrite-files`; shared Unix → bez mutacji konta).
 
 **Katalog plików:** pakowany jest pełny katalog domowy użytkownika strony (gdy `$HOME` obejmuje site root / vhRoot) — w archiwum są też ukryte elementy w stylu `.ssh`, `.pm2`, `.config`, `.bash_history`. `tar` bierze zawartość `.` (w tym pliki kropkowe); `BACKUP_EXCLUDES` nie wyklucza tych katalogów. Child domain ze współdzielonym home mastera pakuje tylko swój **docroot**.
 
