@@ -43,6 +43,8 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `backup archive` / `delete-site` — child/shared vhRoot → operacje na docroot (nie cały HOME mastera); cron/Unix pomijane przy shared; master z childami → odmowa / `--force-nested`; test `scripts/test-delete-child-nested.sh`
 - Fix/Sec: `TMP_DIR` — domyślnie `/var/lib/hmtools/tmp`; `hm_ensure_secure_tmpdir` odrzuca symlink/cudzy owner/≠0700; archive/full temp przez `hm_mktemp` (bez przewidywalnych nazw); test `scripts/test-secure-tmpdir.sh`
 - Fix/Sec: `access` / `hm_del_user_is_protected` — UID < `UID_MIN` (login.defs, domyślnie 1000) chronione (daemon/messagebus); `ftp add` pokazuje faktyczny login CP (`blog_up1`); test `scripts/test-access-system-uid.sh`
+- Fix/Sec: `security ban` (ufw) — nieskuteczny DENY za ALLOW usuwany przed `prepend`; bez fałszywego sukcesu przez nietrwały `iptables -I`; anulowanie planu → rc≠0; test `any-full-deny` w `test-ufw-deny-detect.sh`
+- Fix: `redis flushdb N` — bez domyślnego `databases=16` przy zablokowanym CONFIG; odczyt z redis.conf; nieznane → probe SELECT / odmowa (nie FLUSHDB na db0); test `test-redis-flushdb-n.sh`
 
 ## [v0.1.9]
 

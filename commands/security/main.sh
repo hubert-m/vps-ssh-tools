@@ -295,8 +295,9 @@ cmd_security_ban() {
   if ! hm_confirm_plan "security ban — ${ip}" \
     "Blokada adresu IP na firewallu i w Fail2Ban." \
     "Dodanie blokady adresu IP ${ip} we wszystkich aktywnych jailach Fail2Ban" \
-    "Dodanie reguły firewall (ufw / firewalld / iptables|ip6tables) dla ${ip}"; then
-    return 0
+    "Dodanie reguły firewall (ufw prepend DENY przed ALLOW — trwałe)" \
+    "Nieskuteczny DENY za ALLOW zostanie usunięty przed prepend"; then
+    return 1
   fi
 
   local ok=0 f2b_ok=0 fw_ok=0

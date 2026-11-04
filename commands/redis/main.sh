@@ -338,11 +338,15 @@ hm_redis_cmd_flushdb() {
   hm_redis_db_index_ok "${n}" || return 1
   if ! hm_confirm_plan "redis flushdb ${n}" \
     "Usunie WSZYSTKIE klucze w bazie db${n}." \
-    "redis-cli -n ${n} FLUSHDB (jedno połączenie; N sprawdzone vs CONFIG databases)"; then
+    "redis-cli -n ${n} FLUSHDB (N zweryfikowane vs CONFIG/conf/SELECT — bez ryzyka czyszczenia db0)"; then
     return 1
   fi
-  # Ponowna walidacja po confirm (config mógł się zmienić) + -n w tym samym procesie
+  # Ponowna walidacja po confirm (config mógł się zmienić) + twardy SELECT przed FLUSHDB
   hm_redis_db_index_ok "${n}" || return 1
+  if ! hm_redis_select_ok "${n}"; then
+    hm_err "SELECT db${n} nieudany przed FLUSHDB — odmowa (nie czyszczę db0)."
+    return 1
+  fi
   local out
   REDIS_CLI_DB="${n}"
   if ! out="$(hm_redis_cli_checked FLUSHDB)"; then

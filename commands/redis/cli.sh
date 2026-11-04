@@ -176,23 +176,47 @@ hm_redis_cli_checked() {
   return 0
 }
 
-# Liczba baz z CONFIG GET databases (domyślnie 16). Potrzebne przed flushdb -n N —
-# redis-cli przy złym SELECT i tak wykonuje komendę na db0.
+# Liczba baz: CONFIG GET databases → redis.conf `databases` → puste (nieznane).
+# NIGDY nie zgaduj „16” przy zablokowanym CONFIG — flushdb N≥prawdziwe_databases czyści db0.
 hm_redis_databases_count() {
-  local out n
+  local out n conf
   out="$(hm_redis_cli CONFIG GET databases 2>/dev/null || true)"
-  n="$(printf '%s\n' "${out}" | awk '
-    BEGIN { v = "" }
-    tolower($0) ~ /^databases$/ { getline; gsub(/[^0-9]/, "", $0); if ($0 != "") { print $0; exit } }
-    /^[0-9]+$/ { v = $0 }
-    END { if (v != "") print v }
-  ')"
-  if [[ "${n}" =~ ^[1-9][0-9]*$ ]]; then
-    printf '%s' "${n}"
-    return 0
+  if ! printf '%s' "${out}" | grep -qiE 'ERR|unknown command|NOPERM|renamed'; then
+    n="$(printf '%s\n' "${out}" | awk '
+      BEGIN { v = "" }
+      tolower($0) ~ /^databases$/ { getline; gsub(/[^0-9]/, "", $0); if ($0 != "") { print $0; exit } }
+      /^[0-9]+$/ { v = $0 }
+      END { if (v != "") print v }
+    ')"
+    if [[ "${n}" =~ ^[1-9][0-9]*$ ]]; then
+      printf '%s' "${n}"
+      return 0
+    fi
   fi
-  printf '%s' "16"
-  return 0
+  conf="${REDIS_CONF:-}"
+  [[ -z "${conf}" || ! -f "${conf}" ]] && conf="$(hm_redis_find_conf 2>/dev/null || true)"
+  if [[ -n "${conf}" ]]; then
+    n="$(hm_redis_conf_get "${conf}" databases 2>/dev/null || true)"
+    n="$(printf '%s' "${n}" | tr -d '[:space:]')"
+    if [[ "${n}" =~ ^[1-9][0-9]*$ ]]; then
+      printf '%s' "${n}"
+      return 0
+    fi
+  fi
+  # nieznane — pusty wynik (caller: probe SELECT / odmowa)
+  printf ''
+  return 1
+}
+
+# Probe: czy SELECT N działa (bez FLUSHDB). redis-cli -n N PING — szukaj „SELECT … failed”.
+hm_redis_select_ok() {
+  local n="${1:-}" out
+  [[ "${n}" =~ ^[0-9]+$ ]] || return 1
+  out="$(REDIS_CLI_DB="${n}" hm_redis_cli PING 2>&1 | tr -d '\r' || true)"
+  if printf '%s' "${out}" | grep -qiE 'SELECT .*failed|out of range|invalid DB index'; then
+    return 1
+  fi
+  [[ "${out}" == "PONG" ]]
 }
 
 # Czy indeks DB jest bezpieczny do -n / FLUSHDB (przed confirm).
@@ -205,12 +229,23 @@ hm_redis_db_index_ok() {
     hm_err "Numer bazy zbyt duży (${#n} cyfr) — odmowa (ryzyko czyszczenia db0)."
     return 1
   fi
-  max="$(hm_redis_databases_count)"
-  if [[ "${n}" -ge "${max}" ]]; then
-    hm_err "db${n} poza zakresem (databases=${max}, dozwolone 0…$((max - 1)))."
-    return 1
+  max="$(hm_redis_databases_count 2>/dev/null || true)"
+  if [[ -n "${max}" && "${max}" =~ ^[1-9][0-9]*$ ]]; then
+    if [[ "${n}" -ge "${max}" ]]; then
+      hm_err "db${n} poza zakresem (databases=${max}, dozwolone 0…$((max - 1)))."
+      return 1
+    fi
+    return 0
   fi
-  return 0
+  # CONFIG zablokowany / brak conf — db0 zawsze OK; N>0 tylko po udanym SELECT
+  if [[ "${n}" -eq 0 ]]; then
+    return 0
+  fi
+  if hm_redis_select_ok "${n}"; then
+    return 0
+  fi
+  hm_err "db${n}: nieznana liczba baz (CONFIG niedostępny) i SELECT ${n} nieudany — odmowa (ryzyko FLUSHDB na db0)."
+  return 1
 }
 
 hm_redis_require() {

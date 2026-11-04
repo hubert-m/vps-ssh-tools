@@ -93,6 +93,19 @@ Anywhere (v6)              DENY        fd00::2/128
 assert_yes "DENY /32 przed ALLOW" "10.99.0.45" "${SAMPLE_CIDR}"
 assert_yes "DENY /128 przed ALLOW v6" "fd00::2" "${SAMPLE_CIDR}"
 
+# any-full-deny: pozycja nieważna (do usuwania przed prepend)
+assert_any_yes() {
+  local label="$1" ip="$2" sample="$3"
+  if printf '%s\n' "${sample}" | _hm_os_ufw_parse_has_any_full_deny "${ip}"; then
+    echo "OK   any-yes: ${label}"
+  else
+    echo "FAIL expected any full deny: ${label}"
+    fail=1
+  fi
+}
+assert_any_yes "DENY za ALLOW nadal any" "10.99.0.2" "${SAMPLE_AFTER}"
+assert_any_yes "numbered [10] any" "10.99.0.2" "${SAMPLE_NUM_AFTER}"
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"
   exit 1

@@ -48,7 +48,7 @@ hm_redis_require() { return 0; }
 
 fail=0
 
-# --- databases count ---
+# --- databases count (CONFIG OK) ---
 dbn="$(hm_redis_databases_count)"
 if [[ "${dbn}" == "16" ]]; then
   echo "OK   databases_count=16"
@@ -76,6 +76,65 @@ if hm_redis_db_index_ok 99999999999999999999 2>/dev/null; then
 else
   echo "OK   zbyt długa liczba → odmowa"
 fi
+
+# --- CONFIG zablokowany → conf databases=4 → odmowa N=5 ---
+FAKE_CLI2="${TMPDIR:-/tmp}/hmtools-fake-redis-cli2.$$"
+cat > "${FAKE_CLI2}" <<'EOF'
+#!/usr/bin/env bash
+echo "ARGV:$*" >> "${HM_FAKE_REDIS_LOG}"
+if [[ "$*" == *CONFIG* ]]; then
+  echo "ERR unknown command 'CONFIG'"
+  exit 0
+fi
+# -n 5 PING → SELECT failed (jak prawdziwy redis przy databases=4)
+if [[ "$*" == *"-n 5"* ]]; then
+  echo "SELECT 5 failed: ERR DB index is out of range" >&2
+  echo "PONG"
+  exit 0
+fi
+case "${*: -1}" in
+  PING) echo PONG ;;
+  *) echo OK ;;
+esac
+exit 0
+EOF
+chmod +x "${FAKE_CLI2}"
+REDIS_BIN="${FAKE_CLI2}"
+CONF2="$(mktemp "${TMPDIR:-/tmp}/hmtools-redis-conf.XXXXXX")"
+echo "databases 4" > "${CONF2}"
+REDIS_CONF="${CONF2}"
+: > "${LOG}"
+dbn="$(hm_redis_databases_count 2>/dev/null || true)"
+if [[ "${dbn}" == "4" ]]; then
+  echo "OK   databases_count from conf=4 (CONFIG blocked)"
+else
+  echo "FAIL conf databases expect 4 got='${dbn}'"
+  fail=1
+fi
+if hm_redis_db_index_ok 5 2>/dev/null; then
+  echo "FAIL db5 przy databases=4 powinien odmówić"
+  fail=1
+else
+  echo "OK   db_index_ok 5 → odmowa (conf=4)"
+fi
+# bez conf + CONFIG fail → SELECT probe
+REDIS_CONF=""
+: > "${LOG}"
+if hm_redis_db_index_ok 5 2>/dev/null; then
+  echo "FAIL db5 bez conf przy SELECT failed powinien odmówić"
+  fail=1
+else
+  echo "OK   db_index_ok 5 → odmowa (SELECT probe)"
+fi
+if grep -q FLUSHDB "${LOG}"; then
+  echo "FAIL FLUSHDB przy probe SELECT"
+  fail=1
+else
+  echo "OK   brak FLUSHDB przy odmowie (CONFIG off)"
+fi
+REDIS_BIN="${FAKE_CLI}"
+REDIS_CONF=""
+rm -f "${FAKE_CLI2}" "${CONF2}"
 
 # --- flushdb ścieżka z -n (bez wywoływania poza zakresem) ---
 : > "${LOG}"

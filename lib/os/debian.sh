@@ -43,26 +43,39 @@ _hm_os_do_firewall_ban() {
   local ip="${1:-}"
   [[ -n "${ip}" ]] || return 1
   if hm_have_cmd ufw; then
-    # Już DENY/REJECT → OK (idempotent). ALLOW from IP ≠ ban (nie mylić).
+    # Skuteczny DENY/REJECT (przed ALLOW) → OK (idempotent). ALLOW from IP ≠ ban.
     if _hm_os_ufw_has_deny_from "${ip}"; then
       return 0
     fi
+    # Nieskuteczny DENY za ALLOW: ufw „Skipping inserting existing rule” przy prepend.
+    # Usuń martwe DENY/REJECT, potem prepend na [1].
+    _hm_os_ufw_remove_ineffective_full_deny "${ip}" || true
+
     # ufw = first match: DENY musi być PRZED ALLOW 22/80/443.
-    # prepend działa dla v4 i v6 (insert 1 tylko dla v4 — numery v6 kontynuują po v4).
     if ufw prepend deny from "${ip}" >/dev/null 2>&1; then
       if _hm_os_ufw_has_deny_from "${ip}"; then
         return 0
       fi
-      hm_warn "ufw prepend: brak DENY dla ${ip} w statusie — traktuję jako nieudane."
+      hm_warn "ufw prepend: brak skutecznego DENY dla ${ip} (przed ALLOW) — nieudane."
     elif ufw insert 1 deny from "${ip}" >/dev/null 2>&1; then
-      # starsze ufw bez prepend — insert 1 OK dla IPv4
       if _hm_os_ufw_has_deny_from "${ip}"; then
         return 0
       fi
-      hm_warn "ufw insert 1: brak DENY dla ${ip} w statusie — traktuję jako nieudane."
+      hm_warn "ufw insert 1: brak skutecznego DENY dla ${ip} — nieudane."
     else
-      hm_warn "ufw prepend/insert nieudane dla ${ip} — pomijam append „ufw deny” (martwy ban za ALLOW)."
+      # ponów: usuń „existing” i prepend
+      _hm_os_ufw_remove_ineffective_full_deny "${ip}" || true
+      ufw --force delete deny from "${ip}" >/dev/null 2>&1 || true
+      ufw --force delete reject from "${ip}" >/dev/null 2>&1 || true
+      if ufw prepend deny from "${ip}" >/dev/null 2>&1 \
+        && _hm_os_ufw_has_deny_from "${ip}"; then
+        return 0
+      fi
+      hm_warn "ufw prepend/insert nieudane dla ${ip} — bez append (martwy ban za ALLOW)."
     fi
+    # Przy ufw NIE raportuj sukcesu samym iptables (DROP znika po reboot / ufw-reload).
+    hm_err "Firewall (ufw): nie ustawiono trwałego DENY przed ALLOW dla ${ip}."
+    return 1
   fi
   if [[ "${ip}" == *:* ]] && hm_have_cmd ip6tables; then
     ip6tables -I INPUT -s "${ip}" -j DROP && return 0
@@ -127,6 +140,72 @@ _hm_os_ufw_has_deny_from() {
   local out=""
   out="$(ufw status numbered 2>/dev/null)" || out="$(ufw status 2>/dev/null)" || return 1
   printf '%s\n' "${out}" | _hm_os_ufw_parse_has_full_deny "${ip}"
+}
+
+# Jak parse_has_full_deny, ale IGNORUJE pozycję (także DENY za ALLOW).
+_hm_os_ufw_parse_has_any_full_deny() {
+  local ip="${1:-}"
+  [[ -n "${ip}" ]] || return 1
+  awk -v ip="${ip}" '
+    BEGIN { found = 0 }
+    {
+      line = $0
+      sub(/^[[:space:]]*\[[[:space:]]*[0-9]+\][[:space:]]*/, "", line)
+      if (line ~ /^To[[:space:]]+Action/ || line ~ /^--+/) next
+      if (line ~ /^Status:/ || line ~ /^[[:space:]]*$/) next
+      if (line ~ /^Anywhere \(v6\)[[:space:]]+(DENY|REJECT)([[:space:]]+(IN|OUT))?[[:space:]]+/) {
+        rest = line
+        sub(/^Anywhere \(v6\)[[:space:]]+(DENY|REJECT)([[:space:]]+(IN|OUT))?[[:space:]]+/, "", rest)
+      } else if (line ~ /^Anywhere[[:space:]]+(DENY|REJECT)([[:space:]]+(IN|OUT))?[[:space:]]+/) {
+        rest = line
+        sub(/^Anywhere[[:space:]]+(DENY|REJECT)([[:space:]]+(IN|OUT))?[[:space:]]+/, "", rest)
+      } else {
+        next
+      }
+      n = split(rest, a, /[[:space:]]+/)
+      if (n < 1) next
+      from = a[1]
+      gsub(/\/(32|128)$/, "", from)
+      if (from == ip) { found = 1; exit }
+    }
+    END { exit found ? 0 : 1 }
+  '
+}
+
+_hm_os_ufw_has_any_full_deny() {
+  local ip="${1:-}" out=""
+  [[ -n "${ip}" ]] || return 1
+  out="$(ufw status numbered 2>/dev/null)" || out="$(ufw status 2>/dev/null)" || return 1
+  printf '%s\n' "${out}" | _hm_os_ufw_parse_has_any_full_deny "${ip}"
+}
+
+# Usuń pełne DENY/REJECT dla IP, które NIE stoją przed ALLOW (nieskuteczne / blokują prepend).
+_hm_os_ufw_remove_ineffective_full_deny() {
+  local ip="${1:-}"
+  local i=0 removed=0
+  [[ -n "${ip}" ]] || return 1
+  while [[ "${i}" -lt 20 ]]; do
+    i=$((i + 1))
+    # już skuteczny → nic do roboty
+    if _hm_os_ufw_has_deny_from "${ip}"; then
+      [[ "${removed}" -gt 0 ]] && return 0
+      return 1
+    fi
+    # brak jakiegokolwiek pełnego DENY → koniec
+    if ! _hm_os_ufw_has_any_full_deny "${ip}"; then
+      [[ "${removed}" -gt 0 ]] && return 0
+      return 1
+    fi
+    hm_info "Usuwam nieskuteczny DENY/REJECT ufw dla ${ip} (za ALLOW) przed prepend…"
+    ufw --force delete deny from "${ip}" >/dev/null 2>&1 \
+      || ufw delete deny from "${ip}" >/dev/null 2>&1 \
+      || true
+    ufw --force delete reject from "${ip}" >/dev/null 2>&1 \
+      || ufw delete reject from "${ip}" >/dev/null 2>&1 \
+      || true
+    removed=$((removed + 1))
+  done
+  [[ "${removed}" -gt 0 ]]
 }
 
 # Alias (stare wywołania) — tylko DENY/REJECT
