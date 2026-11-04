@@ -177,7 +177,23 @@ hm_archive_pack_ssl() {
   tar -czf "${out_tar}" "${paths[@]}" 2>/dev/null
 }
 
+# Usuń kolumnę `id` z INSERT … (`id`, …) VALUES (N, …) — uniknij kolizji PK przy restore.
+hm_archive_cp_sql_strip_explicit_ids() {
+  local f="$1"
+  local tmp
+  [[ -f "${f}" ]] || return 1
+  tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-cp-noid.XXXXXX.sql")"
+  # Tylko complete-insert z nazwanymi kolumnami; pierwsze pole = id
+  sed -E \
+    -e 's/^(INSERT INTO `[^`]+` )\( `id`,/\1(/' \
+    -e 's/^(INSERT INTO `[^`]+` )\(`id`,/\1(/' \
+    -e 's/^(INSERT INTO `[^`]+` \([^)]*\)) VALUES \([0-9]+,/\1 VALUES (/' \
+    "${f}" > "${tmp}" || { rm -f "${tmp}"; return 1; }
+  mv -f "${tmp}" "${f}"
+}
+
 # Eksport wierszy CyberPanel (website + childdomains + databases) do SQL INSERT.
+# Bez jawnego id (strip po dumpie) — restore nie koliduje z istniejącymi PK.
 hm_archive_export_cyberpanel_sql() {
   local domain="$1"
   local out_sql="$2"
@@ -191,7 +207,7 @@ hm_archive_export_cyberpanel_sql() {
   local sock=()
   [[ -n "${MYSQL_SOCKET:-}" ]] && sock=(--socket="${MYSQL_SOCKET}")
   {
-    echo "-- hmtools archive: CyberPanel rows for ${domain} (id=${id})"
+    echo "-- hmtools archive: CyberPanel rows for ${domain} (source id=${id}; id stripped for restore)"
     echo "USE \`cyberpanel\`;"
     "${dumpcli}" "${sock[@]}" cyberpanel websiteFunctions_websites \
       --where="id=${id}" --no-create-info --complete-insert --skip-lock-tables --skip-comments 2>/dev/null || true
@@ -200,6 +216,8 @@ hm_archive_export_cyberpanel_sql() {
     "${dumpcli}" "${sock[@]}" cyberpanel databases_databases \
       --where="website_id=${id}" --no-create-info --complete-insert --skip-lock-tables --skip-comments 2>/dev/null || true
   } > "${out_sql}"
+  [[ -s "${out_sql}" ]] || return 1
+  hm_archive_cp_sql_strip_explicit_ids "${out_sql}" || true
   [[ -s "${out_sql}" ]]
 }
 
@@ -269,7 +287,7 @@ hm_archive_export_mysql_accounts() {
       echo >> "${out_sql}"
       echo "-- account ${u}@${host}" >> "${out_sql}"
       # DROP tylko gdy konto nie istnieje przy restore — tag dla restore parsera
-      printf '-- HM_DROP_IF_MISSING %s@%s\n' "${u}" "${host}" >> "${out_sql}"
+      printf -- '-- HM_DROP_IF_MISSING %s@%s\n' "${u}" "${host}" >> "${out_sql}"
       printf 'DROP USER IF EXISTS %s@%s;\n' "$(hm_sql_quote "${u}")" "$(hm_sql_quote "${host}")" >> "${out_sql}"
 
       create=""
@@ -424,11 +442,33 @@ _hm_backup_archive_site_body() {
 
   local -a archive_dbs=()
   local -a archive_db_users=()
-  local dline dname
+  local dline dname dorigin dreason seen_adb="|"
   for dline in "${HM_DEL_DBS[@]}"; do
     [[ -n "${dline}" ]] || continue
     IFS='|' read -r dname _ <<<"${dline}"
-    [[ -n "${dname}" ]] && archive_dbs+=("${dname}")
+    if [[ -n "${dname}" && "${seen_adb}" != *"|${dname}|"* ]]; then
+      archive_dbs+=("${dname}")
+      seen_adb="${seen_adb}${dname}|"
+    fi
+  done
+  # Child: DB z wp-config childa bywa w CP pod masterem → HM_DEL_SKIP (współdzielona).
+  # Archive i tak dumpnuje (origin potwierdzony); delete nadal NIE dropuje.
+  for dline in "${HM_DEL_SKIP_DBS[@]:-}"; do
+    [[ -n "${dline}" ]] || continue
+    IFS='|' read -r dname dorigin dreason <<<"${dline}"
+    [[ -n "${dname}" ]] || continue
+    [[ "${seen_adb}" == *"|${dname}|"* ]] && continue
+    case "${dorigin}" in
+      confirmed|user-match|wp-config|.env|.env-url|configuration.php) ;;
+      *) continue ;;
+    esac
+    case "${dreason}" in
+      *współdziel*|*wspoldziel*)
+        archive_dbs+=("${dname}")
+        seen_adb="${seen_adb}${dname}|"
+        hm_info "Archive dump DB ${dname} (pomijana przy usuwaniu: ${dreason}) — origin=${dorigin}."
+        ;;
+    esac
   done
   # TYLKO konta exclusive (HM_DEL_DB_USERS) — współdzielonych NIE eksportujemy (DROP psułby inne serwisy)
   local _du
@@ -437,7 +477,6 @@ _hm_backup_archive_site_body() {
     hm_is_valid_db_name "${_du}" || continue
     archive_db_users+=("${_du}")
   done
-  # dołącz też nie-shared prefix-match z skip? — tylko pewne z HM_DEL_DBS
 
   local db_desc="brak"
   if [[ "${#archive_dbs[@]}" -gt 0 ]]; then
@@ -495,7 +534,7 @@ _hm_backup_archive_site_body() {
     "ARCHIWIZACJA SERWISU WEBOWEGO (BACKUP → USUNIĘCIE Z VPS): ${domain}" \
     "Jeśli którykolwiek krok backupu lub weryfikacji na Google Drive się nie powiedzie, operacja zostanie NATYCHMIAST PRZERWANA i żaden plik ani baza na VPS nie zostaną usunięte!" \
     "${plan_steps[@]}"; then
-    return 0
+    return 1
   fi
 
   # --- Faza I: backup ---

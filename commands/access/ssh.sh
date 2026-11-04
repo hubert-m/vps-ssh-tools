@@ -177,6 +177,31 @@ hm_access_is_valid_ssh_key_line() {
   [[ "${line}" =~ ^[[:space:]]*(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)[[:space:]]+[A-Za-z0-9+/=]+ ]]
 }
 
+# Typ + blob (bez komentarza) — duplikat klucza mimo innego comment.
+hm_access_ssh_key_type_blob() {
+  local line="${1:-}" t b
+  read -r t b _ <<<"${line}" || true
+  [[ -n "${t}" && -n "${b}" ]] || return 1
+  printf '%s %s\n' "${t}" "${b}"
+}
+
+# Czy authorized_keys (stdin lub plik $2) już ma ten sam typ+blob co $1?
+hm_access_ssh_key_blob_exists() {
+  local key_line="${1:-}" keys_file="${2:-}"
+  local want have line
+  want="$(hm_access_ssh_key_type_blob "${key_line}")" || return 1
+  if [[ -n "${keys_file}" ]]; then
+    [[ -f "${keys_file}" ]] || return 1
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+      hm_access_is_valid_ssh_key_line "${line}" || continue
+      have="$(hm_access_ssh_key_type_blob "${line}")" || continue
+      [[ "${have}" == "${want}" ]] && return 0
+    done < "${keys_file}"
+    return 1
+  fi
+  return 1
+}
+
 hm_access_ssh_status() {
   local domain user home shell keysf nkeys=0
   hm_access_resolve_site "${1:-}" || return 1
@@ -419,15 +444,15 @@ hm_access_ssh_keys_add() {
     return 1
   fi
 
-  # Duplikat — przed confirm (gdy plik już istnieje i jest bezpieczny)
+  # Duplikat po typ+blob (nie cała linia — ten sam klucz z innym comment = duplikat)
   local home keys_existing
   home="$(hm_access_unix_home "${user}")"
   keys_existing="$(hm_access_ssh_keys_file "${user}" 2>/dev/null || true)"
   if [[ -n "${keys_existing}" && -f "${keys_existing}" ]] \
     && [[ ! -L "${home}/.ssh" && ! -L "${keys_existing}" ]] \
     && hm_access_ssh_path_ok "${user}" "${home}" "${keys_existing}" 2>/dev/null \
-    && grep -Fqx "${key_line}" "${keys_existing}" 2>/dev/null; then
-    hm_ok "Klucz już jest w ${keys_existing}."
+    && hm_access_ssh_key_blob_exists "${key_line}" "${keys_existing}"; then
+    hm_ok "Klucz (typ+blob) już jest w ${keys_existing}."
     return 0
   fi
 
@@ -449,8 +474,8 @@ hm_access_ssh_keys_add() {
 
   keysf="$(hm_access_ssh_keys_ensure_dir "${user}")" || return 1
   hm_access_ssh_recheck_keys_paths "${user}" "${home}" "${keysf}" || return 1
-  if grep -Fqx "${key_line}" "${keysf}" 2>/dev/null; then
-    hm_ok "Klucz już jest w ${keysf}."
+  if hm_access_ssh_key_blob_exists "${key_line}" "${keysf}"; then
+    hm_ok "Klucz (typ+blob) już jest w ${keysf}."
     return 0
   fi
   if hm_have_cmd runuser; then

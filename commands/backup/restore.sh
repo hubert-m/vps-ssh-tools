@@ -472,7 +472,7 @@ hm_backup_restore_db_accounts() {
       if hm_backup_mysql_user_exists "${cur_user}" "${cur_host}" \
         || hm_backup_mysql_user_exists "${cur_user}"; then
         skip_ddl=1
-        printf '-- SKIP DROP/CREATE: %s@%s już istnieje (zachowuję hasło i obce GRANTy)\n' \
+        printf -- '-- SKIP DROP/CREATE: %s@%s już istnieje (zachowuję hasło i obce GRANTy)\n' \
           "${cur_user}" "${cur_host}" >> "${outf}"
         skipped_ddl=$((skipped_ddl + 1))
       else
@@ -488,7 +488,7 @@ hm_backup_restore_db_accounts() {
       if hm_backup_mysql_user_exists "${cur_user}" "${cur_host}" \
         || hm_backup_mysql_user_exists "${cur_user}"; then
         skip_ddl=1
-        printf '-- skipped DROP (exists): %s\n' "${line}" >> "${outf}"
+        printf -- '-- skipped DROP (exists): %s\n' "${line}" >> "${outf}"
         skipped_ddl=$((skipped_ddl + 1))
         continue
       fi
@@ -499,7 +499,7 @@ hm_backup_restore_db_accounts() {
 
     if [[ "${line}" =~ ^CREATE[[:space:]]+USER ]]; then
       if [[ "${skip_ddl}" -eq 1 ]]; then
-        printf '-- skipped CREATE (exists): %s\n' "${line}" >> "${outf}"
+        printf -- '-- skipped CREATE (exists): %s\n' "${line}" >> "${outf}"
         continue
       fi
       created=$((created + 1))
@@ -510,11 +510,11 @@ hm_backup_restore_db_accounts() {
     if [[ "${line}" =~ ^[[:space:]]*GRANT[[:space:]] ]]; then
       if [[ "${skip_ddl}" -eq 1 ]]; then
         safe_grant="$(hm_backup_grant_without_identified "${line}")" || {
-          printf '-- skipped GRANT USAGE (exists, bez zmiany hasła): %s\n' "${line}" >> "${outf}"
+          printf -- '-- skipped GRANT USAGE (exists, bez zmiany hasła): %s\n' "${line}" >> "${outf}"
           continue
         }
         if [[ "${safe_grant}" != "${line}" ]]; then
-          printf '-- stripped IDENTIFIED (exists): %s\n' "${line}" >> "${outf}"
+          printf -- '-- stripped IDENTIFIED (exists): %s\n' "${line}" >> "${outf}"
           line="${safe_grant}"
         fi
       fi
@@ -604,10 +604,11 @@ hm_backup_restore_pm2_hint() {
 }
 
 # CyberPanel website/childdomains/databases INSERT z cyberpanel-site.sql
+# Bez jawnego PK: strip `id`, mapowanie master_id/website_id → nowy id website.
 hm_backup_restore_cyberpanel_site() {
   local remote_base="$1"
   local domain="${2:-}"
-  local cli sock_args=() sqlf
+  local cli sock_args=() sqlf src_id new_id dq web_sql rest_sql
   if ! rclone cat "${remote_base}/cyberpanel-site.sql" >/dev/null 2>&1; then
     hm_info "Brak cyberpanel-site.sql — panel CP może nie widzieć domeny (dodaj ręcznie lub pomiń)."
     return 0
@@ -619,14 +620,21 @@ hm_backup_restore_cyberpanel_site() {
   cli="$(hm_mysql_cli)" || { hm_warn "Brak mysql — pomijam cyberpanel-site.sql."; return 0; }
   [[ -n "${MYSQL_SOCKET:-}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
   sqlf="$(mktemp "${TMP_DIR:-/tmp}/hmtools-cp.XXXXXX.sql")"
-  chmod 600 "${sqlf}"
+  web_sql="$(mktemp "${TMP_DIR:-/tmp}/hmtools-cp-web.XXXXXX.sql")"
+  rest_sql="$(mktemp "${TMP_DIR:-/tmp}/hmtools-cp-rest.XXXXXX.sql")"
+  chmod 600 "${sqlf}" "${web_sql}" "${rest_sql}"
   if ! rclone cat "${remote_base}/cyberpanel-site.sql" > "${sqlf}" || [[ ! -s "${sqlf}" ]]; then
-    rm -f "${sqlf}"
+    rm -f "${sqlf}" "${web_sql}" "${rest_sql}"
     return 0
   fi
-  # Usuń istniejący wpis tej domeny (unikaj duplikatu PK), potem INSERT z dumpa
+  src_id="$(grep -oE 'source id=[0-9]+' "${sqlf}" 2>/dev/null | head -1 | grep -oE '[0-9]+' || true)"
+  [[ -z "${src_id}" ]] && src_id="$(grep -oE 'id=[0-9]+' "${sqlf}" 2>/dev/null | head -1 | grep -oE '[0-9]+' || true)"
+
+  if declare -F hm_archive_cp_sql_strip_explicit_ids >/dev/null 2>&1; then
+    hm_archive_cp_sql_strip_explicit_ids "${sqlf}" || true
+  fi
+
   if [[ -n "${domain}" ]] && hm_is_valid_domain "${domain}"; then
-    local dq
     dq="$(hm_sql_quote "${domain}")"
     "${cli}" "${sock_args[@]}" cyberpanel -e "
 DELETE d FROM databases_databases d
@@ -636,13 +644,41 @@ DELETE c FROM websiteFunctions_childdomains c
 DELETE FROM websiteFunctions_websites WHERE domain = ${dq};
 " 2>/dev/null || true
   fi
-  hm_info "Import cyberpanel-site.sql…"
-  if "${cli}" "${sock_args[@]}" cyberpanel < "${sqlf}"; then
-    hm_ok "Wpis CyberPanel odtworzony."
-  else
-    hm_warn "Import cyberpanel-site.sql nieudany — dodaj domenę w panelu ręcznie."
+
+  # 1) website INSERT (bez id) → nowy autoincrement
+  grep -E '^INSERT INTO `websiteFunctions_websites`' "${sqlf}" > "${web_sql}" || true
+  grep -Ev '^INSERT INTO `websiteFunctions_websites`' "${sqlf}" > "${rest_sql}" || true
+  hm_info "Import cyberpanel-site.sql (website → mapowanie FK)…"
+  if [[ -s "${web_sql}" ]]; then
+    if ! "${cli}" "${sock_args[@]}" cyberpanel < "${web_sql}"; then
+      rm -f "${sqlf}" "${web_sql}" "${rest_sql}"
+      hm_err "Import CyberPanel website nieudany."
+      return 1
+    fi
   fi
-  rm -f "${sqlf}"
+  if [[ -n "${domain}" ]] && hm_is_valid_domain "${domain}"; then
+    dq="$(hm_sql_quote "${domain}")"
+    new_id="$("${cli}" "${sock_args[@]}" cyberpanel -N -B -e "SELECT id FROM websiteFunctions_websites WHERE domain=${dq} LIMIT 1;" 2>/dev/null | tr -d '[:space:]')"
+  fi
+  if [[ -n "${src_id}" && -n "${new_id}" && "${src_id}" != "${new_id}" && -s "${rest_sql}" ]]; then
+    local mapped
+    mapped="$(mktemp "${TMP_DIR:-/tmp}/hmtools-cp-map.XXXXXX.sql")"
+    sed -E \
+      -e "s/(master_id=)${src_id}/\1${new_id}/g" \
+      -e "s/(website_id=)${src_id}/\1${new_id}/g" \
+      -e "s/\(${src_id},/(${new_id},/g" \
+      "${rest_sql}" > "${mapped}" && mv -f "${mapped}" "${rest_sql}"
+    rm -f "${mapped}" 2>/dev/null || true
+  fi
+  if [[ -s "${rest_sql}" ]]; then
+    if ! "${cli}" "${sock_args[@]}" cyberpanel < "${rest_sql}"; then
+      rm -f "${sqlf}" "${web_sql}" "${rest_sql}"
+      hm_err "Import CyberPanel childdomains/databases nieudany (FK?)."
+      return 1
+    fi
+  fi
+  rm -f "${sqlf}" "${web_sql}" "${rest_sql}"
+  hm_ok "Wpis CyberPanel odtworzony${new_id:+ (id=${new_id})}."
   return 0
 }
 
@@ -1127,7 +1163,12 @@ _hm_backup_restore_body() {
       plan_steps+=("PM2: tylko wskazówka (pm2-processes.json) — bez automatycznego startu procesów")
     fi
     if [[ -n "${HM_SITE_USER:-}" ]] || [[ "${restore_unix}" -eq 1 ]]; then
-      plan_steps+=("Właściciel plików: ${HM_SITE_USER:-${unix_name:-user}}:${HM_SITE_USER:-${unix_name:-user}} wewnątrz; public_html/docroot → grupa WWW (nogroup/lsadm), nie user:user")
+      local _own_user="${HM_SITE_USER:-${unix_name:-}}"
+      if [[ -n "${_own_user}" ]] && ! id "${_own_user}" >/dev/null 2>&1 && [[ "${restore_unix}" -eq 0 ]]; then
+        plan_steps+=("UWAGA Unix: user \`${_own_user}\` z manifestu NIE ISTNIEJE i brak unix-account.meta — pliki zostaną jako root (tar --no-same-owner); utwórz usera ręcznie lub użyj nowszego archive")
+      else
+        plan_steps+=("Właściciel plików: ${_own_user:-user}:${_own_user:-user} wewnątrz; public_html/docroot → grupa WWW (nogroup/lsadm), nie user:user")
+      fi
     fi
   fi
   local db_collision=0
@@ -1233,6 +1274,8 @@ _hm_backup_restore_body() {
     if [[ -n "${HM_SITE_USER:-}" ]] && id "${HM_SITE_USER}" >/dev/null 2>&1; then
       hm_backup_restore_fix_ownership "${target_dir}" "${HM_SITE_USER}" "${HM_SITE_DOCROOT:-}" \
         || hm_warn "chown częściowo nieudany (kontynuuję)."
+    elif [[ -n "${HM_SITE_USER:-}" ]] && ! id "${HM_SITE_USER}" >/dev/null 2>&1; then
+      hm_warn "Unix user ${HM_SITE_USER} nie istnieje (brak unix-account.meta / useradd) — pliki w ${target_dir} mogą być root:root."
     fi
     if [[ "${restore_ssl}" -eq 1 ]]; then
       hm_backup_restore_ssl "${remote_base}" || hm_warn "SSL restore nieudany — sprawdź certbot/acme."
@@ -1241,7 +1284,9 @@ _hm_backup_restore_body() {
       hm_backup_restore_crontab "${remote_base}" "${HM_SITE_USER:-}" "${domain}" || true
     fi
     if [[ "${restore_cp}" -eq 1 ]]; then
-      hm_backup_restore_cyberpanel_site "${remote_base}" "${domain}" || true
+      hm_backup_restore_cyberpanel_site "${remote_base}" "${domain}" || {
+        hm_warn "CyberPanel SQL niezaimportowany — kontynuuję (pliki/DB mogą być OK)."
+      }
     fi
     hm_backup_restore_pm2_hint "${remote_base}" "${HM_SITE_USER:-}"
   fi
@@ -1273,7 +1318,37 @@ hm_backup_restore() {
 
 # Odtwórz snapshot full/<stamp>/ — system-configs + databases + sites/* + db-accounts.
 hm_backup_restore_full() {
-  local stamp="${1:-}"
+  local stamp="" do_system=0 a
+  # flagi przed stampem: restore-full --system [stamp]
+  for a in "$@"; do
+    case "${a}" in
+      --system) do_system=1 ;;
+      --help|-h)
+        cat <<'EOF'
+Użycie: backup restore-full [stamp] [--system]
+
+Odtwarza snapshot full/: bazy + db-accounts.
+--system — dodatkowo rozpakuj system-configs.tar.gz(.enc) do /
+Bez stampu — najnowszy snapshot full/.
+Pliki stron (sites/<domena>/) NIE są rozpakowywane tu — użyj backup restore <domena>.
+EOF
+        return 0
+        ;;
+      -*)
+        hm_err "Nieznana flaga: ${a} (backup restore-full [stamp] [--system])"
+        return 1
+        ;;
+      *)
+        if [[ -z "${stamp}" ]]; then
+          stamp="${a}"
+        else
+          hm_err "Za dużo argumentów: ${a}"
+          return 1
+        fi
+        ;;
+    esac
+  done
+
   hm_load_config
   hm_detect_all
   hm_rclone_check || return 1
@@ -1301,10 +1376,10 @@ hm_backup_restore_full() {
   fi
 
   local -a plan=(
-    "Opcjonalnie: system-configs.tar.gz(.enc) → / (OSTROŻNIE — nadpisze /etc bez shadow)"
+    "Opcjonalnie: system-configs.tar.gz(.enc) → / (OSTROŻNIE — nadpisze /etc bez shadow; tylko z --system)"
     "Import wszystkich baz z ${remote_base}/databases/*.sql.gz"
     "Odtworzenie kont MySQL z db-accounts.sql(.enc) jeśli obecne"
-    "Dla każdej domeny w sites/: rozpakowanie plików (wymaga ręcznego/per-site restore OLS)"
+    "Listing sites/<domena>/ w snapshocie — BEZ rozpakowania plików (użyj: backup restore <domena>)"
   )
   if ! hm_confirm_plan_critical "full" \
     "backup restore-full — ${stamp}" \
@@ -1312,11 +1387,6 @@ hm_backup_restore_full() {
     "${plan[@]}"; then
     return 1
   fi
-
-  local do_system=0 a
-  for a in "${@:2}"; do
-    [[ "${a}" == "--system" ]] && do_system=1
-  done
 
   if [[ "${do_system}" -eq 1 ]]; then
     local sys_tmp

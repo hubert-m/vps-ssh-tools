@@ -609,9 +609,17 @@ hm_backup_system_configs() {
     --exclude='*/privkey*.pem' --exclude='*.key' \
     --exclude='ssh_host_*_key' --exclude='*/ssh_host_*_key' \
     "${paths[@]}" 2>"${tar_err}" | gzip -c > "${local_gz}"
-  tar_rc=$?
+  # $? = ostatni w pipeline (gzip); tar = PIPESTATUS[0]
+  local -a _sys_ps=( "${PIPESTATUS[@]}" )
+  tar_rc=${_sys_ps[0]:-1}
+  gzip_rc=${_sys_ps[1]:-1}
   set -o pipefail
   set -e
+  if [[ "${gzip_rc}" -ne 0 ]]; then
+    rm -f "${local_gz}"
+    hm_err "gzip system-configs nieudany (rc=${gzip_rc})."
+    return 1
+  fi
   if [[ -s "${tar_err}" ]]; then
     hm_warn "tar (system): $(head -c 200 "${tar_err}" | tr '\n' ' ')"
   fi
