@@ -83,8 +83,27 @@ hm_tab_complete() {
       security|sec)
         if [[ "${prefix}" =~ $re_sec_scan ]]; then
           hm_complete_push_sites "${partial}"
+        elif [[ "${prefix}" =~ (security|sec)[[:space:]]+ssh[[:space:]]+set[[:space:]] ]]; then
+          for m in port password-auth root-login; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ (security|sec)[[:space:]]+ssh[[:space:]] ]]; then
+          for m in set confirm help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
         else
           for m in status ports ssh fail2ban ban unban scan help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
+      firewall|fw)
+        if [[ "${prefix}" =~ (firewall|fw)[[:space:]]+(allow|deny)[[:space:]] ]]; then
+          for m in --from --comment --force --yes; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in status allow deny remove whitelist help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi

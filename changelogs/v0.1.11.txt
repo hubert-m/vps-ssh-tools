@@ -1,5 +1,6 @@
 # hmtools v0.1.11
 
+- Feat: `firewall` — allow/deny/remove/whitelist (ufw/firewalld/CSF przez `hm_os_*`); ochrona portu SSH i IP sesji; `security ssh set` (port z otwarciem FW + rollback 120 s, password-auth/root-login); test `test-firewall-ssh-protect.sh`
 - Feat: `git` / `deploy` — status repo, klucz ed25519 (`~/.ssh/hmtools_deploy` 0600), attach, deploy (fetch/plan/pull/build whitelist/reload PHP·PM2), rollback; dirty blokuje bez `--force`; test `test-git-deploy-whitelist.sh`
 - Feat: `vhost` / `rewrite` / `headers` / `cache settings` — edycja vhconf (diff, bak.hmtools.<stamp> retencja 10, reload, rollback), presety HTTPS/www/SPA i nagłówki security/HSTS, TTL LSCache; test `test-ols-vhost-presets.sh`
 - Feat: `docker` — lista (+ domena OLS proxy), logs/start/stop/restart, compose ls/pull/up, prune (dry-run; volumes tylko z critical); detect `DOCKER`; test `test-docker-map.sh`

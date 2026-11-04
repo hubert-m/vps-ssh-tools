@@ -238,3 +238,116 @@ _hm_os_do_firewall_unban() {
   fi
   [[ "${ok}" -eq 1 ]]
 }
+
+_hm_os_do_firewall_list() {
+  _hm_os_do_firewall_status
+}
+
+# $1=port $2=proto $3=from $4=comment
+_hm_os_do_firewall_allow() {
+  local port="${1:-}" proto="${2:-tcp}" from="${3:-}" comment="${4:-}"
+  [[ -n "${port}" ]] || return 1
+  [[ "${proto}" == "any" ]] && proto="tcp"
+  if hm_have_cmd ufw; then
+    if [[ -n "${from}" ]]; then
+      if [[ -n "${comment}" ]]; then
+        ufw allow from "${from}" to any port "${port}" proto "${proto}" comment "${comment}" >/dev/null 2>&1 && return 0
+      fi
+      ufw allow from "${from}" to any port "${port}" proto "${proto}" >/dev/null 2>&1 && return 0
+      return 1
+    fi
+    if [[ -n "${comment}" ]]; then
+      ufw allow "${port}/${proto}" comment "${comment}" >/dev/null 2>&1 && return 0
+    fi
+    ufw allow "${port}/${proto}" >/dev/null 2>&1 && return 0
+    return 1
+  fi
+  if hm_have_cmd iptables; then
+    if [[ -n "${from}" ]]; then
+      iptables -I INPUT -p "${proto}" -s "${from}" --dport "${port}" -j ACCEPT && return 0
+    else
+      iptables -I INPUT -p "${proto}" --dport "${port}" -j ACCEPT && return 0
+    fi
+  fi
+  return 1
+}
+
+_hm_os_do_firewall_deny() {
+  local port="${1:-}" proto="${2:-tcp}" from="${3:-}" comment="${4:-}"
+  [[ -n "${port}" ]] || return 1
+  [[ "${proto}" == "any" ]] && proto="tcp"
+  if hm_have_cmd ufw; then
+    if [[ -n "${from}" ]]; then
+      if ufw prepend deny from "${from}" to any port "${port}" proto "${proto}" >/dev/null 2>&1; then
+        return 0
+      fi
+      ufw deny from "${from}" to any port "${port}" proto "${proto}" >/dev/null 2>&1 && return 0
+      return 1
+    fi
+    if [[ -n "${comment}" ]]; then
+      ufw deny "${port}/${proto}" comment "${comment}" >/dev/null 2>&1 && return 0
+    fi
+    ufw deny "${port}/${proto}" >/dev/null 2>&1 && return 0
+    return 1
+  fi
+  if hm_have_cmd iptables; then
+    if [[ -n "${from}" ]]; then
+      iptables -I INPUT -p "${proto}" -s "${from}" --dport "${port}" -j DROP && return 0
+    else
+      iptables -I INPUT -p "${proto}" --dport "${port}" -j DROP && return 0
+    fi
+  fi
+  return 1
+}
+
+_hm_os_do_firewall_remove() {
+  local spec="${1:-}"
+  [[ -n "${spec}" ]] || return 1
+  if hm_have_cmd ufw; then
+    # numer reguły
+    if [[ "${spec}" =~ ^[0-9]+$ ]]; then
+      printf 'y\n' | ufw delete "${spec}" >/dev/null 2>&1 && return 0
+      ufw --force delete "${spec}" >/dev/null 2>&1 && return 0
+      return 1
+    fi
+    # from:IP
+    if [[ "${spec}" == from:* ]]; then
+      local ip="${spec#from:}"
+      ufw delete allow from "${ip}" >/dev/null 2>&1 || true
+      ufw delete deny from "${ip}" >/dev/null 2>&1 || true
+      return 0
+    fi
+    # port/proto
+    local port proto="tcp"
+    if [[ "${spec}" == */* ]]; then
+      port="${spec%%/*}"
+      proto="${spec##*/}"
+    else
+      port="${spec}"
+    fi
+    ufw delete allow "${port}/${proto}" >/dev/null 2>&1 || true
+    ufw delete deny "${port}/${proto}" >/dev/null 2>&1 || true
+    return 0
+  fi
+  return 1
+}
+
+_hm_os_do_firewall_whitelist() {
+  local ip="${1:-}"
+  [[ -n "${ip}" ]] || return 1
+  if hm_have_cmd ufw; then
+    # allow from IP (wszystkie porty) — prepend przed DENY
+    if ufw prepend allow from "${ip}" >/dev/null 2>&1; then
+      return 0
+    fi
+    ufw allow from "${ip}" >/dev/null 2>&1 && return 0
+    return 1
+  fi
+  if [[ "${ip}" == *:* ]] && hm_have_cmd ip6tables; then
+    ip6tables -I INPUT -s "${ip}" -j ACCEPT && return 0
+  fi
+  if [[ "${ip}" != *:* ]] && hm_have_cmd iptables; then
+    iptables -I INPUT -s "${ip}" -j ACCEPT && return 0
+  fi
+  return 1
+}

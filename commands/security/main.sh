@@ -6,12 +6,15 @@ _hm_cmd_help security <<'EOF'
 Użycie:
   security status          Firewall + Fail2Ban + skrót portów
   security ports           Publiczne 0.0.0.0/[::] + alerty (3306/6379/7080/3xxx)
-  security ssh             sshd_config, authorized_keys, lastb
+  security ssh             Audyt sshd_config, authorized_keys, lastb
+  security ssh set port <N> | password-auth no|yes | root-login <val>
+  security ssh confirm     Potwierdź zmianę SSH (anuluje auto-rollback 120 s)
   security fail2ban        Status jaili i zbanowanych IP
   security ban|unban <IP>  Blokada / odbanowanie
   security scan [domena]   Skan docroot (php w uploads, 777, .sql/.env/.git)
 
-W health: skrócone ostrzeżenia o wrażliwych portach publicznych.
+Zmiana portu SSH: otwarcie w firewall → sshd -t → restart → 120 s na confirm, inaczej rollback.
+password-auth no tylko gdy root (lub bieżący user) ma niepusty authorized_keys.
 EOF
 
 hm_is_valid_ip() {
@@ -108,7 +111,7 @@ cmd_security() {
       cmd_security_ports
       ;;
     ssh)
-      cmd_security_ssh
+      cmd_security_ssh "$@"
       ;;
     fail2ban|f2b|banlist)
       cmd_security_fail2ban "$@"
@@ -336,7 +339,257 @@ cmd_security_ban() {
   return 0
 }
 
+hm_security_sshd_get() {
+  local key="$1" conf="${2:-/etc/ssh/sshd_config}"
+  awk -v k="$(printf '%s' "${key}" | tr '[:upper:]' '[:lower:]')" '
+    tolower($1)==k { v=$2 }
+    END { print v }
+  ' "${conf}" 2>/dev/null
+}
+
+hm_security_sshd_set_directive() {
+  # ustaw dyrektywę w conf (cat > zachowuje mode); $1=Key $2=value $3=conf
+  local key="$1" val="$2" conf="${3:-/etc/ssh/sshd_config}"
+  local tmp
+  tmp="$(hm_mktemp .sshd)"
+  awk -v k="${key}" -v v="${val}" '
+    BEGIN { kl=tolower(k); done=0 }
+    {
+      if ($0 ~ /^[[:space:]]*#/) { print; next }
+      if (tolower($1)==kl) {
+        if (!done) { print k " " v; done=1 }
+        next
+      }
+      print
+    }
+    END { if (!done) print k " " v }
+  ' "${conf}" > "${tmp}"
+  cat "${tmp}" > "${conf}"
+  rm -f "${tmp}"
+}
+
+hm_security_has_authorized_keys() {
+  local u="${1:-root}" home ak n
+  if [[ "${u}" == "root" ]]; then
+    home="/root"
+  else
+    home="$(getent passwd "${u}" 2>/dev/null | cut -d: -f6)"
+  fi
+  ak="${home}/.ssh/authorized_keys"
+  [[ -f "${ak}" ]] || return 1
+  n="$(grep -cE '^(ssh-|ecdsa-|sk-)' "${ak}" 2>/dev/null || echo 0)"
+  [[ "${n}" =~ ^[0-9]+$ && "${n}" -gt 0 ]]
+}
+
+hm_security_sshd_restart() {
+  if hm_have_cmd systemctl; then
+    systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null \
+      || systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null \
+      || return 1
+    return 0
+  fi
+  service ssh reload 2>/dev/null || service sshd reload 2>/dev/null || return 1
+}
+
+hm_security_ssh_rollback_state() {
+  printf '%s' "${TMP_DIR:-/tmp}/hmtools-ssh-pending"
+}
+
+cmd_security_ssh_confirm() {
+  local st
+  st="$(hm_security_ssh_rollback_state)"
+  if [[ ! -f "${st}.bak" ]]; then
+    hm_info "Brak oczekującej zmiany SSH do potwierdzenia."
+    return 0
+  fi
+  touch "${st}.confirmed"
+  hm_ok "Potwierdzono zmianę SSH — auto-rollback anulowany."
+  # posprzątaj po chwili (timer i tak wyjdzie)
+  return 0
+}
+
+hm_security_ssh_schedule_rollback() {
+  local bak="$1" conf="$2" old_port="$3" new_port="$4" opened_fw="${5:-0}"
+  local st
+  st="$(hm_security_ssh_rollback_state)"
+  cp -a "${bak}" "${st}.bak" 2>/dev/null || cp "${bak}" "${st}.bak"
+  rm -f "${st}.confirmed"
+  printf '%s\n' "${conf}" "${old_port}" "${new_port}" "${opened_fw}" > "${st}.meta"
+
+  (
+    sleep 120
+    if [[ -f "${st}.confirmed" ]]; then
+      rm -f "${st}.bak" "${st}.meta" "${st}.confirmed" 2>/dev/null || true
+      exit 0
+    fi
+    if [[ -f "${st}.bak" && -f "${conf}" ]]; then
+      echo "hmtools: brak potwierdzenia SSH w 120s — rollback…" >&2
+      cat "${st}.bak" > "${conf}"
+      # zamknij nowy port jeśli otworzyliśmy
+      if [[ "${opened_fw}" == "1" && -n "${new_port}" && "${new_port}" != "${old_port}" ]]; then
+        hm_os_firewall_remove "${new_port}/tcp" 2>/dev/null || true
+      fi
+      if command -v sshd >/dev/null 2>&1; then
+        sshd -t 2>/dev/null || true
+      fi
+      systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null \
+        || systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || true
+    fi
+    rm -f "${st}.bak" "${st}.meta" "${st}.confirmed" 2>/dev/null || true
+  ) >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+  hm_warn "Masz 120 s na: security ssh confirm — inaczej automatyczny rollback."
+}
+
+cmd_security_ssh_set() {
+  local what="${1:-}" val="${2:-}"
+  shift 2 || true
+  local conf="/etc/ssh/sshd_config"
+  [[ -f "${conf}" ]] || { hm_err "Brak ${conf}"; return 1; }
+
+  case "${what}" in
+    port)
+      [[ "${val}" =~ ^[0-9]+$ ]] && ((10#${val} >= 1 && 10#${val} <= 65535)) || {
+        hm_err "Użycie: security ssh set port <1-65535>"; return 1
+      }
+      local old_port
+      old_port="$(hm_security_sshd_get Port "${conf}")"; old_port="${old_port:-22}"
+      if [[ "${old_port}" == "${val}" ]]; then
+        hm_ok "Port SSH już wynosi ${val}."
+        return 0
+      fi
+      if ! hm_confirm_plan "security ssh set port ${val}" \
+        "Bez security ssh confirm w 120 s wróci stary port ${old_port}." \
+        "Otwarcie ${val}/tcp w firewall (hm_os_firewall_allow)" \
+        "Backup ${conf}.hmtools.bak + Port ${val}" \
+        "sshd -t + restart/reload sshd" \
+        "Test listen ${val} (ss -ltn)" \
+        "Timer rollback 120 s (security ssh confirm)"; then
+        return 0
+      fi
+      # 1) otwórz nowy port ZANIM zmienisz sshd
+      local opened=0
+      if hm_os_firewall_allow "${val}" "tcp" "" "hmtools-ssh-port"; then
+        opened=1
+        hm_ok "Firewall ALLOW ${val}/tcp"
+      else
+        hm_warn "Nie otwarto portu ${val} w firewall — kontynuuję (możesz być odcięty)."
+      fi
+      local bak="${conf}.hmtools.bak"
+      cp -a "${conf}" "${bak}" || { hm_err "Backup nieudany"; return 1; }
+      hm_security_sshd_set_directive "Port" "${val}" "${conf}"
+      if ! sshd -t 2>/dev/null; then
+        hm_err "sshd -t nieudany — rollback pliku."
+        cat "${bak}" > "${conf}"
+        [[ "${opened}" -eq 1 ]] && hm_os_firewall_remove "${val}/tcp" 2>/dev/null || true
+        return 1
+      fi
+      if ! hm_security_sshd_restart; then
+        hm_err "Restart sshd nieudany — rollback."
+        cat "${bak}" > "${conf}"
+        hm_security_sshd_restart || true
+        [[ "${opened}" -eq 1 ]] && hm_os_firewall_remove "${val}/tcp" 2>/dev/null || true
+        return 1
+      fi
+      sleep 0.5
+      if ! ss -ltn 2>/dev/null | grep -qE ":${val}\\s"; then
+        hm_warn "Brak listen :${val} w ss — sprawdź ręcznie; rollback timer i tak aktywny."
+      else
+        hm_ok "sshd nasłuchuje na :${val}"
+      fi
+      hm_security_ssh_schedule_rollback "${bak}" "${conf}" "${old_port}" "${val}" "${opened}"
+      hm_ok "Port SSH ustawiony na ${val}. Potwierdź: security ssh confirm"
+      ;;
+    password-auth|PasswordAuthentication)
+      case "${val}" in
+        no|No|NO|yes|Yes|YES) ;;
+        *) hm_err "Użycie: security ssh set password-auth no|yes"; return 1 ;;
+      esac
+      local norm
+      norm="$(printf '%s' "${val}" | tr '[:upper:]' '[:lower:]')"
+      if [[ "${norm}" == "no" ]]; then
+        if ! hm_security_has_authorized_keys root \
+          && ! hm_security_has_authorized_keys "$(id -un 2>/dev/null || echo root)"; then
+          hm_err "password-auth no zabronione: brak niepustego authorized_keys (root/bieżący user)."
+          return 1
+        fi
+      fi
+      if ! hm_confirm_plan "security ssh set password-auth ${norm}" \
+        "" \
+        "Backup ${conf}" \
+        "PasswordAuthentication ${norm}" \
+        "sshd -t + reload"; then
+        return 0
+      fi
+      cp -a "${conf}" "${conf}.hmtools.bak" || return 1
+      hm_security_sshd_set_directive "PasswordAuthentication" "${norm}" "${conf}"
+      if ! sshd -t 2>/dev/null; then
+        cat "${conf}.hmtools.bak" > "${conf}"
+        hm_err "sshd -t fail — rollback"
+        return 1
+      fi
+      hm_security_sshd_restart || hm_warn "reload sshd nieudany"
+      hm_ok "PasswordAuthentication=${norm}"
+      ;;
+    root-login|PermitRootLogin)
+      case "${val}" in
+        yes|no|prohibit-password|without-password|forced-commands-only) ;;
+        *)
+          hm_err "Użycie: security ssh set root-login yes|no|prohibit-password|…"
+          return 1
+          ;;
+      esac
+      if ! hm_confirm_plan "security ssh set root-login ${val}" \
+        "" \
+        "Backup ${conf}" \
+        "PermitRootLogin ${val}" \
+        "sshd -t + reload"; then
+        return 0
+      fi
+      cp -a "${conf}" "${conf}.hmtools.bak" || return 1
+      hm_security_sshd_set_directive "PermitRootLogin" "${val}" "${conf}"
+      if ! sshd -t 2>/dev/null; then
+        cat "${conf}.hmtools.bak" > "${conf}"
+        hm_err "sshd -t fail — rollback"
+        return 1
+      fi
+      hm_security_sshd_restart || hm_warn "reload sshd nieudany"
+      hm_ok "PermitRootLogin=${val}"
+      ;;
+    help|-h|--help|"")
+      echo "Użycie: security ssh set port <N> | password-auth no|yes | root-login <val>"
+      echo "        security ssh confirm"
+      ;;
+    *)
+      hm_err "Nieznane: security ssh set ${what}"
+      return 1
+      ;;
+  esac
+}
+
 cmd_security_ssh() {
+  local sub="${1:-}"
+  case "${sub}" in
+    set)
+      shift || true
+      cmd_security_ssh_set "$@"
+      return $?
+      ;;
+    confirm|ack)
+      cmd_security_ssh_confirm
+      return $?
+      ;;
+    ""|status|audit|show)
+      ;;
+    help|-h|--help)
+      echo "Użycie: security ssh | security ssh set … | security ssh confirm"
+      return 0
+      ;;
+    *)
+      # nieznane — pokaż audyt
+      ;;
+  esac
+
   local conf="/etc/ssh/sshd_config"
   echo "${C_BOLD}SSH — audyt${C_RESET}"
   if [[ ! -f "${conf}" ]]; then
@@ -344,19 +597,10 @@ cmd_security_ssh() {
     return 1
   fi
 
-  local getv
-  getv() {
-    # ostatnia niezakomentowana dyrektywa
-    awk -v k="$(echo "$1" | tr '[:upper:]' '[:lower:]')" '
-      tolower($1)==k { v=$2 }
-      END { print v }
-    ' "${conf}" 2>/dev/null
-  }
-
   local port pass rootlogin
-  port="$(getv Port)"; port="${port:-22}"
-  pass="$(getv PasswordAuthentication)"; pass="${pass:-yes}"
-  rootlogin="$(getv PermitRootLogin)"; rootlogin="${rootlogin:-yes}"
+  port="$(hm_security_sshd_get Port "${conf}")"; port="${port:-22}"
+  pass="$(hm_security_sshd_get PasswordAuthentication "${conf}")"; pass="${pass:-yes}"
+  rootlogin="$(hm_security_sshd_get PermitRootLogin "${conf}")"; rootlogin="${rootlogin:-yes}"
 
   echo "  Port                 : ${port}"
   if [[ "${pass}" =~ ^[Nn][Oo]$ ]]; then
@@ -373,6 +617,12 @@ cmd_security_ssh() {
       ;;
   esac
 
+  local st
+  st="$(hm_security_ssh_rollback_state)"
+  if [[ -f "${st}.bak" && ! -f "${st}.confirmed" ]]; then
+    hm_warn "Oczekuje potwierdzenia zmiany SSH — security ssh confirm (inaczej rollback)."
+  fi
+
   echo
   echo "${C_BOLD}authorized_keys (root)${C_RESET}"
   local ak="/root/.ssh/authorized_keys"
@@ -381,12 +631,7 @@ cmd_security_ssh() {
     n="$(grep -cE '^(ssh-|ecdsa-|sk-)' "${ak}" 2>/dev/null || echo 0)"
     echo "  Liczba kluczy: ${n}"
     awk '/^(ssh-|ecdsa-|sk-)/ {
-      comment=$NF
-      if ($0 ~ / /) {
-        # ostatnie pole to komentarz gdy nie wygląda na key material
-      }
       type=$1
-      # komentarz = wszystko po 3. polu
       c=""; for(i=3;i<=NF;i++) c=c (i>3?" ":"") $i
       if (c=="") c="(brak komentarza)"
       printf "  · %s  %s\n", type, c

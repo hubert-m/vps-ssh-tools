@@ -190,7 +190,7 @@ hm_complete_commands() {
     cmds=(
       webs sites list use enter cd delete-site archive-site
       backup disk df ols lsws ssl renew-ssl ssl-renew mysql dbs db cron crons pm2 node apps php
-      update update-php php-update chrome chromium headless supervisor docker git deploy
+      update update-php php-update chrome chromium headless supervisor docker git deploy firewall fw
       health status security sec applog selflog hmlog detect env
       update-hmtools version ver uninstall-hmtools
       help h
