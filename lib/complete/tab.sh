@@ -108,6 +108,17 @@ hm_tab_complete() {
           done
         fi
         ;;
+      limits)
+        if [[ "${prefix}" =~ limits[[:space:]]+set[[:space:]] ]]; then
+          for m in --cpu --mem --io --tasks --disk --inodes --yes; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in status check set clear show table help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
       htaccess|hta)
         for m in check enable help; do
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")

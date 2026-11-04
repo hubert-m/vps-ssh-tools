@@ -538,6 +538,7 @@ Komendy w kontekście strony:
   headers preset security [--hsts]
   cache settings [--ttl N] [--exclude PATH]
   git / deploy   Repo, klucz deploy, pull+build+reload, rollback
+  limits …       Limity CPU/RAM/IO/dysk (cgroup + quota)
   htaccess [enable]  Diagnostyka .htaccess / autoLoadHtaccess
   proxy [set-port N] Reverse proxy OLS — zdrowie portów / zmiana portu
   perms [check|fix] Uprawnienia plików pod OLS / CyberPanel

@@ -23,6 +23,38 @@ hm_dir_size_bytes() {
   fi
 }
 
+# Cache du (TTL sekundy, domyślnie 300). Plik: ${TMP_DIR}/du-cache/<hash>
+# hm_dir_size_bytes_cached <path> [ttl_sec]
+hm_dir_size_bytes_cached() {
+  local path="$1" ttl="${2:-300}"
+  local dir key cachef now mtime age sz
+  if [[ ! -e "${path}" ]]; then
+    echo 0
+    return 0
+  fi
+  dir="${TMP_DIR:-/tmp}/hmtools-du-cache"
+  mkdir -p "${dir}" 2>/dev/null || true
+  key="$(printf '%s' "$(realpath -m "${path}" 2>/dev/null || echo "${path}")" | md5sum 2>/dev/null | awk '{print $1}')"
+  [[ -n "${key}" ]] || key="$(printf '%s' "${path}" | cksum | awk '{print $1}')"
+  cachef="${dir}/${key}"
+  now="$(date +%s)"
+  if [[ -f "${cachef}" ]]; then
+    mtime="$(stat -c '%Y' "${cachef}" 2>/dev/null || echo 0)"
+    age=$((now - mtime))
+    if [[ "${age}" -ge 0 && "${age}" -lt "${ttl}" ]]; then
+      sz="$(awk 'NR==1{print $1; exit}' "${cachef}" 2>/dev/null || true)"
+      if [[ "${sz}" =~ ^[0-9]+$ ]]; then
+        printf '%s' "${sz}"
+        return 0
+      fi
+    fi
+  fi
+  sz="$(hm_dir_size_bytes "${path}")"
+  [[ "${sz}" =~ ^[0-9]+$ ]] || sz=0
+  printf '%s %s\n' "${sz}" "${path}" > "${cachef}" 2>/dev/null || true
+  printf '%s' "${sz}"
+}
+
 hm_format_size_from_path() {
   hm_human_size "$(hm_dir_size_bytes "$1")"
 }
