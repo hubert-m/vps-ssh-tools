@@ -48,9 +48,57 @@ hm_load_config() {
   chmod 0700 "${LOG_DIR}" 2>/dev/null || true
 }
 
+# Katalogi izolowane (mktemp) do usunięcia przy EXIT — nie zostawiać śmieci w /var/lib/hmtools.
+declare -a HM_SECURE_TMP_CLEANUP_DIRS=()
+HM_SECURE_TMP_ISOLATED="${HM_SECURE_TMP_ISOLATED:-}"
+HM_SECURE_TMP_TRAP_SET="${HM_SECURE_TMP_TRAP_SET:-0}"
+
+# Other-writable? (ostatnia cyfra mode: 2/3/6/7) — np. 1777 /tmp, 0777.
+hm_fs_mode_other_writable() {
+  local mode="${1:-0}" last
+  last="${mode: -1}"
+  case "${last}" in
+    2|3|6|7) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+hm_secure_tmpdir_cleanup() {
+  local d
+  for d in "${HM_SECURE_TMP_CLEANUP_DIRS[@]:-}"; do
+    [[ -n "${d}" && -d "${d}" ]] || continue
+    # tylko nasze izolowane mktemp — nigdy stały /var/lib/hmtools/tmp
+    case "${d}" in
+      /var/lib/hmtools/tmp.*|*/hmtools-safe.*)
+        rm -rf -- "${d}" 2>/dev/null || true
+        ;;
+    esac
+  done
+  HM_SECURE_TMP_CLEANUP_DIRS=()
+  HM_SECURE_TMP_ISOLATED=""
+}
+
+hm_secure_tmpdir_register_cleanup() {
+  local d="${1:-}"
+  [[ -n "${d}" ]] || return 0
+  HM_SECURE_TMP_CLEANUP_DIRS+=("${d}")
+  HM_SECURE_TMP_ISOLATED="${d}"
+  if [[ "${HM_SECURE_TMP_TRAP_SET}" != "1" ]]; then
+    HM_SECURE_TMP_TRAP_SET=1
+    # shellcheck disable=SC2064
+    trap 'hm_secure_tmpdir_cleanup' EXIT
+  fi
+}
+
 # Izolowany katalog gdy skonfigurowany TMP_DIR jest niebezpieczny.
+# Reużywa jeden katalog na proces; sprzątany przez EXIT trap.
+# Ustawia TMP_DIR (bez echo / command substitution — inaczej gubi się rejestr w rodzicu).
 hm_secure_tmpdir_fallback() {
   local euid d=""
+  if [[ -n "${HM_SECURE_TMP_ISOLATED}" && -d "${HM_SECURE_TMP_ISOLATED}" && ! -L "${HM_SECURE_TMP_ISOLATED}" ]]; then
+    TMP_DIR="${HM_SECURE_TMP_ISOLATED}"
+    return 0
+  fi
   euid="$(id -u 2>/dev/null || echo 0)"
   if [[ "${euid}" -eq 0 ]]; then
     mkdir -m 0700 -p /var/lib/hmtools 2>/dev/null || true
@@ -60,12 +108,13 @@ hm_secure_tmpdir_fallback() {
     d="$(mktemp -d "${TMPDIR:-/tmp}/hmtools-safe.XXXXXX" 2>/dev/null || mktemp -d)"
   fi
   chmod 0700 "${d}" 2>/dev/null || true
-  printf '%s\n' "${d}"
+  hm_secure_tmpdir_register_cleanup "${d}"
+  TMP_DIR="${d}"
 }
 
-# Bezpieczny TMP_DIR: nie symlink, właściciel = euid, mode 0700.
-# Stary domyślny /tmp/hmtools-backup → migracja na /var/lib/hmtools/tmp (poza world-writable).
-# Przy niespełnionych warunkach: izolowany mktemp -d (nigdy nie ufamy cudzemu katalogowi).
+# Bezpieczny TMP_DIR: nie symlink, właściciel = euid, NIE other-writable.
+# World-writable (np. 1777) → fallback BEZ chmod (nie psuć /tmp gdy TMP_DIR=/tmp).
+# Stary /tmp/hmtools-backup → /var/lib/hmtools/tmp.
 hm_ensure_secure_tmpdir() {
   local euid configured base owner mode
   euid="$(id -u 2>/dev/null || echo 0)"
@@ -86,19 +135,19 @@ hm_ensure_secure_tmpdir() {
     if declare -F hm_warn >/dev/null 2>&1; then
       hm_warn "TMP_DIR jest symlinkiem (${base}) — używam izolowanego katalogu."
     fi
-    TMP_DIR="$(hm_secure_tmpdir_fallback)"
+    hm_secure_tmpdir_fallback
     return 0
   fi
 
   if [[ ! -e "${base}" ]]; then
     if ! mkdir -m 0700 -p "${base}" 2>/dev/null; then
-      TMP_DIR="$(hm_secure_tmpdir_fallback)"
+      hm_secure_tmpdir_fallback
       return 0
     fi
   fi
 
   if [[ -L "${base}" || ! -d "${base}" ]]; then
-    TMP_DIR="$(hm_secure_tmpdir_fallback)"
+    hm_secure_tmpdir_fallback
     return 0
   fi
 
@@ -108,24 +157,32 @@ hm_ensure_secure_tmpdir() {
     if declare -F hm_warn >/dev/null 2>&1; then
       hm_warn "TMP_DIR ${base} należy do uid=${owner} (oczekiwano ${euid}) — izolowany katalog."
     fi
-    TMP_DIR="$(hm_secure_tmpdir_fallback)"
+    hm_secure_tmpdir_fallback
     return 0
   fi
 
-  chmod 0700 "${base}" 2>/dev/null || true
-  mode="$(stat -c '%a' "${base}" 2>/dev/null || echo 0)"
-  # Odrzuć world-writable (…7 / 777). 0700 idealne; 755 u właściciela euid OK (NTFS/Git Bash).
-  if [[ "${mode}" == *7 || "${mode}" == "777" || "${mode}" == "0777" ]]; then
+  # NAJPIERW other-writable (1777/0777) — NIGDY chmod na takim katalogu (psuje /tmp)
+  if hm_fs_mode_other_writable "${mode}"; then
     if declare -F hm_warn >/dev/null 2>&1; then
-      hm_warn "TMP_DIR ${base} jest world-writable (${mode}) — izolowany katalog."
+      hm_warn "TMP_DIR ${base} jest world/other-writable (${mode}) — izolowany katalog (bez chmod)."
     fi
-    TMP_DIR="$(hm_secure_tmpdir_fallback)"
+    hm_secure_tmpdir_fallback
     return 0
+  fi
+
+  # zacieśnij tylko prywatne katalogi bez sticky (np. 755 → 700); sticky 1xxx bez other-write zostaw
+  if [[ "${#mode}" -le 3 ]]; then
+    chmod 0700 "${base}" 2>/dev/null || true
+    mode="$(stat -c '%a' "${base}" 2>/dev/null || echo 0)"
+    if hm_fs_mode_other_writable "${mode}"; then
+      hm_secure_tmpdir_fallback
+      return 0
+    fi
   fi
 
   # ponowny check symlink (TOCTOU)
   if [[ -L "${base}" ]]; then
-    TMP_DIR="$(hm_secure_tmpdir_fallback)"
+    hm_secure_tmpdir_fallback
     return 0
   fi
 

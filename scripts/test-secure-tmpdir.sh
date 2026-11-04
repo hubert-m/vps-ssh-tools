@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regresja: hm_ensure_secure_tmpdir odrzuca cudzy/symlink TMP_DIR
+# Regresja: hm_ensure_secure_tmpdir — symlink / other-writable / cleanup
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export HMTOOLS_ROOT="$PWD"
@@ -30,72 +30,140 @@ assert_ne() {
 }
 
 base="$(mktemp -d "${TMPDIR:-/tmp}/hmtools-tdtest.XXXXXX")"
-trap 'rm -rf "${base}"' EXIT
+trap 'hm_secure_tmpdir_cleanup 2>/dev/null || true; rm -rf "${base}"' EXIT
 
-# --- symlink TMP_DIR → fallback ---
-evil="${base}/evil-link"
-mkdir -p "${base}/attacker"
-chmod 0777 "${base}/attacker" 2>/dev/null || true
-ln -sfn "${base}/attacker" "${evil}"
-# world-writable katalog (symulacja ataku w /tmp) — wymaga FS z POSIX mode
+# reset stanu izolacji między przypadkami
+_reset_iso() {
+  hm_secure_tmpdir_cleanup 2>/dev/null || true
+  HM_SECURE_TMP_ISOLATED=""
+  HM_SECURE_TMP_CLEANUP_DIRS=()
+  # nie resetuj TRAP_SET — jeden EXIT trap na skrypt OK
+}
+
+# --- helper other-writable ---
+hm_fs_mode_other_writable "1777" && echo "OK   helper-1777" || { echo "FAIL helper-1777"; fail=1; }
+hm_fs_mode_other_writable "0777" && echo "OK   helper-0777" || { echo "FAIL helper-0777"; fail=1; }
+hm_fs_mode_other_writable "0700" && { echo "FAIL helper-0700"; fail=1; } || echo "OK   helper-0700-no"
+hm_fs_mode_other_writable "0755" && { echo "FAIL helper-0755"; fail=1; } || echo "OK   helper-0755-no"
+
+# --- world-writable: fallback BEZ chmod oryginału ---
 ww="${base}/world"
 mkdir -p "${ww}"
 chmod 0777 "${ww}" 2>/dev/null || true
 ww_mode="$(stat -c '%a' "${ww}" 2>/dev/null || echo 0)"
-if [[ "${ww_mode}" == *7 || "${ww_mode}" == "777" || "${ww_mode}" == "0777" ]]; then
+if hm_fs_mode_other_writable "${ww_mode}"; then
+  _reset_iso
   TMP_DIR="${ww}"
   hm_ensure_secure_tmpdir
   assert_ne "world-writable-rejected" "${TMP_DIR}" "${ww}"
+  after="$(stat -c '%a' "${ww}" 2>/dev/null || echo 0)"
+  assert_eq "world-writable-no-chmod" "${after}" "${ww_mode}"
   owner="$(stat -c '%u' "${TMP_DIR}")"
   assert_eq "ww-fallback-owner" "${owner}" "$(id -u)"
-  rm -rf "${TMP_DIR}" 2>/dev/null || true
 else
-  echo "OK   world-writable-skip (chmod 0777 nieskuteczny na tym FS: ${ww_mode})"
+  echo "OK   world-writable-skip (chmod 0777 nieskuteczny: ${ww_mode})"
 fi
 
-# symlink — tylko gdy [[ -L ]] działa (Linux); na Git Bash/Windows często nie
+# --- 1777 sticky (jak /tmp): też fallback, bez chmod ---
+st="${base}/sticky"
+mkdir -p "${st}"
+chmod 1777 "${st}" 2>/dev/null || true
+st_mode="$(stat -c '%a' "${st}" 2>/dev/null || echo 0)"
+if hm_fs_mode_other_writable "${st_mode}"; then
+  _reset_iso
+  TMP_DIR="${st}"
+  hm_ensure_secure_tmpdir
+  assert_ne "sticky-1777-rejected" "${TMP_DIR}" "${st}"
+  after="$(stat -c '%a' "${st}" 2>/dev/null || echo 0)"
+  assert_eq "sticky-1777-no-chmod" "${after}" "${st_mode}"
+else
+  echo "OK   sticky-1777-skip (chmod 1777 nieskuteczny: ${st_mode})"
+fi
+
+# --- symlink ---
+evil="${base}/evil-link"
+mkdir -p "${base}/attacker"
+ln -sfn "${base}/attacker" "${evil}"
 if [[ -L "${evil}" ]]; then
+  _reset_iso
   TMP_DIR="${evil}"
   hm_ensure_secure_tmpdir
   assert_ne "symlink-rejected" "${TMP_DIR}" "${evil}"
   [[ ! -L "${TMP_DIR}" ]] && echo "OK   fallback-not-link" || { echo "FAIL fallback-still-link"; fail=1; }
-  owner="$(stat -c '%u' "${TMP_DIR}")"
-  assert_eq "symlink-fallback-owner" "${owner}" "$(id -u)"
-  rm -rf "${TMP_DIR}" 2>/dev/null || true
 else
   echo "OK   symlink-skip ([[ -L ]] nieskuteczne na tym FS)"
 fi
 
-# --- cudzy właściciel (symulacja: katalog 0777 — chmod 0700 się uda u nas;
-#     wymuszamy fail przez plik zamiast katalogu) ---
+# --- niedirectory ---
+_reset_iso
 notdir="${base}/not-a-dir"
 echo x > "${notdir}"
 TMP_DIR="${notdir}"
 hm_ensure_secure_tmpdir
 assert_ne "nondir-rejected" "${TMP_DIR}" "${notdir}"
-rm -rf "${TMP_DIR}" 2>/dev/null || true
 
-# --- legacy /tmp/hmtools-backup → nie zostaje na world-writable bez walidacji ---
+# --- reuse + cleanup izolowanego (wymaga other-writable FS albo symlink) ---
+_reset_iso
+# wymuś fallback przez symlink na katalog (gdy -L działa) albo plik-notdir już dał izolowany
+force_fb="${base}/force-fallback-link"
+mkdir -p "${base}/force-tgt"
+if ln -sfn "${base}/force-tgt" "${force_fb}" 2>/dev/null && [[ -L "${force_fb}" ]]; then
+  TMP_DIR="${force_fb}"
+  hm_ensure_secure_tmpdir
+  first="${TMP_DIR}"
+  case "${first}" in
+    /var/lib/hmtools/tmp.*|*/hmtools-safe.*)
+      TMP_DIR="${force_fb}"
+      hm_ensure_secure_tmpdir
+      assert_eq "fallback-reuse" "${TMP_DIR}" "${first}"
+      iso="${TMP_DIR}"
+      hm_secure_tmpdir_cleanup
+      if [[ -d "${iso}" ]]; then
+        echo "FAIL cleanup-left-dir ${iso}"
+        fail=1
+      else
+        echo "OK   cleanup-removes-isolated"
+      fi
+      ;;
+    *)
+      echo "OK   fallback-reuse-skip (niespodziewana ścieżka: ${first})"
+      ;;
+  esac
+else
+  # Windows / FS bez symlinków: bezpośredni fallback (bez command substitution)
+  hm_secure_tmpdir_fallback
+  first="${TMP_DIR}"
+  hm_secure_tmpdir_fallback
+  assert_eq "fallback-reuse" "${TMP_DIR}" "${first}"
+  iso="${TMP_DIR}"
+  hm_secure_tmpdir_cleanup
+  if [[ -d "${iso}" ]]; then
+    echo "FAIL cleanup-left-dir ${iso}"
+    fail=1
+  else
+    echo "OK   cleanup-removes-isolated"
+  fi
+fi
+
+# --- legacy path ---
+_reset_iso
 TMP_DIR="/tmp/hmtools-backup"
 hm_ensure_secure_tmpdir
-# albo bezpieczny /var/lib/... albo izolowany fallback — nigdy nieufny symlink
 [[ ! -L "${TMP_DIR}" ]] || { echo "FAIL legacy-still-symlink"; fail=1; }
 mode="$(stat -c '%a' "${TMP_DIR}")"
-# nie world-writable
-case "${mode}" in
-  *7|777|0777) echo "FAIL legacy-still-world-writable mode=${mode}"; fail=1 ;;
-  *) echo "OK   legacy-not-world-writable (${mode})" ;;
-esac
+if hm_fs_mode_other_writable "${mode}"; then
+  echo "FAIL legacy-still-other-writable mode=${mode}"
+  fail=1
+else
+  echo "OK   legacy-not-other-writable (${mode})"
+fi
 owner="$(stat -c '%u' "${TMP_DIR}")"
 assert_eq "legacy-owner" "${owner}" "$(id -u)"
-# nie sprzątaj /var/lib jeśli to domyślny — tylko izolowane
-case "${TMP_DIR}" in
-  */hmtools-safe.*|/var/lib/hmtools/tmp.*) rm -rf "${TMP_DIR}" 2>/dev/null || true ;;
-esac
 
-# --- hm_mktemp tworzy plik w TMP_DIR ---
+# --- hm_mktemp ---
+_reset_iso
 safe="$(mktemp -d "${base}/safe.XXXXXX")"
-chmod 0700 "${safe}"
+chmod 0700 "${safe}" 2>/dev/null || true
 TMP_DIR="${safe}"
 f="$(hm_mktemp .cron)"
 [[ -f "${f}" ]] && echo "OK   mktemp-file" || { echo "FAIL mktemp-file"; fail=1; }
@@ -103,7 +171,6 @@ case "${f}" in
   "${safe}"/*) echo "OK   mktemp-under-tmpdir" ;;
   *) echo "FAIL mktemp-outside"; fail=1 ;;
 esac
-# plik nie jest symlinkiem
 [[ ! -L "${f}" ]] && echo "OK   mktemp-not-symlink" || { echo "FAIL mktemp-is-symlink"; fail=1; }
 
 if [[ "${fail}" -ne 0 ]]; then
