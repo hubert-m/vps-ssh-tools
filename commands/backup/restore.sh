@@ -106,9 +106,59 @@ hm_backup_db_is_nonempty() {
   [[ "${n}" =~ ^[0-9]+$ && "${n}" -gt 0 ]]
 }
 
+# Czy import DB zagraża żywej innej domenie (np. bazy mastera w starym snapshocie childa).
+# Przy restore childa: DB z website_id=master blokuj, chyba że config DOCROOT childa ją wskazuje.
+hm_backup_db_belongs_to_other_domain() {
+  local dbname="$1" skip_domain="$2" other q row root doc hname horigin is_child
+  [[ -n "${dbname}" && -n "${skip_domain}" ]] || return 1
+  hm_is_valid_db_name "${dbname}" || return 1
+  [[ "${PANEL:-}" == "cyberpanel" ]] || return 1
+  q="$(hm_sql_quote "${dbname}")"
+  other="$(hm_mysql_exec cyberpanel -e "
+SELECT w.domain FROM databases_databases d
+INNER JOIN websiteFunctions_websites w ON d.website_id = w.id
+WHERE d.dbName = ${q} AND w.domain <> $(hm_sql_quote "${skip_domain}")
+LIMIT 1;
+" 2>/dev/null | tr -d '[:space:]' || true)"
+  [[ -n "${other}" ]] || return 1
+  is_child="$(hm_mysql_exec cyberpanel -e "
+SELECT 1 FROM websiteFunctions_childdomains c
+INNER JOIN websiteFunctions_websites w ON c.master_id = w.id
+WHERE c.domain = $(hm_sql_quote "${skip_domain}") AND w.domain = $(hm_sql_quote "${other}")
+LIMIT 1;
+" 2>/dev/null | tr -d '[:space:]' || true)"
+  if [[ "${is_child}" == "1" ]]; then
+    row="$(hm_resolve_site_paths "${skip_domain}" 2>/dev/null || true)"
+    if [[ -n "${row}" ]]; then
+      IFS=$'\t' read -r _ root doc _ _ _ <<<"${row}"
+      root="$(hm_tsv_unfield "${root}")"
+      doc="$(hm_tsv_unfield "${doc}")"
+      [[ -z "${doc}" || ! -d "${doc}" ]] && doc="${root}"
+      if [[ -n "${doc}" && -d "${doc}" ]]; then
+        while IFS=$'\t' read -r hname horigin; do
+          [[ "${hname}" == "${dbname}" ]] || continue
+          case "${horigin}" in
+            wp-config|.env|.env-url|configuration.php) return 1 ;; # DB childa mimo CP=master
+          esac
+        done < <(
+          {
+            hm_extract_db_from_file "${doc}/wp-config.php" wp
+            hm_extract_db_from_file "${doc}/.env" env
+            hm_extract_db_from_file "${doc}/configuration.php" joomla
+          } | awk -F'\t' 'NF && !seen[$1]++ { print $1 "\t" $2 }'
+        )
+      fi
+    fi
+    return 0 # child restore + DB mastera
+  fi
+  # Dwa niezależne website — zawsze odmowa
+  return 0
+}
+
 hm_backup_restore_dbs() {
   local remote_base="$1"
   local overwrite_db="${2:-0}"
+  local for_domain="${3:-${HM_SITE_DOMAIN:-}}"
   local json db_raw name cli sock_args=()
   json="$(hm_backup_cat_manifest "${remote_base}")"
   db_raw="$(hm_backup_json_arr "${json}" "databases")"
@@ -147,6 +197,10 @@ hm_backup_restore_dbs() {
     [[ -n "${db}" ]] || continue
     hm_is_valid_db_name "${db}" || { hm_warn "Pominięto nieprawidłową nazwę bazy: ${db}"; continue; }
     di=$((di + 1))
+    if [[ -n "${for_domain}" ]] && hm_backup_db_belongs_to_other_domain "${db}" "${for_domain}"; then
+      hm_err "ODMOWA: baza \`${db}\` należy w CyberPanel do innej żywej domeny niż ${for_domain} — nie nadpisuję (nawet z --overwrite-db)."
+      return 1
+    fi
     if hm_backup_db_is_nonempty "${db}"; then
       if [[ "${overwrite_db}" -ne 1 ]]; then
         hm_err "KOLIZJA: baza \`${db}\` już istnieje i nie jest pusta — odmowa importu (użyj --overwrite-db)."
@@ -663,12 +717,17 @@ DELETE FROM websiteFunctions_websites WHERE domain = ${dq};
   if [[ -n "${src_id}" && -n "${new_id}" && "${src_id}" != "${new_id}" && -s "${rest_sql}" ]]; then
     local mapped
     mapped="$(mktemp "${TMP_DIR:-/tmp}/hmtools-cp-map.XXXXXX.sql")"
-    sed -E \
-      -e "s/(master_id=)${src_id}/\1${new_id}/g" \
-      -e "s/(website_id=)${src_id}/\1${new_id}/g" \
-      -e "s/\(${src_id},/(${new_id},/g" \
-      "${rest_sql}" > "${mapped}" && mv -f "${mapped}" "${rest_sql}"
-    rm -f "${mapped}" 2>/dev/null || true
+    # complete-insert: (col…, website_id, …) VALUES (…, OLD, …) — nie „website_id=OLD”
+    if hm_backup_cp_sql_remap_fk_ids "${rest_sql}" "${mapped}" "${src_id}" "${new_id}"; then
+      mv -f "${mapped}" "${rest_sql}"
+    else
+      sed -E \
+        -e "s/(master_id=)${src_id}/\1${new_id}/g" \
+        -e "s/(website_id=)${src_id}/\1${new_id}/g" \
+        -e "s/\(${src_id},/(${new_id},/g" \
+        "${rest_sql}" > "${mapped}" && mv -f "${mapped}" "${rest_sql}" || true
+      rm -f "${mapped}" 2>/dev/null || true
+    fi
   fi
   if [[ -s "${rest_sql}" ]]; then
     if ! "${cli}" "${sock_args[@]}" cyberpanel < "${rest_sql}"; then
@@ -680,6 +739,74 @@ DELETE FROM websiteFunctions_websites WHERE domain = ${dq};
   rm -f "${sqlf}" "${web_sql}" "${rest_sql}"
   hm_ok "Wpis CyberPanel odtworzony${new_id:+ (id=${new_id})}."
   return 0
+}
+
+# Przepisz website_id / master_id w INSERT complete-insert (pozycja w VALUES = pozycja kolumny).
+# Portable awk (bez gawk match(..., arr)). $1=in $2=out $3=old_id $4=new_id
+hm_backup_cp_sql_remap_fk_ids() {
+  local inf="$1" outf="$2" old="$3" new="$4"
+  [[ -f "${inf}" && -n "${old}" && -n "${new}" && "${old}" =~ ^[0-9]+$ && "${new}" =~ ^[0-9]+$ ]] || return 1
+  awk -v old="${old}" -v newid="${new}" '
+    function trim(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); return s }
+    function split_csv(s, a,    n, i, q, ch, cur) {
+      n = 0; cur = ""; q = 0
+      for (i = 1; i <= length(s); i++) {
+        ch = substr(s, i, 1)
+        if (ch == "'\''") { q = 1 - q; cur = cur ch; continue }
+        if (ch == "," && q == 0) { a[++n] = trim(cur); cur = ""; continue }
+        cur = cur ch
+      }
+      a[++n] = trim(cur)
+      return n
+    }
+    /^INSERT INTO/ {
+      line = $0
+      # INSERT INTO [`]tbl[`] (cols) VALUES (vals);
+      # ") VALUES (" = 10 znaków; ") VALUES(" = 9
+      vi = index(line, ") VALUES (")
+      vlen = 10
+      if (vi == 0) { vi = index(line, ") VALUES("); vlen = 9 }
+      if (vi > 0) {
+        # znajdź "(" listy kolumn: ostatni "(" przed ") VALUES"
+        head = substr(line, 1, vi - 1)
+        oi = 0
+        for (i = 1; i <= length(head); i++) if (substr(head, i, 1) == "(") oi = i
+        if (oi > 0) {
+          colpart = substr(head, oi + 1)
+          rest = substr(line, vi + vlen)
+          # rest = vals);
+          if (substr(rest, length(rest), 1) == ";") rest = substr(rest, 1, length(rest) - 1)
+          if (substr(rest, length(rest), 1) == ")") rest = substr(rest, 1, length(rest) - 1)
+          ncol = split_csv(colpart, cols)
+          nval = split_csv(rest, vals)
+          if (ncol == nval && ncol > 0) {
+            changed = 0
+            for (i = 1; i <= ncol; i++) {
+              c = cols[i]
+              gsub(/`/, "", c)
+              c = trim(c)
+              if (c == "website_id" || c == "master_id") {
+                v = trim(vals[i])
+                if (v == old) { vals[i] = newid; changed = 1 }
+              }
+            }
+            if (changed) {
+              valstr = vals[1]
+              for (i = 2; i <= nval; i++) valstr = valstr ", " vals[i]
+              print substr(line, 1, oi - 1) "(" colpart ") VALUES (" valstr ");"
+              next
+            }
+          }
+        }
+      }
+      gsub("website_id=" old, "website_id=" newid)
+      gsub("master_id=" old, "master_id=" newid)
+      print
+      next
+    }
+    { print }
+  ' "${inf}" > "${outf}"
+  [[ -s "${outf}" ]]
 }
 
 # Wstaw mapy do listenerów. Plik maps: linie „listener<TAB>mapline”
@@ -1178,10 +1305,16 @@ _hm_backup_restore_body() {
     plan_steps+=("Pobranie i import zrzutów baz danych (${db_list:-z snapshota})")
     local _cdb
     IFS=',' read -r -a _cdb_arr <<< "${db_list}"
+    local db_foreign=0
     for _cdb in "${_cdb_arr[@]}"; do
       _cdb="${_cdb// /}"
       [[ -n "${_cdb}" ]] || continue
       hm_is_valid_db_name "${_cdb}" || continue
+      if [[ -n "${domain}" ]] && hm_backup_db_belongs_to_other_domain "${_cdb}" "${domain}"; then
+        db_foreign=1
+        plan_steps+=("ODMOWA: baza \`${_cdb}\` należy w CP do innej żywej domeny — bez importu (także z --overwrite-db)")
+        continue
+      fi
       if hm_backup_db_is_nonempty "${_cdb}"; then
         db_collision=1
         if [[ "${overwrite_db}" -eq 1 ]]; then
@@ -1191,6 +1324,13 @@ _hm_backup_restore_body() {
         fi
       fi
     done
+    if [[ "${db_foreign}" -eq 1 ]]; then
+      hm_err "ODMOWA: snapshot zawiera bazy należące w CyberPanel do innej żywej domeny — restore przerwany (ochrona danych mastera przy child)."
+      for _ps in "${plan_steps[@]}"; do
+        [[ "${_ps}" == ODMOWA:* ]] && printf '  %s\n' "${_ps}"
+      done
+      return 1
+    fi
     if [[ "${restore_db_acc}" -eq 1 ]]; then
       plan_steps+=("Odtworzenie kont MySQL z db-accounts.sql (istniejące: bez DROP/CREATE; tylko GRANT-y snapshotu; nowe: CREATE + GRANTS)")
     fi
@@ -1284,15 +1424,16 @@ _hm_backup_restore_body() {
       hm_backup_restore_crontab "${remote_base}" "${HM_SITE_USER:-}" "${domain}" || true
     fi
     if [[ "${restore_cp}" -eq 1 ]]; then
-      hm_backup_restore_cyberpanel_site "${remote_base}" "${domain}" || {
-        hm_warn "CyberPanel SQL niezaimportowany — kontynuuję (pliki/DB mogą być OK)."
-      }
+      if ! hm_backup_restore_cyberpanel_site "${remote_base}" "${domain}"; then
+        hm_err "CyberPanel SQL niezaimportowany — przerywam restore (rc≠0)."
+        return 1
+      fi
     fi
     hm_backup_restore_pm2_hint "${remote_base}" "${HM_SITE_USER:-}"
   fi
 
   if [[ "${files_only}" -eq 0 ]]; then
-    hm_backup_restore_dbs "${remote_base}" "${overwrite_db}" || return 1
+    hm_backup_restore_dbs "${remote_base}" "${overwrite_db}" "${domain}" || return 1
     if [[ "${restore_db_acc}" -eq 1 ]]; then
       hm_backup_restore_db_accounts "${remote_base}" || {
         hm_err "Odtworzenie kont MySQL nieudane — bazy są zaimportowane, nadaj GRANT ręcznie."

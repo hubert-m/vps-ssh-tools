@@ -16,6 +16,12 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [v0.1.11]
 
+- Fix: `backup restore` CyberPanel — mapowanie FK `website_id`/`master_id` dla INSERT complete-insert (pozycje w VALUES); import fail → rc≠0
+- Fix: `backup archive` child — tylko bazy z configu DOCROOT (nie bazy mastera „confirmed shared”)
+- Fix: `hm_cyberpanel_dbs_for_domain` — bez UNION child→DB mastera; heurystyki przed user-match
+- Fix: `backup restore` — odmowa importu DB innej żywej domeny (ochrona mastera; wyjątek config DOCROOT childa)
+- Test: remap FK pozycyjny w `test-regression-0411-misc.sh`
+
 ## [v0.1.10]
 
 - Fix: `disk --heavy` — `du -b` (bajty); wcześniej bloki 1K traktowane jak bajty → rozmiary ~1000× za małe

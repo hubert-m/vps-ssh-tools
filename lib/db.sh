@@ -58,19 +58,15 @@ hm_cyberpanel_dbs_for_domain() {
   hm_is_valid_domain "${domain}" || return 0
   q="$(hm_sql_quote "${domain}")"
 
-  # 1) aktualny schemat + child domains
+  # 1) aktualny schemat — TYLKO website.domain = domena
+  # NIE łącz przez childdomains→master: wszystkie DB mastera mają website_id=master,
+  # więc UNION dla childa zwracałby bazy mastera (archive childa + restore --overwrite-db = utrata danych).
   # Pusty dbUser → '-' (mysql TSV + IFS=$'\t' zlewa puste pola)
   out="$(hm_mysql_exec cyberpanel -e "
 SELECT d.dbName, IF(d.dbUser IS NULL OR d.dbUser='', '-', d.dbUser), 'localhost'
 FROM databases_databases d
 INNER JOIN websiteFunctions_websites w ON d.website_id = w.id
-WHERE w.domain = ${q}
-UNION
-SELECT d.dbName, IF(d.dbUser IS NULL OR d.dbUser='', '-', d.dbUser), 'localhost'
-FROM databases_databases d
-INNER JOIN websiteFunctions_websites w ON d.website_id = w.id
-INNER JOIN websiteFunctions_childdomains c ON c.master_id = w.id
-WHERE c.domain = ${q};
+WHERE w.domain = ${q};
 " 2>/dev/null || true)"
 
   if [[ -n "${out}" ]]; then
@@ -220,23 +216,24 @@ hm_dbs_for_site() {
       [[ -n "${host}" ]] || host="-"
       _hm_dbs_emit "${name}" "${user}" "confirmed"
     done < <(hm_cyberpanel_dbs_for_domain "${domain}")
-
-    # dopisz bazy po externalApp / unix user strony
-    if [[ -n "${site_user}" ]]; then
-      while IFS=$'\t' read -r name user host; do
-        [[ -n "${name}" ]] || continue
-        [[ -n "${user}" ]] || user="-"
-        [[ -n "${host}" ]] || host="-"
-        _hm_dbs_emit "${name}" "${user}" "user-match"
-      done < <(hm_cyberpanel_dbs_for_user "${site_user}")
-    fi
   fi
 
+  # Heurystyki PRZED user-match — child docroot (wp-config) wygrywa z szerokim skanem dbUser mastera
   local hname origin
   while IFS=$'\t' read -r hname origin; do
     [[ -n "${hname}" ]] || continue
     _hm_dbs_emit "${hname}" "" "${origin:-detected}"
   done < <(hm_heuristic_dbs_for_site "${docroot}" "${domain}" "${site_root}")
+
+  if [[ "${PANEL}" == "cyberpanel" && -n "${site_user}" ]]; then
+    local name user host
+    while IFS=$'\t' read -r name user host; do
+      [[ -n "${name}" ]] || continue
+      [[ -n "${user}" ]] || user="-"
+      [[ -n "${host}" ]] || host="-"
+      _hm_dbs_emit "${name}" "${user}" "user-match"
+    done < <(hm_cyberpanel_dbs_for_user "${site_user}")
+  fi
 }
 
 hm_print_dbs_for_site() {

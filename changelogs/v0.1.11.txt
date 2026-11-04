@@ -1,2 +1,7 @@
 # hmtools v0.1.11
 
+- Fix: `backup restore` CyberPanel — mapowanie `website_id`/`master_id` w INSERT complete-insert (pozycje VALUES, nie `website_id=`); import fail → rc≠0 (bez `hm_warn` + kontynuacja)
+- Fix: `backup archive` child — dump tylko baz z configu DOCROOT childa (nie confirmed/user-match baz mastera)
+- Fix: `hm_cyberpanel_dbs_for_domain` — bez UNION child→wszystkie DB mastera; heurystyki przed user-match
+- Fix: `backup restore` — odmowa importu baz należących w CP do innej żywej domeny (ochrona mastera przy starym snapshocie childa; wyjątek: DB z wp-config childa)
+- Test: `test-regression-0411-misc.sh` — remap FK pozycyjny

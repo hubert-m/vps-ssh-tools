@@ -68,7 +68,30 @@ grep -qE "website_id.*,.*dbName" "${sqlf}" && echo "OK   cp-strip-db-keeps-websi
   echo "FAIL cp-db-cols"
   fail=1
 }
-rm -f "${sqlf}"
+
+# --- CP FK remap complete-insert (pozycyjne VALUES, nie website_id=) ---
+# shellcheck disable=SC1091
+source commands/backup/restore.sh
+map_in="$(mktemp "${TMPDIR:-/tmp}/hmtools-cp-map-in.XXXXXX.sql")"
+map_out="$(mktemp "${TMPDIR:-/tmp}/hmtools-cp-map-out.XXXXXX.sql")"
+cat > "${map_in}" <<'EOF'
+INSERT INTO `databases_databases` (`dbName`, `dbUser`, `website_id`) VALUES ('beta_db', 'beta_u', 2);
+INSERT INTO databases_databases (dbName,dbUser,website_id) VALUES ('beta_db','beta_u',2);
+INSERT INTO `websiteFunctions_childdomains` (`domain`, `master_id`) VALUES ('c.beta.test', 2);
+EOF
+hm_backup_cp_sql_remap_fk_ids "${map_in}" "${map_out}" 2 4
+remap_ok=1
+grep -q ", 4);" "${map_out}" || remap_ok=0
+grep -q ", 2);" "${map_out}" && remap_ok=0
+# trzy linie INSERT, każda z nowym id
+[[ "$(grep -c ", 4);" "${map_out}" || true)" -eq 3 ]] || remap_ok=0
+if [[ "${remap_ok}" -eq 1 ]]; then
+  echo "OK   cp-fk-remap-positional"
+else
+  echo "FAIL cp-fk-remap-positional: $(cat "${map_out}")"
+  fail=1
+fi
+rm -f "${map_in}" "${map_out}" "${sqlf}"
 
 # --- restore-full arg parse (bez rclone) ---
 hm_load_config() { :; }
@@ -85,8 +108,7 @@ hm_backup_list_stamps() { printf '20261104-120000\n'; }
 hm_backup_dest_full() { printf 'remote/full/%s\n' "$1"; }
 hm_backup_snapshot_is_incomplete() { return 1; }
 
-# shellcheck disable=SC1091
-source commands/backup/restore.sh
+# restore.sh już sourced powyżej (cp-fk-remap)
 
 # --system jako pierwszy arg NIE może być stampem
 out="$(hm_backup_restore_full --system 2>&1)" && rc=0 || rc=$?

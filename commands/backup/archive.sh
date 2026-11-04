@@ -452,24 +452,35 @@ _hm_backup_archive_site_body() {
     fi
   done
   # Child: DB z wp-config childa bywa w CP pod masterem → HM_DEL_SKIP (współdzielona).
-  # Archive i tak dumpnuje (origin potwierdzony); delete nadal NIE dropuje.
-  for dline in "${HM_DEL_SKIP_DBS[@]:-}"; do
-    [[ -n "${dline}" ]] || continue
-    IFS='|' read -r dname dorigin dreason <<<"${dline}"
-    [[ -n "${dname}" ]] || continue
-    [[ "${seen_adb}" == *"|${dname}|"* ]] && continue
-    case "${dorigin}" in
-      confirmed|user-match|wp-config|.env|.env-url|configuration.php) ;;
-      *) continue ;;
-    esac
-    case "${dreason}" in
-      *współdziel*|*wspoldziel*)
-        archive_dbs+=("${dname}")
-        seen_adb="${seen_adb}${dname}|"
-        hm_info "Archive dump DB ${dname} (pomijana przy usuwaniu: ${dreason}) — origin=${dorigin}."
-        ;;
-    esac
-  done
+  # Dump TYLKO z configu DOCROOT childa — nie confirmed/user-match baz mastera (utrata danych przy restore --overwrite-db).
+  if [[ "${HM_DEL_CHILD_OF_SHARED:-0}" -eq 1 ]]; then
+    local child_doc="${HM_DEL_DOCROOT:-${HM_DEL_ROOT}}" hname horigin
+    if [[ -n "${child_doc}" && -d "${child_doc}" ]]; then
+      while IFS=$'\t' read -r hname horigin; do
+        [[ -n "${hname}" ]] || continue
+        [[ "${seen_adb}" == *"|${hname}|"* ]] && continue
+        case "${horigin}" in
+          wp-config|.env|.env-url|configuration.php) ;;
+          *) continue ;;
+        esac
+        hm_is_valid_db_name "${hname}" || continue
+        archive_dbs+=("${hname}")
+        seen_adb="${seen_adb}${hname}|"
+        hm_info "Archive dump DB ${hname} (child docroot, origin=${horigin}; w CP może być pod masterem — delete nadal nie dropuje)."
+      done < <(
+        {
+          hm_extract_db_from_file "${child_doc}/wp-config.php" wp
+          hm_extract_db_from_file "${child_doc}/.env" env
+          hm_extract_db_from_file "${child_doc}/configuration.php" joomla
+          local _sub
+          for _sub in app backend api server src public private; do
+            hm_extract_db_from_file "${child_doc}/${_sub}/.env" env
+            hm_extract_db_from_file "${child_doc}/${_sub}/wp-config.php" wp
+          done
+        } | awk -F'\t' 'NF && !seen[$1]++ { print $1 "\t" $2 }'
+      )
+    fi
+  fi
   # TYLKO konta exclusive (HM_DEL_DB_USERS) — współdzielonych NIE eksportujemy (DROP psułby inne serwisy)
   local _du
   for _du in "${HM_DEL_DB_USERS[@]}"; do
