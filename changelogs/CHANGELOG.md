@@ -39,6 +39,8 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `system-configs` tar — `PIPESTATUS[0]` (nie rc gzip); `access ssh keys add` — duplikat po typ+blob (nie cała linia)
 - Test: `scripts/test-regression-0411-misc.sh`
 - Fix: `printf -- '-- …'` w archive/restore db-accounts (wcześniej `printf '--` → „invalid option”, brak HM_DROP_IF_MISSING w SQL)
+- Fix: `archive`/`delete` `--force-nested` — kaskada childów (vhost/map/SSL/CP), user+cron+DB mastera exclusive; test `test-delete-child-nested.sh`
+- Fix: `hm_backup_prefer_docroot_if_shared_home` — master (`…/public_html`) pakuje pełny HOME; zawężenie do docroot tylko dla child; test `test-backup-prefer-docroot-master.sh`
 - Fix: `hm_find_site_by_arg` — brak cichego partial match; `backup restore`/`archive` używają dokładnej nazwy (`hm_find_site_by_arg_exact`)
 - Fix: `backup archive` — przed exact-match zachowuje `domain_arg` (nieudane `domain="$(…)"` zerowało arg → partial na pustym stringu = Ambiguous wszystkich stron)
 - Fix: `backup archive` db-accounts — `hm_mysql_exec_raw` (`-N -B -r`) dla SHOW CREATE USER/GRANTS (bez podwójnego `\\_` przy bazach z `_`)

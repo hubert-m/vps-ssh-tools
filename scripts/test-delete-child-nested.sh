@@ -108,10 +108,25 @@ else
   echo "OK   master-blocks-nested-children"
 fi
 
-# --- master + --force-nested: przechodzi ---
+# --- master + --force-nested: przechodzi + kaskada child ---
 if hm_site_collect_delete_inventory "alpha.test" 0 0 0 1; then
   assert_eq "master-force-root" "${HM_DEL_ROOT}" "/home/alpha.test"
   assert_eq "master-force-flag" "${HM_DEL_FORCE_NESTED}" "1"
+  assert_eq "master-force-children" "${HM_DEL_NESTED_CHILDREN[*]}" "child.alpha.test"
+  # tylko child współdzieli usera → po kaskadzie exclusive
+  assert_eq "master-force-user-exclusive" "${HM_DEL_USER_SHARED}" "0"
+  hm_site_build_delete_plan
+  has_nested=0
+  has_cron=0
+  has_user=0
+  for k in "${HM_DEL_PLAN_KEYS[@]}"; do
+    [[ "${k}" == "nested-children" ]] && has_nested=1
+    [[ "${k}" == "cron" ]] && has_cron=1
+    [[ "${k}" == "user" ]] && has_user=1
+  done
+  assert_eq "master-force-plan-nested" "${has_nested}" "1"
+  assert_eq "master-force-plan-cron" "${has_cron}" "1"
+  assert_eq "master-force-plan-user" "${has_user}" "1"
 else
   echo "FAIL master-force-nested-should-pass"
   fail=1
@@ -134,6 +149,7 @@ HM_DEL_VHOST_DIR=""
 HM_DEL_HAS_OLS_MAP=0
 HM_DEL_ROOT="/tmp/x"
 HM_DEL_SIZE=1
+HM_DEL_NESTED_CHILDREN=()
 hm_site_build_delete_plan
 has_cron=0
 for k in "${HM_DEL_PLAN_KEYS[@]}"; do

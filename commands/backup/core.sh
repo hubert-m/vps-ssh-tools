@@ -124,7 +124,8 @@ hm_backup_site_user_shared_live() {
   return 1
 }
 
-# Gdy kilka domen dzieli ten sam vhRoot/home — child pakuje tylko docroot (bez duplikatu całego home).
+# Gdy kilka domen dzieli ten sam vhRoot/home — TYLKO child pakuje docroot.
+# Master (docroot = $vhRoot/public_html|html) zawsze pełny HOME (.ssh, app/, logs/).
 hm_backup_prefer_docroot_if_shared_home() {
   local domain="$1"
   local root="$2"
@@ -140,6 +141,12 @@ hm_backup_prefer_docroot_if_shared_home() {
     doc_n="${doc_n%/}"
   fi
 
+  # Kanoniczny docroot mastera — nie zawężaj nawet przy współdzielonym vhRoot z childem
+  if [[ -n "${doc_n}" && ( "${doc_n}" == "${root_n}/public_html" || "${doc_n}" == "${root_n}/html" ) ]]; then
+    printf '%s\n' "${root_n}"
+    return 0
+  fi
+
   declare -F hm_discover_sites >/dev/null 2>&1 && hm_discover_sites >/dev/null 2>&1 || true
   for other in "${HM_SITES_LIST[@]:-}"; do
     [[ -n "${other}" && "${other}" != "${domain}" ]] || continue
@@ -148,8 +155,9 @@ hm_backup_prefer_docroot_if_shared_home() {
     o_root="$(realpath -m "${o_root}" 2>/dev/null || echo "${o_root}")"
     o_root="${o_root%/}"
     if [[ "${o_root}" == "${root_n}" ]]; then
+      # Child: docroot głębiej niż public_html (np. …/public_html/child.x)
       if [[ -n "${doc_n}" && "${doc_n}" == "${root_n}"/* && "${doc_n}" != "${root_n}" ]]; then
-        hm_info "Współdzielony home z ${other} — pakuję tylko docroot ${doc_n} (bez duplikatu całego HOME)." >&2
+        hm_info "Współdzielony home z ${other} — pakuję tylko docroot child ${doc_n} (bez duplikatu całego HOME)." >&2
         printf '%s\n' "${doc_n}"
         return 0
       fi

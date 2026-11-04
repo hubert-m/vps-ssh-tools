@@ -25,6 +25,7 @@ declare -a HM_DEL_SSL_PATHS=()
 declare -a HM_DEL_CRON_NOTES=()
 declare -a HM_DEL_NESTED_WARN=()
 declare -a HM_DEL_NESTED_BLOCK=()
+declare -a HM_DEL_NESTED_CHILDREN=()
 declare -a HM_DEL_SKIP_DBS=()
 declare -a HM_DEL_PLAN_STEPS=()
 declare -a HM_DEL_PLAN_KEYS=()
@@ -53,9 +54,20 @@ hm_del_reset_inventory() {
   HM_DEL_CRON_NOTES=()
   HM_DEL_NESTED_WARN=()
   HM_DEL_NESTED_BLOCK=()
+  HM_DEL_NESTED_CHILDREN=()
   HM_DEL_SKIP_DBS=()
   HM_DEL_PLAN_STEPS=()
   HM_DEL_PLAN_KEYS=()
+}
+
+# Czy domena jest na liście childów kasowanych z --force-nested?
+hm_del_is_nested_child() {
+  local d="${1:-}" nc
+  [[ -n "${d}" ]] || return 1
+  for nc in "${HM_DEL_NESTED_CHILDREN[@]:-}"; do
+    [[ "${nc}" == "${d}" ]] && return 0
+  done
+  return 1
 }
 
 hm_is_safe_sites_root_config() {
@@ -165,11 +177,16 @@ INNER JOIN websiteFunctions_websites w ON d.website_id = w.id
 WHERE d.dbName = ${q} AND w.domain <> $(hm_sql_quote "${skip_domain}")
 LIMIT 1;
 " 2>/dev/null || true)"
-    [[ -n "${other}" ]] && return 0
+    if [[ -n "${other}" ]]; then
+      # force-nested: DB „należąca” do childa w CP i tak jest w kaskadzie
+      hm_del_is_nested_child "${other}" && return 1
+      return 0
+    fi
   fi
   local d row root doc user name _u _s origin
   for d in "${HM_SITES_LIST[@]}"; do
     [[ "${d}" == "${skip_domain}" ]] && continue
+    hm_del_is_nested_child "${d}" && continue
     row="$(hm_resolve_site_paths "${d}" 2>/dev/null || true)"
     [[ -n "${row}" ]] || continue
     IFS=$'\t' read -r _ root doc _ _ _ rest <<<"${row}"
@@ -369,8 +386,10 @@ hm_site_collect_delete_inventory() {
     # Usunięcie HM_DEL_ROOT skasowałoby cudzy root/docroot
     if [[ -n "${oroot}" && "${oroot}" != "${HM_DEL_ROOT}" && "${oroot}" == "${HM_DEL_ROOT}"/* ]]; then
       HM_DEL_NESTED_BLOCK+=("ścieżka ${other} (${oroot}) leży wewnątrz ${HM_DEL_ROOT} — zostałaby skasowana")
+      HM_DEL_NESTED_CHILDREN+=("${other}")
     elif [[ -n "${odoc}" && "${odoc}" != "${HM_DEL_ROOT}" && "${odoc}" == "${HM_DEL_ROOT}"/* ]]; then
       HM_DEL_NESTED_BLOCK+=("docroot ${other} (${odoc}) leży wewnątrz ${HM_DEL_ROOT} — zostałby skasowany (zarchiwizuj child najpierw)")
+      HM_DEL_NESTED_CHILDREN+=("${other}")
     elif [[ -n "${oroot}" && "${HM_DEL_ROOT}" == "${oroot}"/* ]]; then
       HM_DEL_NESTED_WARN+=("katalog ${HM_DEL_ROOT} leży wewnątrz ${other} (${oroot})")
     fi
@@ -382,6 +401,7 @@ hm_site_collect_delete_inventory() {
     for nb in "${HM_DEL_NESTED_BLOCK[@]}"; do
       hm_err "  • ${nb}"
     done
+    HM_DEL_NESTED_CHILDREN=()
     return 1
   fi
   if [[ "${#HM_DEL_NESTED_BLOCK[@]}" -gt 0 && "${HM_DEL_FORCE_NESTED}" -eq 1 ]]; then
@@ -389,6 +409,27 @@ hm_site_collect_delete_inventory() {
     for nb in "${HM_DEL_NESTED_BLOCK[@]}"; do
       HM_DEL_NESTED_WARN+=("FORCE-NESTED: ${nb}")
     done
+    # User „współdzielony” tylko z childami w kaskadzie → traktuj jako exclusive (cron/userdel OK)
+    if [[ -n "${HM_DEL_USER}" && "${#HM_DEL_NESTED_CHILDREN[@]}" -gt 0 ]]; then
+      HM_DEL_USER_SHARED=0
+      for other in "${HM_SITES_LIST[@]}"; do
+        [[ -n "${other}" && "${other}" != "${domain}" ]] || continue
+        hm_del_is_nested_child "${other}" && continue
+        row="$(hm_resolve_site_paths "${other}" 2>/dev/null || true)"
+        [[ -n "${row}" ]] || continue
+        IFS=$'\t' read -r _ _ _ _ _ _ orest <<<"${row}"
+        ou="$(hm_tsv_unfield "${orest%%|*}")"
+        if [[ -n "${ou}" && "${ou}" == "${HM_DEL_USER}" ]]; then
+          HM_DEL_USER_SHARED=1
+          break
+        fi
+      done
+      if [[ "${HM_DEL_USER_SHARED}" -eq 0 ]]; then
+        hm_info "FORCE-NESTED: user ${HM_DEL_USER} exclusive po kaskadzie childów — cron/userdel w planie."
+      fi
+    fi
+  else
+    HM_DEL_NESTED_CHILDREN=()
   fi
 
   if [[ -d "${HM_DEL_ROOT}" ]]; then
@@ -402,30 +443,66 @@ hm_site_collect_delete_inventory() {
     HM_DEL_USER=""
   fi
 
-  # DB
-  local name dbuser size origin
+  # DB (master + ewentualnie childy przy force-nested)
+  local name dbuser size origin skip reason
   local -a will_drop_dbs=()
-  while IFS=$'\t' read -r name dbuser size origin; do
-    [[ -n "${name}" ]] || continue
-    local shared=0 skip=0 reason=""
-    if hm_del_db_owned_by_other "${name}" "${domain}"; then
-      shared=1
-      skip=1
-      reason="współdzielona z inną domeną"
-    fi
-    case "${origin}" in
-      prefix-match)
-        skip=1
-        reason="${reason:+${reason}; }tylko prefix-match"
-        ;;
-    esac
-    if [[ "${skip}" -eq 1 ]]; then
-      HM_DEL_SKIP_DBS+=("${name}|${origin}|${reason}")
+  local seen_db="|"
+  local -a _db_scan_domains=("${domain}")
+  local nc nrow ncroot ncdoc ncrest ncuser sp
+  if [[ "${HM_DEL_FORCE_NESTED}" -eq 1 ]]; then
+    for nc in "${HM_DEL_NESTED_CHILDREN[@]:-}"; do
+      [[ -n "${nc}" ]] && _db_scan_domains+=("${nc}")
+    done
+  fi
+  for nc in "${_db_scan_domains[@]}"; do
+    [[ -n "${nc}" ]] || continue
+    if [[ "${nc}" == "${domain}" ]]; then
+      ncroot="${root}"
+      ncdoc="${docroot}"
+      ncuser="${user}"
     else
-      HM_DEL_DBS+=("${name}|${dbuser}|${size}|${origin}")
-      will_drop_dbs+=("${name}")
+      nrow="$(hm_resolve_site_paths "${nc}" 2>/dev/null || true)"
+      [[ -n "${nrow}" ]] || continue
+      IFS=$'\t' read -r _ ncroot ncdoc _ _ _ ncrest <<<"${nrow}"
+      ncroot="$(hm_tsv_unfield "${ncroot}")"
+      ncdoc="$(hm_tsv_unfield "${ncdoc}")"
+      ncuser="$(hm_tsv_unfield "${ncrest%%|*}")"
+      if [[ "${HM_DEL_KEEP_SSL}" -eq 0 ]]; then
+        for sp in \
+          "/etc/letsencrypt/live/${nc}" \
+          "/etc/letsencrypt/archive/${nc}" \
+          "/etc/letsencrypt/renewal/${nc}.conf" \
+          "/root/.acme.sh/${nc}" \
+          "/root/.acme.sh/${nc}_ecc"
+        do
+          [[ -e "${sp}" ]] && HM_DEL_SSL_PATHS+=("${sp}")
+        done
+      fi
     fi
-  done < <(hm_dbs_for_site "${domain}" "${docroot}" "${root}" "${user}" 2>/dev/null || true)
+    while IFS=$'\t' read -r name dbuser size origin; do
+      [[ -n "${name}" ]] || continue
+      [[ "${seen_db}" == *"|${name}|"* ]] && continue
+      skip=0
+      reason=""
+      if hm_del_db_owned_by_other "${name}" "${domain}"; then
+        skip=1
+        reason="współdzielona z inną domeną"
+      fi
+      case "${origin}" in
+        prefix-match)
+          skip=1
+          reason="${reason:+${reason}; }tylko prefix-match"
+          ;;
+      esac
+      if [[ "${skip}" -eq 1 ]]; then
+        HM_DEL_SKIP_DBS+=("${name}|${origin}|${reason}")
+      else
+        HM_DEL_DBS+=("${name}|${dbuser}|${size}|${origin}")
+        will_drop_dbs+=("${name}")
+        seen_db="${seen_db}${name}|"
+      fi
+    done < <(hm_dbs_for_site "${nc}" "${ncdoc}" "${ncroot}" "${ncuser}" 2>/dev/null || true)
+  done
 
   # DB users exclusive to these DBs
   local u seen_u="|"
@@ -557,6 +634,13 @@ hm_site_build_delete_plan() {
     HM_DEL_PLAN_KEYS+=("db")
   fi
 
+  if [[ "${#HM_DEL_NESTED_CHILDREN[@]}" -gt 0 ]]; then
+    local ch_list
+    ch_list="$(IFS=', '; echo "${HM_DEL_NESTED_CHILDREN[*]}")"
+    HM_DEL_PLAN_STEPS+=("FORCE-NESTED: usunięcie child domen (${ch_list}): vhost OLS + map + SSL + wpisy CP childdomains (bez osobnego usera — współdzielony z masterem)")
+    HM_DEL_PLAN_KEYS+=("nested-children")
+  fi
+
   if [[ "${HM_DEL_HAS_CP}" -eq 1 ]]; then
     HM_DEL_PLAN_STEPS+=("Usunięcie wpisu domeny ${domain} z bazy CyberPanel (websiteFunctions_websites / childdomains / databases_databases)")
     HM_DEL_PLAN_KEYS+=("cyberpanel")
@@ -587,12 +671,15 @@ hm_site_build_delete_plan() {
 hm_site_print_delete_inventory() {
   local domain="${HM_DEL_DOMAIN}"
   echo "${C_BOLD}Inwentaryzacja — ${domain}${C_RESET}"
-  echo "  Katalog   : ${HM_DEL_ROOT} ($(hm_human_size "${HM_DEL_SIZE}"))$([[ "${HM_DEL_CHILD_OF_SHARED}" -eq 1 ]] && echo ' [CHILD→docroot]' || true)"
+  echo "  Katalog   : ${HM_DEL_ROOT} ($(hm_human_size "${HM_DEL_SIZE}"))$([[ "${HM_DEL_CHILD_OF_SHARED}" -eq 1 ]] && echo ' [CHILD→docroot]' || true)$([[ "${HM_DEL_FORCE_NESTED}" -eq 1 ]] && echo ' [FORCE-NESTED]' || true)"
   echo "  Docroot   : ${HM_DEL_DOCROOT:--}"
   echo "  User Unix : ${HM_DEL_USER:--}$([[ "${HM_DEL_USER_SHARED}" -eq 1 ]] && echo ' [WSPÓŁDZIELONY]' || true)$([[ "${HM_DEL_USER_PROTECTED}" -eq 1 ]] && echo ' [CHRONIONY]' || true)"
   echo "  Vhost OLS : ${HM_DEL_VHOST_DIR:--}"
   echo "  CyberPanel: $([[ "${HM_DEL_HAS_CP}" -eq 1 ]] && echo tak || echo nie)"
   echo "  PM2       : ${#HM_DEL_PM2[@]} proces(ów)"
+  if [[ "${#HM_DEL_NESTED_CHILDREN[@]}" -gt 0 ]]; then
+    echo "  Nested    : ${#HM_DEL_NESTED_CHILDREN[@]} child(ów) w kaskadzie: $(IFS=', '; echo "${HM_DEL_NESTED_CHILDREN[*]}")"
+  fi
   if [[ "${HM_DEL_KEEP_DB}" -eq 1 ]]; then
     echo "  Bazy      : ${#HM_DEL_DBS[@]} wykrytych (zachowane: --keep-db), ${#HM_DEL_SKIP_DBS[@]} pominiętych"
   else
@@ -752,11 +839,38 @@ hm_site_execute_delete() {
             || hm_warn "DROP USER ${duser} nieudany"
         done
         ;;
+      nested-children)
+        hm_progress_bar "${i}" "${total}" "FORCE-NESTED childy…"
+        local child cvh cdq
+        for child in "${HM_DEL_NESTED_CHILDREN[@]}"; do
+          [[ -n "${child}" ]] || continue
+          hm_info "Kaskada child: ${child}"
+          if declare -F hm_ols_remove_domain_from_conf >/dev/null 2>&1; then
+            hm_ols_remove_domain_from_conf "${child}" || true
+          fi
+          if [[ -n "${OLS_VHOSTS:-}" && -d "${OLS_VHOSTS}/${child}" ]]; then
+            rm -rf -- "${OLS_VHOSTS}/${child}"
+            hm_ok "Usunięto vhost child ${OLS_VHOSTS}/${child}"
+          fi
+          cdq="$(hm_sql_quote "${child}")"
+          if [[ "${PANEL:-}" == "cyberpanel" ]]; then
+            hm_mysql_exec cyberpanel -e "
+DELETE FROM websiteFunctions_childdomains WHERE domain = ${cdq};
+DELETE FROM websiteFunctions_websites WHERE domain = ${cdq};
+" 2>/dev/null || true
+          fi
+        done
+        hm_ok "Child domeny (OLS/CP) wyczyszczone."
+        ;;
       cyberpanel)
         hm_progress_bar "${i}" "${total}" "CyberPanel DB…"
         local dq
         dq="$(hm_sql_quote "${domain}")"
+        # childdomains pod masterem (FK) + ewentualne wiersze child jako website
         hm_mysql_exec cyberpanel -e "
+DELETE c FROM websiteFunctions_childdomains c
+  INNER JOIN websiteFunctions_websites w ON c.master_id = w.id
+  WHERE w.domain = ${dq};
 DELETE FROM websiteFunctions_childdomains WHERE domain = ${dq};
 DELETE FROM websiteFunctions_websites WHERE domain = ${dq};
 " 2>/dev/null || true
