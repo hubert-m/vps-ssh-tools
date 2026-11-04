@@ -14,7 +14,9 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ---
 
-## [Unreleased] / [v0.1.10]
+## [Unreleased] / [v0.1.11]
+
+## [v0.1.10]
 
 - Fix: `disk --heavy` — `du -b` (bajty); wcześniej bloki 1K traktowane jak bajty → rozmiary ~1000× za małe
 - Fix: `disk` / `disk --heavy` — `hm_status_clear` przed wypisaniem wyników (status nie dokleja się do pierwszej linii)
