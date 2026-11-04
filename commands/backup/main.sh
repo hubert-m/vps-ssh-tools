@@ -175,7 +175,27 @@ EOF
           return 1
         fi
       fi
-      hm_backup_full
+      local _bk_rc=0
+      hm_backup_full || _bk_rc=$?
+      if declare -F hm_notify >/dev/null 2>&1; then
+        local _logf="${LOG_DIR:-/hm-tools/logs}/backup-cron.log"
+        local _tail=""
+        [[ -f "${_logf}" ]] && _tail="$(tail -n 40 "${_logf}" 2>/dev/null || true)"
+        if [[ "${_bk_rc}" -ne 0 ]]; then
+          hm_notify error "Backup full nieudany" \
+            "host=$(hostname -f 2>/dev/null || hostname)
+rc=${_bk_rc}
+Ostatnie linie logu (${_logf}):
+${_tail:-"(brak logu cron)"}" \
+            "backup.full"
+        elif [[ "${BACKUP_NOTIFY_SUCCESS:-0}" == "1" ]]; then
+          hm_notify ok "Backup full OK" \
+            "host=$(hostname -f 2>/dev/null || hostname)
+Pełny backup zakończony pomyślnie." \
+            "backup.full"
+        fi
+      fi
+      return "${_bk_rc}"
       ;;
     site)
       local domain="${1:-${HM_SITE_DOMAIN}}"

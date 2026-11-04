@@ -66,6 +66,18 @@ BACKUP_ORPHAN_GRACE_HOURS=24
 # Godzina codziennego backup full (0–23); prune godzinę później gdy =1
 BACKUP_SCHEDULE_HOUR=3
 BACKUP_SCHEDULE_PRUNE=1
+# Po udanym backup full też wyślij powiadomienie (domyślnie tylko błędy)
+# BACKUP_NOTIFY_SUCCESS=0
+
+# --- Powiadomienia (notify / health watch / backup) ---
+# E-mail przez sendmail/msmtp (Postfix CyberPanel) i/lub webhook JSON (Slack/Discord/ntfy)
+# NOTIFY_EMAIL="admin@example.com"
+# NOTIFY_WEBHOOK_URL="https://hooks.example.com/…"   # nigdy nie logowany w applog
+# NOTIFY_FROM="hmtools@hostname"
+# NOTIFY_DEDUP_HOURS=24
+# NOTIFY_STATE_DIR="/var/lib/hmtools/notify"
+# HEALTH_WATCH_DISK=90
+# HEALTH_WATCH_SSL_DAYS=14
 
 # --- Logi pracy hmtools ---
 # 1 = włączone, 0 = wyłączone

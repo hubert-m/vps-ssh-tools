@@ -34,6 +34,8 @@ source "${HMTOOLS_ROOT}/lib/db.sh"
 source "${HMTOOLS_ROOT}/lib/ols.sh"
 # shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/rclone_drive.sh"
+# shellcheck source=../lib/notify.sh
+source "${HMTOOLS_ROOT}/lib/notify.sh"
 # Moduły narzędzi (backup/sites/php/… + plugin dispatch)
 # shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/commands/_load.sh"

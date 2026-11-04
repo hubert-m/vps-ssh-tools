@@ -36,6 +36,8 @@
 | `php` | LSPHP: lista vs repo + nowsze gałęzie do instalacji (`--refresh` / `--phpnet`), `set`/`ext`/`ini`/`restart`/`ps` |
 | `update-php <ver>` | Aktualizacja / instalacja LSPHP (np. `8.4`, `8.6`) z potwierdzeniem |
 | `health` [`--ram`] [`--cpu`] [`--count N`] | Przegląd; `--ram`/`--cpu` — top procesów z SITE/SERVICE/cwd (domyślnie 15) |
+| `health --check` / `health watch` | Alert dysk/SSL/usługi (+ `--notify`); cron co 15 min |
+| `notify …` | Powiadomienia e-mail/webhook (`setup`/`test`/`status`); dedup 24h |
 | `limits …` | Zużycie/limity per strona (cgroup CPU/RAM/IO, quota dysku); `check`/`set`/`clear` |
 | `firewall …` | Porty/reguły (ufw/firewalld/CSF): `allow`/`deny`/`remove`/`whitelist` |
 | `security …` | Audyt: `ports`, `ssh` (+ `set`/`confirm`), Fail2Ban `ban`/`unban`, `scan` |

@@ -76,7 +76,22 @@ hm_tab_complete() {
         done
         ;;
       health|status)
-        for m in --ram --cpu --count help; do
+        if [[ "${prefix}" =~ health[[:space:]]+watch[[:space:]] ]]; then
+          for m in install status disable help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ health[[:space:]]+--check[[:space:]] ]]; then
+          for m in --disk --ssl-days --services --notify --json; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in --ram --cpu --count --check watch help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
+      notify)
+        for m in status test setup help; do
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
         done
         ;;

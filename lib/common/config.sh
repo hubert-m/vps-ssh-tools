@@ -28,6 +28,15 @@ hm_load_config() {
   LOG_LEVEL="${LOG_LEVEL:-INFO}"
   LOG_CAPTURE_OUTPUT="${LOG_CAPTURE_OUTPUT:-1}"
   LOG_RUN_MAX_LINES="${LOG_RUN_MAX_LINES:-400}"
+  # Powiadomienia (lib/notify.sh) — e-mail i/lub webhook; URL nie trafia do applog
+  NOTIFY_EMAIL="${NOTIFY_EMAIL:-}"
+  NOTIFY_WEBHOOK_URL="${NOTIFY_WEBHOOK_URL:-}"
+  NOTIFY_FROM="${NOTIFY_FROM:-}"
+  NOTIFY_DEDUP_HOURS="${NOTIFY_DEDUP_HOURS:-24}"
+  NOTIFY_STATE_DIR="${NOTIFY_STATE_DIR:-/var/lib/hmtools/notify}"
+  BACKUP_NOTIFY_SUCCESS="${BACKUP_NOTIFY_SUCCESS:-0}"
+  HEALTH_WATCH_DISK="${HEALTH_WATCH_DISK:-90}"
+  HEALTH_WATCH_SSL_DAYS="${HEALTH_WATCH_SSL_DAYS:-14}"
 
   if [[ -f "${HMTOOLS_CONF}" ]]; then
     # shellcheck disable=SC1090

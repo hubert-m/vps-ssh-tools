@@ -16,6 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [v0.1.11]
 
+- Feat: `notify` + `health watch` — e-mail/webhook (dedup/recovery), alert nieudanego backupu, progi dysk/SSL
 - Feat: `limits` — cgroup (CPU/RAM/IO/tasks) + quota dysku/inodów per strona; du-cache; `check`/`set`/`clear`
 - Feat: `firewall` + `security ssh set` — reguły ufw/firewalld/CSF, ochrona SSH/sesji, zmiana portu z auto-rollback 120 s
 - Feat: `git`/`deploy` — attach repo, klucz deploy, pull+build (whitelist)+reload, rollback; dirty bez `--force` blokuje

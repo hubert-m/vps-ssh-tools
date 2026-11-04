@@ -8,8 +8,11 @@ Użycie:
   health --ram [--count N]       Top procesów wg RAM (RSS) + site/service/cwd
   health --cpu [--count N]       Top procesów wg CPU + site/service/cwd
   health --ram --cpu             Obie sekcje
+  health --check [--disk 90] [--ssl-days 14] [--services] [--notify] [--json]
+  health watch install|status|disable   Cron co 15 min (hmtools-watch)
 
 Domyślnie --count 15. Mapowanie: /home/<domena>, cgroup *.service, cwd z /proc.
+--check: rc≠0 gdy alert; z --notify woła hm_notify (dedup + recovery OK).
 EOF
 
 # Skróć cmdline do czytelnej linii (bez NUL).
@@ -300,13 +303,232 @@ hm_health_overview() {
   hm_info "Szczegóły procesów: health --ram  |  health --cpu  (opcjonalnie --count N)"
 }
 
+hm_health_failed_services() {
+  # wypisz nazwy failed units (jedna na linię)
+  if ! hm_have_cmd systemctl; then
+    return 0
+  fi
+  systemctl --failed --no-legend --plain 2>/dev/null \
+    | awk 'NF{print $1}' || true
+}
+
+# health --check: zbiera alerty; stdout tekst lub JSON; rc=1 gdy coś nie tak.
+# hm_health_check [--disk N] [--ssl-days N] [--services] [--notify] [--json]
+hm_health_check() {
+  hm_load_config 2>/dev/null || true
+  local disk_thr="${HEALTH_WATCH_DISK:-90}"
+  local ssl_days="${HEALTH_WATCH_SSL_DAYS:-14}"
+  local do_svc=1 do_notify=0 do_json=0
+  while [[ $# -gt 0 ]]; do
+    case "${1}" in
+      --disk) disk_thr="${2:-90}"; shift 2 || true ;;
+      --disk=*) disk_thr="${1#*=}"; shift ;;
+      --ssl-days) ssl_days="${2:-14}"; shift 2 || true ;;
+      --ssl-days=*) ssl_days="${1#*=}"; shift ;;
+      --services) do_svc=1; shift ;;
+      --no-services) do_svc=0; shift ;;
+      --notify) do_notify=1; shift ;;
+      --json) do_json=1; shift ;;
+      *) shift ;;
+    esac
+  done
+  [[ "${disk_thr}" =~ ^[0-9]+$ ]] || disk_thr=90
+  [[ "${ssl_days}" =~ ^[0-9]+$ ]] || ssl_days=14
+
+  hm_detect_all 2>/dev/null || true
+  hm_discover_sites 2>/dev/null || true
+
+  local -a alerts=()
+  local used
+  used="$(hm_disk_used_percent / 2>/dev/null || echo 0)"
+  used="${used%%%}"
+  if [[ "${used}" =~ ^[0-9]+$ ]] && [[ "${used}" -ge "${disk_thr}" ]]; then
+    alerts+=("disk:used=${used}%>=${disk_thr}%")
+  fi
+
+  local domain cert status days
+  for domain in "${HM_SITES_LIST[@]:-}"; do
+    [[ -n "${domain}" ]] || continue
+    cert="$(hm_ssl_paths_for_domain "${domain}" 2>/dev/null || true)"
+    [[ -n "${cert}" && -f "${cert}" ]] || continue
+    status="$(hm_ssl_status "${cert}" "${ssl_days}" 2>/dev/null || echo unknown)"
+    case "${status}" in
+      expired|soon)
+        days="$(hm_ssl_days_left "${cert}" 2>/dev/null || echo '?')"
+        alerts+=("ssl:${domain}:${status}:days=${days}")
+        ;;
+    esac
+  done
+
+  if [[ "${do_svc}" -eq 1 ]]; then
+    local u
+    while IFS= read -r u; do
+      [[ -n "${u}" ]] || continue
+      alerts+=("service:failed:${u}")
+    done < <(hm_health_failed_services)
+  fi
+
+  local rc=0
+  if [[ "${#alerts[@]}" -gt 0 ]]; then
+    rc=1
+  fi
+
+  if [[ "${do_json}" -eq 1 ]]; then
+    local aj="[]"
+    if [[ "${#alerts[@]}" -gt 0 ]]; then
+      aj="$(printf '%s\n' "${alerts[@]}" | awk 'BEGIN{printf "["} {printf sep "\"%s\"", $0; sep=","} END{printf "]"}')"
+    fi
+    printf '{"ok":%s,"alerts":%s,"disk_used":%s}\n' \
+      "$([[ "${rc}" -eq 0 ]] && echo true || echo false)" \
+      "${aj}" \
+      "${used:-0}"
+  else
+    if [[ "${rc}" -eq 0 ]]; then
+      hm_ok "health check: OK (disk ${used}%, ssl≥${ssl_days}d, services)"
+    else
+      hm_err "health check: ${#alerts[@]} alert(ów)"
+      local a
+      for a in "${alerts[@]}"; do
+        echo "  - ${a}"
+      done
+    fi
+  fi
+
+  if [[ "${do_notify}" -eq 1 ]] && declare -F hm_notify >/dev/null 2>&1; then
+    if [[ "${rc}" -ne 0 ]]; then
+      local body
+      body="$(printf '%s\n' "${alerts[@]}")"
+      # osobne typy dla dysku / ssl / services — dedup per typ
+      local has_disk=0 has_ssl=0 has_svc=0
+      for a in "${alerts[@]}"; do
+        case "${a}" in
+          disk:*) has_disk=1 ;;
+          ssl:*) has_ssl=1 ;;
+          service:*) has_svc=1 ;;
+        esac
+      done
+      [[ "${has_disk}" -eq 1 ]] && hm_notify error "Dysk ≥${disk_thr}%" "host=$(hostname)\n${body}" "health.disk"
+      [[ "${has_ssl}" -eq 1 ]] && hm_notify error "SSL wygasa <${ssl_days}d" "host=$(hostname)\n${body}" "health.ssl"
+      [[ "${has_svc}" -eq 1 ]] && hm_notify error "Usługi failed" "host=$(hostname)\n${body}" "health.services"
+    else
+      hm_notify ok "Health OK" "host=$(hostname)\ndisk=${used}%" "health.disk"
+      hm_notify ok "SSL OK" "host=$(hostname)" "health.ssl"
+      hm_notify ok "Services OK" "host=$(hostname)" "health.services"
+    fi
+  fi
+  return "${rc}"
+}
+
+hm_health_watch_cron_path() {
+  printf '%s' /etc/cron.d/hmtools-watch
+}
+
+hm_health_watch_install() {
+  hm_load_config
+  local disk_thr="${HEALTH_WATCH_DISK:-90}" ssl_days="${HEALTH_WATCH_SSL_DAYS:-14}" do_svc=1
+  while [[ $# -gt 0 ]]; do
+    case "${1}" in
+      --disk) disk_thr="${2:-90}"; shift 2 || true ;;
+      --disk=*) disk_thr="${1#*=}"; shift ;;
+      --ssl-days) ssl_days="${2:-14}"; shift 2 || true ;;
+      --ssl-days=*) ssl_days="${1#*=}"; shift ;;
+      --services) do_svc=1; shift ;;
+      --no-services) do_svc=0; shift ;;
+      *) shift ;;
+    esac
+  done
+  local f bin logf svc_flag=""
+  f="$(hm_health_watch_cron_path)"
+  bin="$(command -v hmtools 2>/dev/null || echo "${HMTOOLS_ROOT}/bin/hmtools")"
+  logf="${LOG_DIR:-/hm-tools/logs}/health-watch.log"
+  mkdir -p "$(dirname "${logf}")" 2>/dev/null || true
+  [[ "${do_svc}" -eq 1 ]] && svc_flag=" --services"
+
+  if [[ ! -w "$(dirname "${f}")" ]] && [[ "$(id -u)" -ne 0 ]]; then
+    hm_err "Potrzebujesz root, aby zapisać ${f}"
+    return 1
+  fi
+  if ! hm_confirm_plan "health watch install" \
+    "Cron co 15 min: health --check --notify." \
+    "Zapis ${f}" \
+    "Progi: disk>=${disk_thr}% ssl<${ssl_days}d services=$([[ ${do_svc} -eq 1 ]] && echo on || echo off)" \
+    "Log: ${logf}"; then
+    return 0
+  fi
+  cat > "${f}" <<EOF
+# hmtools — health watch (zarządzane przez: health watch)
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO=""
+
+*/15 * * * * root ${bin} -c "health --check --disk ${disk_thr} --ssl-days ${ssl_days}${svc_flag} --notify" >> ${logf} 2>&1
+EOF
+  chmod 644 "${f}"
+  hm_ok "Włączono health watch → ${f}"
+}
+
+hm_health_watch_disable() {
+  local f
+  f="$(hm_health_watch_cron_path)"
+  [[ -f "${f}" ]] || { hm_info "health watch już wyłączony."; return 0; }
+  if ! hm_confirm_plan "health watch disable" "" "Usunięcie ${f}"; then
+    return 0
+  fi
+  rm -f "${f}"
+  hm_ok "Wyłączono health watch."
+}
+
+hm_health_watch_status() {
+  local f
+  f="$(hm_health_watch_cron_path)"
+  echo "${C_BOLD}health watch${C_RESET}"
+  if [[ -f "${f}" ]]; then
+    echo "  Status: włączony (${f})"
+    sed 's/^/  /' "${f}"
+  else
+    echo "  Status: wyłączony"
+  fi
+  echo "  HEALTH_WATCH_DISK=${HEALTH_WATCH_DISK:-90}"
+  echo "  HEALTH_WATCH_SSL_DAYS=${HEALTH_WATCH_SSL_DAYS:-14}"
+}
+
 cmd_health() {
-  local do_ram=0 do_cpu=0
+  local do_ram=0 do_cpu=0 do_check=0
   local count="" arg
+  local -a check_args=()
+
+  # health watch …
+  if [[ "${1:-}" == "watch" ]]; then
+    shift || true
+    case "${1:-status}" in
+      install|enable) shift || true; hm_health_watch_install "$@" ;;
+      disable|off) hm_health_watch_disable ;;
+      status|"") hm_health_watch_status ;;
+      help|-h|--help) echo "Użycie: health watch install|status|disable [--disk N] [--ssl-days N]" ;;
+      *) hm_err "Nieznane: health watch ${1}"; return 1 ;;
+    esac
+    return $?
+  fi
 
   while [[ $# -gt 0 ]]; do
     arg="${1}"
     case "${arg}" in
+      --check|check)
+        do_check=1
+        shift
+        ;;
+      --disk|--ssl-days|--services|--no-services|--notify|--json)
+        check_args+=("${arg}")
+        if [[ "${arg}" == --disk || "${arg}" == --ssl-days ]]; then
+          shift
+          check_args+=("${1:-}")
+        fi
+        shift
+        ;;
+      --disk=*|--ssl-days=*)
+        check_args+=("${arg}")
+        shift
+        ;;
       --ram|-r)
         do_ram=1
         shift
@@ -342,6 +564,11 @@ cmd_health() {
         ;;
     esac
   done
+
+  if [[ "${do_check}" -eq 1 ]]; then
+    hm_health_check "${check_args[@]}"
+    return $?
+  fi
 
   if [[ -n "${count}" ]] && [[ "${do_ram}" -eq 0 && "${do_cpu}" -eq 0 ]]; then
     hm_err "--count wymaga --ram i/lub --cpu."
