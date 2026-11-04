@@ -222,14 +222,30 @@ hm_tab_complete() {
         fi
         ;;
       ssl)
-        local re_ssl_renew='ssl[[:space:]]+(renew|renewal|issue)[[:space:]]'
-        if [[ "${prefix}" =~ $re_ssl_renew ]]; then
+        local re_ssl_dns='ssl[[:space:]]+issue[[:space:]].*--dns[[:space:]]+$'
+        local re_ssl_dom='ssl[[:space:]]+(renew|renewal|issue|mail|self-signed|selfsigned|diagnose|diag)[[:space:]]'
+        if [[ "${prefix}" =~ $re_ssl_dns ]]; then
+          for m in pdns cloudflare; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ ssl[[:space:]]+issue[[:space:]] ]]; then
+          if [[ "${partial}" == --* ]]; then
+            for m in --with-www --aliases --wildcard --dns; do
+              [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+            done
+          else
+            hm_ensure_sites_cached
+            while IFS= read -r m; do
+              [[ -n "${m}" ]] && matches+=("${m}")
+            done < <(hm_complete_filter_sites "${partial}")
+          fi
+        elif [[ "${prefix}" =~ $re_ssl_dom ]]; then
           hm_ensure_sites_cached
           while IFS= read -r m; do
             [[ -n "${m}" ]] && matches+=("${m}")
           done < <(hm_complete_filter_sites "${partial}")
         else
-          for m in renew renewal issue help; do
+          for m in issue renew renewal hostname mail self-signed diagnose help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi

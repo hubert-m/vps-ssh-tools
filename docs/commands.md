@@ -24,6 +24,8 @@
 | `disk` [`--drive`] [`--inodes`] [`--home`] [`--heavy` [`--count N`] [`--deep N`]] | `df` / inody / top `/home`; `--heavy` — rekurencyjnie najcięższe pliki/katalogi od `/` (domyślnie count=3, deep=5) |
 | `ols …` | OLS: `status`/`reload`/`restart`/`log`, `stats`/`top`, `htaccess`, `cache`, `proxy`, `admin` |
 | `ssl` | Certyfikaty SSL (status / dni; wygasły na czerwono) |
+| `ssl issue [domena]` | Wydaj LE (HTTP-01) z pre-check DNS/HTTP; `--with-www` / `--aliases`; `--wildcard --dns pdns\|cloudflare` |
+| `ssl hostname` / `ssl mail` / `ssl self-signed` / `ssl diagnose` | Hostname panelu, poczta, awaryjny self-signed, diagnoza ACME |
 | `renew-ssl [domena]` | Odnów Let's Encrypt (z potwierdzeniem) |
 | `mysql` / `dbs` | Lista baz; `heavy [--min-size X]` (bazy/tabele ≥ X, domyślnie 1G); `dump`/`dump-local`/`import`/`cli`/`top`/`optimize`/`create` |
 | `cron` / `crons` | Crony systemowe / users / strony; `cron edit` |
@@ -46,6 +48,7 @@
 | `size` | Rozmiary katalogów + top `du` |
 | `dbs` | Bazy (CyberPanel confirmed + heurystyka); też `dbs cli` itd. |
 | `ssl` | Certyfikat; wygasły → czerwony alert |
+| `ssl issue` / `diagnose` | Wydanie LE / diagnostyka ACME |
 | `renew-ssl` | Odnów Let's Encrypt dla strony |
 | `php` | `set` / `ext` / `ini` / `restart` / `ps` — `php help` |
 | `logs [N\|errors\|stats\|follow]` | Logi vhosta + OLS `stderr.log`; analityka / live |

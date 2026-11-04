@@ -2,33 +2,67 @@
 # Komendy: ssl / renew-ssl
 
 
+_HM_SSL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=issue.sh
+source "${_HM_SSL_DIR}/issue.sh"
+
 _hm_cmd_help ssl <<'EOF'
 Użycie:
-  ssl                 Lista certyfikatów (status / dni do wygaśnięcia)
-  ssl renew [domena]  Alias: renew-ssl
-  renew-ssl [domena]  Odnów Let's Encrypt (potwierdzenie [t/N])
+  ssl                              Lista certyfikatów (status / dni do wygaśnięcia)
+  ssl issue [domena] [--with-www] [--aliases]
+                                   Wydaj LE (HTTP-01) z pre-check DNS + .well-known
+  ssl issue [domena] --wildcard --dns pdns|cloudflare
+                                   Wildcard DNS-01 (PowerDNS / Cloudflare)
+  ssl hostname [fqdn]              Certyfikat hostname panelu (hostNameSSL)
+  ssl mail [domena]                Postfix/Dovecot (mailServerSSL)
+  ssl self-signed [domena]         Awaryjny certyfikat self-signed
+  ssl diagnose [domena]            Ostatni błąd ACME → czytelna przyczyna
+  ssl renew [domena]               Alias: renew-ssl
+  renew-ssl [domena]               Odnów Let's Encrypt (potwierdzenie)
 
-W kontekście strony: ssl = szczegóły certu; renew-ssl = odnowienie.
-Wygasły cert → wyraźny komunikat na czerwono + podpowiedź renew-ssl.
+W kontekście strony: ssl = szczegóły certu; argument domeny opcjonalny.
+Wygasły cert → wyraźny komunikat na czerwono + podpowiedź renew-ssl / ssl issue.
 
-Kolejność odnawiania: cyberpanel issueSSL → acme.sh → certbot.
+Kolejność wydawania: pre-check → cyberpanel CLI → acme.sh → (renew: certbot).
 EOF
 
 _hm_cmd_help renew-ssl <<'EOF'
 Użycie:
-  ssl                 Lista certyfikatów (status / dni do wygaśnięcia)
-  ssl renew [domena]  Alias: renew-ssl
-  renew-ssl [domena]  Odnów Let's Encrypt (potwierdzenie [t/N])
+  renew-ssl [domena]     Odnów Let's Encrypt (potwierdzenie)
+  ssl renew [domena]     Alias
 
-W kontekście strony: ssl = szczegóły certu; renew-ssl = odnowienie.
-Wygasły cert → wyraźny komunikat na czerwono + podpowiedź renew-ssl.
-
-Kolejność odnawiania: cyberpanel issueSSL → acme.sh → certbot.
+Dla nowej domeny bez certu preferuj: ssl issue
+Kolejność: cyberpanel issueSSL → acme.sh → certbot.
 EOF
 
 cmd_ssl() {
   case "${1:-}" in
-    renew|renewal|issue)
+    issue)
+      shift || true
+      cmd_ssl_issue "$@"
+      return
+      ;;
+    hostname|host)
+      shift || true
+      cmd_ssl_hostname "$@"
+      return
+      ;;
+    mail|mailserver)
+      shift || true
+      cmd_ssl_mail "$@"
+      return
+      ;;
+    self-signed|selfsigned|self)
+      shift || true
+      cmd_ssl_self_signed "$@"
+      return
+      ;;
+    diagnose|diag|doctor)
+      shift || true
+      cmd_ssl_diagnose "$@"
+      return
+      ;;
+    renew|renewal)
       shift || true
       cmd_renew_ssl "$@"
       return
@@ -38,6 +72,12 @@ cmd_ssl() {
       return
       ;;
   esac
+
+  # W kontekście strony bez podkomendy → szczegóły certu
+  if [[ -n "${HM_SITE_DOMAIN:-}" && -z "${1:-}" ]]; then
+    hm_print_site_ssl "${HM_SITE_DOMAIN}"
+    return 0
+  fi
 
   hm_discover_sites
   if [[ "${#HM_SITES_LIST[@]}" -eq 0 ]]; then
@@ -85,7 +125,7 @@ cmd_ssl() {
   hm_progress_done
   printf '%s\n' "${rows[@]}"
   echo
-  echo "  ${C_DIM}Odnawianie: renew-ssl [domena]   |   ssl renew [domena]${C_RESET}"
+  echo "  ${C_DIM}Wydanie: ssl issue [domena]   |   Odnawianie: renew-ssl [domena]   |   Diagnoza: ssl diagnose${C_RESET}"
 }
 
 cmd_renew_ssl() {
@@ -132,6 +172,7 @@ cmd_renew_ssl() {
     esac
   else
     hm_warn "  Brak lokalnego certyfikatu — spróbuję wystawić nowy (issueSSL / acme)."
+    hm_info "  Dla nowej domeny rozważ: ssl issue ${domain} (z pre-check DNS/HTTP)."
   fi
   echo
 
@@ -140,16 +181,16 @@ cmd_renew_ssl() {
     "Odnowienie/wystawienie certyfikatu Let's Encrypt dla ${domain} (cyberpanel issueSSL → acme.sh → certbot)" \
     "Zapisanie plików certyfikatu w /etc/letsencrypt/live/${domain}/" \
     "Przeładowanie OpenLiteSpeed (ols reload)"; then
-    return 0
+    return 1
   fi
 
-  local ok=0
+  local ok=0 rc
   # 1) CyberPanel CLI
   if hm_have_cmd cyberpanel; then
     hm_info "CyberPanel: issueSSL --domainName ${domain}"
     set +e
     hm_run cyberpanel issueSSL --domainName "${domain}"
-    local rc=$?
+    rc=$?
     set -e
     if [[ "${rc}" -eq 0 ]]; then
       ok=1
@@ -162,13 +203,9 @@ cmd_renew_ssl() {
   # 2) acme.sh --renew / --issue
   if [[ "${ok}" -eq 0 ]]; then
     local acme=""
-    for acme in /root/.acme.sh/acme.sh "$(command -v acme.sh 2>/dev/null || true)"; do
-      [[ -n "${acme}" && -x "${acme}" ]] && break
-      acme=""
-    done
+    acme="$(hm_ssl_find_acme 2>/dev/null || true)"
     if [[ -n "${acme}" ]]; then
       hm_info "acme.sh renew/issue dla ${domain}…"
-      # upewnij się LE production
       "${acme}" --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
       set +e
       if "${acme}" --list 2>/dev/null | grep -Fq -- "${domain}"; then
@@ -176,18 +213,7 @@ cmd_renew_ssl() {
         rc=$?
       else
         local webroot=""
-        if [[ -n "${HM_SITE_DOCROOT:-}" && -d "${HM_SITE_DOCROOT}" && "${HM_SITE_DOMAIN:-}" == "${domain}" ]]; then
-          webroot="${HM_SITE_DOCROOT}"
-        elif [[ -d "/home/${domain}/public_html" ]]; then
-          webroot="/home/${domain}/public_html"
-        else
-          # poza use — docRoot z OLS / CyberPanel (nie tylko /home/.../public_html)
-          local _row _docroot
-          _row="$(hm_resolve_site_paths "${domain}")"
-          IFS=$'\t' read -r _ _ _docroot _ <<<"${_row}"
-          _docroot="$(hm_tsv_unfield "${_docroot}")"
-          [[ -n "${_docroot}" && -d "${_docroot}" ]] && webroot="${_docroot}"
-        fi
+        webroot="$(hm_ssl_docroot_for_domain "${domain}" 2>/dev/null || true)"
         mkdir -p "/etc/letsencrypt/live/${domain}" 2>/dev/null || true
         if [[ -n "${webroot}" ]]; then
           hm_run "${acme}" --issue -d "${domain}" -d "www.${domain}" -w "${webroot}" --force \
@@ -195,7 +221,6 @@ cmd_renew_ssl() {
             --key-file "/etc/letsencrypt/live/${domain}/privkey.pem" \
             --fullchain-file "/etc/letsencrypt/live/${domain}/fullchain.pem"
           rc=$?
-          # www może nie istnieć — retry bez www
           if [[ "${rc}" -ne 0 ]]; then
             hm_run "${acme}" --issue -d "${domain}" -w "${webroot}" --force \
               --cert-file "/etc/letsencrypt/live/${domain}/cert.pem" \
@@ -235,7 +260,7 @@ cmd_renew_ssl() {
 
   if [[ "${ok}" -eq 0 ]]; then
     hm_err "Nie udało się odnowić SSL dla ${domain}."
-    hm_info "Sprawdź DNS (A), port 80, oraz logi CyberPanel / acme.sh."
+    hm_info "Sprawdź: ssl diagnose ${domain}"
     return 1
   fi
 

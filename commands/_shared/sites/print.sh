@@ -112,7 +112,7 @@ hm_print_site_ssl() {
   cert="$(hm_ssl_paths_for_domain "${domain}" 2>/dev/null || true)"
   if [[ -z "${cert}" ]]; then
     hm_err "BRAK CERTYFIKATU SSL dla ${domain}."
-    hm_info "Wystaw / odnów: renew-ssl ${domain}"
+    hm_info "Wystaw: ssl issue ${domain}   |   Odnów: renew-ssl ${domain}   |   Diagnoza: ssl diagnose ${domain}"
     return 0
   fi
   status="$(hm_ssl_status "${cert}")"

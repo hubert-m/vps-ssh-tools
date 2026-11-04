@@ -16,6 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [v0.1.11]
 
+- Feat: `ssl issue` / `hostname` / `mail` / `self-signed` / `diagnose` (pre-check DNS+HTTP, wildcard DNS-01, CyberPanel CLI)
 - Fix: `backup restore` / `restore-full` — `.enc` bez passphrase → stop przed zmianami (rc≠0)
 - Fix: `test-access-ssh-toctou.sh` / `test-backup-restore-ownership.sh` — SKIP przy uid=0; SC2115 w `delete.sh` (`${OLS_VHOSTS:?}`)
 - Fix: `backup restore` CyberPanel — mapowanie FK `website_id`/`master_id` dla INSERT complete-insert (pozycje w VALUES); import fail → rc≠0
