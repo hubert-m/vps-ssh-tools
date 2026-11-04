@@ -522,14 +522,22 @@ hm_backup_restore_ssl() {
 }
 
 # Crontab użytkownika strony z crontab.txt
+# domain (opcjonalnie $3 / HM_SITE_DOMAIN) — przy współdzielonym userze NIE nadpisuj crona mastera.
 hm_backup_restore_crontab() {
   local remote_base="$1"
   local user="${2:-${HM_SITE_USER:-}}"
+  local domain="${3:-${HM_SITE_DOMAIN:-}}"
   local tmp
   [[ -n "${user}" ]] && id "${user}" >/dev/null 2>&1 || {
     hm_info "Brak usera Unix — pomijam crontab."
     return 0
   }
+  if declare -F hm_backup_site_user_shared_live >/dev/null 2>&1 \
+      && [[ -n "${domain}" ]] \
+      && hm_backup_site_user_shared_live "${user}" "${domain}"; then
+    hm_warn "crontab: pomijam — ${user} współdzielony z innymi domenami (nie nadpisuję crona żywego konta)."
+    return 0
+  fi
   if ! rclone cat "${remote_base}/crontab.txt" >/dev/null 2>&1; then
     hm_info "Brak crontab.txt — pomijam."
     return 0
@@ -1027,6 +1035,22 @@ _hm_backup_restore_body() {
       fi
     fi
   fi
+  # Child archive często BEZ unix-account.meta — wykryj shared live (ten sam user na innej domenie)
+  if [[ "${skip_unix_shared}" -eq 0 ]]; then
+    local live_user="${HM_SITE_USER:-${unix_name:-}}"
+    if [[ -z "${live_user}" ]]; then
+      live_user="$(hm_backup_json_str "${man_json}" "site_user")"
+    fi
+    if [[ -n "${live_user}" ]] && hm_backup_site_user_shared_live "${live_user}" "${domain}"; then
+      skip_unix_shared=1
+      [[ -z "${HM_SITE_USER:-}" ]] && HM_SITE_USER="${live_user}"
+      if [[ -n "${man_docroot}" ]]; then
+        target_dir="${man_docroot}"
+        HM_SITE_DOCROOT="${man_docroot}"
+      fi
+      plan_steps+=("KOLIZJA Unix: \`${live_user}\` współdzielony live z innymi domenami — POMIJAM usermod/hasło/klucze/cron; pliki → ${target_dir}")
+    fi
+  fi
   if rclone cat "${remote_base}/db-accounts.sql" >/dev/null 2>&1 \
     || rclone cat "${remote_base}/db-accounts.sql.enc" >/dev/null 2>&1; then
     restore_db_acc=1
@@ -1185,7 +1209,7 @@ _hm_backup_restore_body() {
       hm_backup_restore_ssl "${remote_base}" || hm_warn "SSL restore nieudany — sprawdź certbot/acme."
     fi
     if [[ "${restore_cron}" -eq 1 ]]; then
-      hm_backup_restore_crontab "${remote_base}" "${HM_SITE_USER:-}" || true
+      hm_backup_restore_crontab "${remote_base}" "${HM_SITE_USER:-}" "${domain}" || true
     fi
     if [[ "${restore_cp}" -eq 1 ]]; then
       hm_backup_restore_cyberpanel_site "${remote_base}" "${domain}" || true

@@ -661,15 +661,20 @@ _hm_backup_archive_site_body() {
   fi
 
   # crontab + pm2 (ścieżki wyłącznie z mktemp — bez przewidywalnych nazw)
+  # shared/protected: NIE eksportuj crona mastera (restore childa nadpisywałby żywy crontab)
   if [[ -n "${HM_DEL_USER}" ]]; then
-    local cron_txt
-    cron_txt="$(hm_mktemp .cron)"
-    crontab -u "${HM_DEL_USER}" -l > "${cron_txt}" 2>/dev/null || true
-    if [[ -s "${cron_txt}" ]]; then
-      hm_rclone_copyto "${cron_txt}" "${remote_base}/crontab.txt" \
-        || cat "${cron_txt}" | hm_rclone_rcat "${remote_base}/crontab.txt" || true
+    if [[ "${HM_DEL_USER_SHARED:-0}" -eq 1 || "${HM_DEL_USER_PROTECTED:-0}" -eq 1 ]]; then
+      hm_info "Pomijam eksport crontab ${HM_DEL_USER} (współdzielony/chroniony — cron należy do żywych domen)."
+    else
+      local cron_txt
+      cron_txt="$(hm_mktemp .cron)"
+      crontab -u "${HM_DEL_USER}" -l > "${cron_txt}" 2>/dev/null || true
+      if [[ -s "${cron_txt}" ]]; then
+        hm_rclone_copyto "${cron_txt}" "${remote_base}/crontab.txt" \
+          || cat "${cron_txt}" | hm_rclone_rcat "${remote_base}/crontab.txt" || true
+      fi
+      rm -f "${cron_txt}"
     fi
-    rm -f "${cron_txt}"
   fi
 
   local pm2_json

@@ -41,6 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `backup restore` db-accounts — istniejący MySQL user → bez DROP/CREATE (zachowane hasło/obce GRANT-y); tylko GRANT-y z pliku
 - Fix: `backup restore` — niepusta baza o tej samej nazwie → KOLIZJA / odmowa; świadome nadpisanie: `--overwrite-db`
 - Fix/Sec: `backup restore` — istniejące konto Unix → odmowa (bez nadpisania hasła/kluczy/home); `--adopt-existing-user`; shared/protected → skip Unix + pliki do docroot; niepusty target → odmowa bez `--overwrite-files`
+- Fix/Sec: `backup restore` child/shared — nie nadpisuje crontab współdzielonego usera (detekcja live bez unix-account.meta); archive nie eksportuje crona shared/protected; test `test-restore-shared-cron.sh`
 - Fix: `backup archive` / `delete-site` — child/shared vhRoot → operacje na docroot (nie cały HOME mastera); cron/Unix pomijane przy shared; master z childami → odmowa / `--force-nested`; test `scripts/test-delete-child-nested.sh`
 - Fix/Sec: `TMP_DIR` — domyślnie `/var/lib/hmtools/tmp`; `hm_ensure_secure_tmpdir` odrzuca symlink/cudzy owner/other-writable (1777) **bez chmod**; izolowany mktemp + EXIT cleanup; archive temp przez `hm_mktemp`; test `scripts/test-secure-tmpdir.sh`
 - Fix: `hm_secure_tmpdir_fallback` ustawia `TMP_DIR` w miejscu (bez `$(…)` — wcześniej subshell gubił rejestr → wiele katalogów bez reuse/cleanup)

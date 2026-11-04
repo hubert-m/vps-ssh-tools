@@ -95,6 +95,32 @@ hm_rclone_remote_sha256() {
   rclone hashsum SHA256 "${remote}" 2>/dev/null | awk '{print $1}' | head -1
 }
 
+# Czy Unix user jest używany przez inną domenę niż $domain (live na VPS)?
+# Child archive nie ma unix-account.meta — restore i tak musi wykryć shared przed nadpisaniem crona/hasła.
+# Pole user = 7. kolumna TSV z hm_resolve_site_paths (awk — bash read zwija puste \t).
+hm_backup_site_user_shared_live() {
+  local user="${1:-}" domain="${2:-}"
+  local other row ou
+  [[ -n "${user}" && -n "${domain}" ]] || return 1
+  declare -F hm_discover_sites >/dev/null 2>&1 && hm_discover_sites >/dev/null 2>&1 || true
+  declare -F hm_resolve_site_paths >/dev/null 2>&1 || return 1
+  for other in "${HM_SITES_LIST[@]:-}"; do
+    [[ -n "${other}" && "${other}" != "${domain}" ]] || continue
+    row="$(hm_resolve_site_paths "${other}" 2>/dev/null || true)"
+    [[ -n "${row}" ]] || continue
+    ou="$(printf '%s\n' "${row}" | awk -F'\t' '{print $7}' | cut -d'|' -f1)"
+    if declare -F hm_tsv_unfield >/dev/null 2>&1; then
+      ou="$(hm_tsv_unfield "${ou}")"
+    elif [[ "${ou}" == "-" ]]; then
+      ou=""
+    fi
+    if [[ -n "${ou}" && "${ou}" == "${user}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 # Gdy kilka domen dzieli ten sam vhRoot/home — child pakuje tylko docroot (bez duplikatu całego home).
 hm_backup_prefer_docroot_if_shared_home() {
   local domain="$1"
