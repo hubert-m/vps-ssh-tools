@@ -153,3 +153,93 @@ _hm_pkg_do_cache_age_info() {
     fi
   fi
 }
+
+_hm_pkg_do_list_upgradable() {
+  local cli
+  cli="$(_hm_pkg_rpm_cli)"
+  # name\tinstalled\tcandidate — check-update: name.arch ver repo
+  LC_ALL=C "${cli}" -q check-update 2>/dev/null | awk '
+    NF >= 2 && $1 !~ /^Obsoleting/ && $1 !~ /^Security/ {
+      n = $1
+      sub(/\.[^.]+$/, "", n)
+      printf "%s\t-\t%s\n", n, $2
+    }' || true
+}
+
+_hm_pkg_do_list_security() {
+  local cli
+  cli="$(_hm_pkg_rpm_cli)"
+  if LC_ALL=C "${cli}" updateinfo list security 2>/dev/null | grep -q .; then
+    LC_ALL=C "${cli}" -q updateinfo list security 2>/dev/null | awk '
+      NF >= 3 {
+        # typ ID pkg
+        n = $NF
+        sub(/\.[^.]+$/, "", n)
+        printf "%s\t-\t-\n", n
+      }' || true
+    return 0
+  fi
+  # yum --security check-update
+  LC_ALL=C "${cli}" -q --security check-update 2>/dev/null | awk '
+    NF >= 2 && $1 !~ /^Obsoleting/ {
+      n = $1
+      sub(/\.[^.]+$/, "", n)
+      printf "%s\t-\t%s\n", n, $2
+    }' || true
+}
+
+_hm_pkg_do_upgrade_security() {
+  local cli
+  cli="$(_hm_pkg_rpm_cli)"
+  hm_run "${cli}" update -y --security
+}
+
+_hm_pkg_do_upgrade_all() {
+  local cli
+  cli="$(_hm_pkg_rpm_cli)"
+  local -a args=(-y) excludes=("$@") ex
+  for ex in "${excludes[@]}"; do
+    [[ -n "${ex}" ]] && args+=(--exclude="${ex}")
+  done
+  hm_run "${cli}" update "${args[@]}"
+}
+
+_hm_pkg_do_auto_security_status() {
+  if systemctl is-enabled dnf-automatic.timer >/dev/null 2>&1 \
+    || systemctl is-enabled dnf-automatic-install.timer >/dev/null 2>&1; then
+    printf 'on\n'
+    return 0
+  fi
+  if [[ -f /etc/dnf/automatic.conf ]] || hm_have_cmd dnf-automatic; then
+    printf 'off\n'
+    return 0
+  fi
+  printf 'unknown\n'
+}
+
+_hm_pkg_do_auto_security_set() {
+  local mode="${1:-}" cli
+  cli="$(_hm_pkg_rpm_cli)"
+  case "${mode}" in
+    on)
+      if ! rpm -q dnf-automatic >/dev/null 2>&1; then
+        hm_run "${cli}" install -y dnf-automatic || return 1
+      fi
+      if [[ -f /etc/dnf/automatic.conf ]]; then
+        sed -i -E 's/^[[:space:]]*apply_updates[[:space:]]*=.*/apply_updates = yes/' /etc/dnf/automatic.conf 2>/dev/null || true
+        sed -i -E 's/^[[:space:]]*upgrade_type[[:space:]]*=.*/upgrade_type = security/' /etc/dnf/automatic.conf 2>/dev/null || true
+      fi
+      systemctl enable --now dnf-automatic.timer >/dev/null 2>&1 \
+        || systemctl enable --now dnf-automatic-install.timer >/dev/null 2>&1 \
+        || true
+      ;;
+    off)
+      systemctl disable --now dnf-automatic.timer >/dev/null 2>&1 || true
+      systemctl disable --now dnf-automatic-install.timer >/dev/null 2>&1 || true
+      ;;
+    *)
+      hm_err "auto-security: oczekiwano on|off"
+      return 1
+      ;;
+  esac
+}

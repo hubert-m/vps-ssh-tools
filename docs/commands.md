@@ -17,6 +17,9 @@
 | `backup restore …` | Odtwórz pliki/DB (tar lub chunks) |
 | `backup prune` / `schedule` | Retencja snapshotów / cron `/etc/cron.d/hmtools-backup` |
 | `backup test` | Test połączenia rclone |
+| `update check` | Przegląd: pakiety / security / OLS / CyberPanel / reboot-required |
+| `update security\|packages\|ols\|cyberpanel` | Aktualizacje z potwierdzeniem; kopia przed CP; weryfikacja usług |
+| `update auto-security on\|off` | unattended-upgrades / dnf-automatic |
 | `update-hmtools [--force]` | Update z GitHuba + wypis „co nowego” |
 | `version` | Wersja lokalna/remote + changelog tej wersji |
 | `uninstall-hmtools [--yes]` | Usuwa `/hm-tools` i symlink (z potwierdzeniem) |

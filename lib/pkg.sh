@@ -130,6 +130,12 @@ _hm_pkg_do_list_available_bases() { return 0; }
 _hm_pkg_do_status_for() { printf -- '-\t-\t0\n'; }
 _hm_pkg_do_version_gt() { return 1; }
 _hm_pkg_do_cache_age_info() { printf 'nieznany'; }
+_hm_pkg_do_list_upgradable() { return 0; }
+_hm_pkg_do_list_security() { return 0; }
+_hm_pkg_do_upgrade_security() { hm_err "pkg: brak adaptera (upgrade_security)"; return 1; }
+_hm_pkg_do_upgrade_all() { hm_err "pkg: brak adaptera (upgrade_all)"; return 1; }
+_hm_pkg_do_auto_security_status() { printf 'unknown\n'; }
+_hm_pkg_do_auto_security_set() { hm_err "pkg: brak adaptera (auto_security)"; return 1; }
 
 # --- Publiczne API -----------------------------------------------------------
 
@@ -190,4 +196,39 @@ hm_pkg_label() {
     yum) printf 'yum' ;;
     *) printf 'pakiety' ;;
   esac
+}
+
+# stdout: nazwa_pakietu[TAB]zainstalowana[TAB]kandydat (jedna linia / pakiet)
+hm_pkg_list_upgradable() {
+  hm_pkg_bind || return 1
+  _hm_pkg_do_list_upgradable "$@"
+}
+
+# stdout: jak list_upgradable, tylko security
+hm_pkg_list_security() {
+  hm_pkg_bind || return 1
+  _hm_pkg_do_list_security "$@"
+}
+
+hm_pkg_upgrade_security() {
+  hm_pkg_bind || return 1
+  _hm_pkg_do_upgrade_security "$@"
+}
+
+# upgrade wszystkich (lub z --exclude wzorcami przekazanymi jako args)
+hm_pkg_upgrade_all() {
+  hm_pkg_bind || return 1
+  _hm_pkg_do_upgrade_all "$@"
+}
+
+# stdout: on|off|unknown
+hm_pkg_auto_security_status() {
+  hm_pkg_bind || { printf 'unknown\n'; return 1; }
+  _hm_pkg_do_auto_security_status "$@"
+}
+
+# $1 = on|off
+hm_pkg_auto_security_set() {
+  hm_pkg_bind || return 1
+  _hm_pkg_do_auto_security_set "$@"
 }

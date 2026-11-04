@@ -1,5 +1,6 @@
 # hmtools v0.1.11
 
+- Feat: `update check|security|packages|ols|cyberpanel|auto-security` — przegląd i bezpieczne aktualizacje stosu (pkg API security, snapshot pre-CP, verify); test `test-update-check.sh`
 - Feat: `ssl issue` (HTTP-01 + pre-check DNS/HTTP, `--with-www`/`--aliases`), `--wildcard --dns pdns|cloudflare`, `ssl hostname` / `mail` / `self-signed` / `diagnose`; test `test-ssl-issue.sh`
 - Fix: `backup restore` / `restore-full` — snapshot z `.enc` bez `BACKUP_ENCRYPT_PASSPHRASE` → twardy stop przed zmianami (rc≠0); bez mylącego „Brak unix-account.meta”
 - Fix: `test-access-ssh-toctou.sh` / `test-backup-restore-ownership.sh` — SKIP przy root (harness omija DAC); SC2115 `rm -rf` w delete force-nested (`${OLS_VHOSTS:?}`)

@@ -357,6 +357,21 @@ hm_tab_complete() {
           done
         fi
         ;;
+      update)
+        if [[ "${prefix}" =~ update[[:space:]]+auto-security[[:space:]] ]]; then
+          for m in on off; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ update[[:space:]]+(packages|security|ols|cyberpanel)[[:space:]] ]]; then
+          for m in --yes --exclude; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in check security packages ols cyberpanel auto-security help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
       update-php|php-update)
         local root="${OLS_ROOT:-/usr/local/lsws}" d base bn br oldnull
         oldnull="$(shopt -p nullglob || true)"

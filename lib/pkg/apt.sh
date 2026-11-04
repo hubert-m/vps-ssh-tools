@@ -137,3 +137,129 @@ _hm_pkg_do_cache_age_info() {
     fi
   fi
 }
+
+_hm_pkg_do_list_upgradable() {
+  # name\tinstalled\tcandidate — portable (bez gawk match arr)
+  LC_ALL=C apt list --upgradable 2>/dev/null | awk '
+    NR == 1 { next }
+    {
+      line = $0
+      # name/suite version arch [upgradable from: old]
+      n = index(line, "/")
+      if (n < 2) next
+      name = substr(line, 1, n - 1)
+      rest = substr(line, n + 1)
+      split(rest, a, " ")
+      cand = a[2]
+      inst = ""
+      if (match(line, /\[upgradable from: /)) {
+        inst = substr(line, RSTART + RLENGTH)
+        sub(/\].*/, "", inst)
+      }
+      printf "%s\t%s\t%s\n", name, inst, cand
+    }'
+}
+
+_hm_pkg_do_list_security() {
+  # pakiety z kandydatem z repo *-security* / UbuntuESM
+  local name inst cand origin
+  while IFS=$'\t' read -r name inst cand; do
+    [[ -n "${name}" ]] || continue
+    origin="$(LC_ALL=C apt-cache policy "${name}" 2>/dev/null | awk '
+      /^[[:space:]]+[0-9]+/ {
+        line=$0
+        if (line ~ /security|Security|ESM/) { print "sec"; exit }
+      }')"
+    [[ "${origin}" == "sec" ]] && printf '%s\t%s\t%s\n' "${name}" "${inst}" "${cand}"
+  done < <(_hm_pkg_do_list_upgradable)
+}
+
+_hm_pkg_do_upgrade_security() {
+  if hm_have_cmd unattended-upgrade; then
+    hm_run unattended-upgrade -v
+    return $?
+  fi
+  local -a pkgs=()
+  local name
+  while IFS=$'\t' read -r name _ _; do
+    [[ -n "${name}" ]] && pkgs+=("${name}")
+  done < <(_hm_pkg_do_list_security)
+  if [[ "${#pkgs[@]}" -eq 0 ]]; then
+    hm_ok "Brak pakietów security do aktualizacji."
+    return 0
+  fi
+  DEBIAN_FRONTEND=noninteractive hm_run apt-get install --only-upgrade -y "${pkgs[@]}"
+}
+
+_hm_pkg_do_upgrade_all() {
+  # args: wzorce exclude (glob), np. mariadb*
+  local -a excludes=("$@") hold=()
+  local name skip ex rc
+  if [[ "${#excludes[@]}" -gt 0 ]]; then
+    while IFS=$'\t' read -r name _ _; do
+      [[ -n "${name}" ]] || continue
+      skip=0
+      for ex in "${excludes[@]}"; do
+        # shellcheck disable=SC2254
+        case "${name}" in
+          ${ex}) skip=1; break ;;
+        esac
+      done
+      [[ "${skip}" -eq 1 ]] && hold+=("${name}")
+    done < <(_hm_pkg_do_list_upgradable)
+    if [[ "${#hold[@]}" -gt 0 ]]; then
+      hm_info "Tymczasowy hold (exclude): ${hold[*]}"
+      apt-mark hold "${hold[@]}" >/dev/null 2>&1 || true
+    fi
+  fi
+  DEBIAN_FRONTEND=noninteractive hm_run apt-get upgrade -y
+  rc=$?
+  if [[ "${#hold[@]}" -gt 0 ]]; then
+    apt-mark unhold "${hold[@]}" >/dev/null 2>&1 || true
+  fi
+  return "${rc}"
+}
+
+_hm_pkg_do_auto_security_status() {
+  if [[ -d /etc/apt/apt.conf.d ]] && grep -RqsE 'Unattended-Upgrade::Allowed-Origins|"\$\{distro_id\}:\$\{distro_codename\}-security"' \
+    /etc/apt/apt.conf.d/50unattended-upgrades 2>/dev/null; then
+    if systemctl is-enabled unattended-upgrades >/dev/null 2>&1 \
+      || [[ -f /etc/apt/apt.conf.d/20auto-upgrades ]]; then
+      printf 'on\n'
+      return 0
+    fi
+  fi
+  if [[ -f /etc/apt/apt.conf.d/20auto-upgrades ]] \
+    && grep -qE 'APT::Periodic::Unattended-Upgrade[[:space:]]+"1"' /etc/apt/apt.conf.d/20auto-upgrades 2>/dev/null; then
+    printf 'on\n'
+    return 0
+  fi
+  if hm_have_cmd unattended-upgrade || [[ -f /etc/apt/apt.conf.d/50unattended-upgrades ]]; then
+    printf 'off\n'
+    return 0
+  fi
+  printf 'unknown\n'
+}
+
+_hm_pkg_do_auto_security_set() {
+  local mode="${1:-}"
+  case "${mode}" in
+    on)
+      if ! hm_have_cmd unattended-upgrade && ! dpkg -l unattended-upgrades >/dev/null 2>&1; then
+        DEBIAN_FRONTEND=noninteractive hm_run apt-get install -y unattended-upgrades || return 1
+      fi
+      printf 'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\n' \
+        > /etc/apt/apt.conf.d/20auto-upgrades
+      systemctl enable --now unattended-upgrades >/dev/null 2>&1 || true
+      ;;
+    off)
+      printf 'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "0";\n' \
+        > /etc/apt/apt.conf.d/20auto-upgrades
+      systemctl disable --now unattended-upgrades >/dev/null 2>&1 || true
+      ;;
+    *)
+      hm_err "auto-security: oczekiwano on|off"
+      return 1
+      ;;
+  esac
+}

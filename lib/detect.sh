@@ -739,7 +739,7 @@ hm_detect_tool_hints() {
   local base extra=""
   case "${PANEL}" in
     cyberpanel)
-      base="webs, use, ols, php, update-php, backup, perms, ssl, mysql"
+      base="webs, use, ols, php, update-php, update, backup, perms, ssl, mysql"
       ;;
     cpanel)
       base="mysql, backup (list/restore), health — natywne webs/ols OLS ograniczone; cPanel UAPI poza zakresem hmtools"
