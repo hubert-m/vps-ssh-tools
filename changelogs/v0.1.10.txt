@@ -6,7 +6,10 @@
 - UX: rozmiary wszędzie w formacie jak `mysql` (`6.44 GB` / `1.00 KB`) — `disk`, `size`, `redis`, `pm2` (`hm_human_size` / `hm_print_du_depth`)
 - Feat: `health --ram` / `health --cpu` [`--count N`] — top procesów (RSS/%CPU) z mapowaniem domeny (`/home/…`), systemd service i cwd
 - Feat: Tab — `supervisor start|stop|restart|logs <name>` uzupełnia nazwy workerów (oraz `all`)
+- Feat: Tab — uzupełnianie nazw ze zbioru: MySQL DB, PM2, domeny (access/security/ols), Redis db/client, cron user
 - Feat: `chrome` / detect — systemd `chrome-headless`, Puppeteer `~/.cache/puppeteer/chrome`, CDP `:9222` (+ `FORCE_CHROME_CDP`)
 - Fix: `redis sites` — po skanie przywraca poprzedni kontekst REPL (`hm_clear_site_context` / `use`)
 - Fix: `exit` / `quit` w kontekście `use <domena>` — powrót do `hmtools>` (nie wyjście z REPL)
 - Fix: tymczasowy `hm_set_site_context` (redis/cron/security/backup/access/pm2/logs/ols/archive/restore) — `hm_site_context_push`/`pop` wraca do poprzedniego REPL
+- Feat: `backup archive` — eksport kont MySQL 1:1 (`db-accounts.sql`: CREATE USER + GRANTS / hash) oraz konta Unix SSH (`unix-account.meta` + `unix-authorized_keys`)
+- Feat: `backup restore` — odtwarza konto Unix (przed plikami) i konta MySQL (po imporcie baz), gdy są w snapshocie archive

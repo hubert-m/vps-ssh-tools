@@ -176,6 +176,133 @@ hm_archive_pack_ssl() {
   tar -chzf "${out_tar}" "${paths[@]}" 2>/dev/null
 }
 
+# Zrzut kont MySQL (CREATE USER + GRANTS, z hashem) — 1:1 przy restore.
+# out_sql: lokalny plik; users: nazwy kont (bez hosta).
+# Zwraca 0 gdy zapisano ≥1 konto, 1 gdy brak kont / błąd.
+hm_archive_export_mysql_accounts() {
+  local out_sql="$1"
+  shift || true
+  local -a users=("$@")
+  : > "${out_sql}"
+  chmod 600 "${out_sql}" 2>/dev/null || true
+
+  local u host n create grants line exported=0
+  local -a hosts=()
+  {
+    echo "-- hmtools archive: MySQL/MariaDB accounts (DROP + CREATE + GRANTS)"
+    echo "-- generated: $(date -Iseconds)"
+    echo "FLUSH PRIVILEGES;"
+  } >> "${out_sql}"
+
+  for u in "${users[@]}"; do
+    [[ -n "${u}" ]] || continue
+    hm_is_valid_db_name "${u}" || continue
+    case "${u}" in
+      root|mysql|mariadb.sys|debian-sys-maint|phpmyadmin|cyberpanel) continue ;;
+    esac
+    hosts=()
+    while IFS= read -r host; do
+      [[ -n "${host}" ]] && hosts+=("${host}")
+    done < <(hm_mysql_exec -e "SELECT Host FROM mysql.user WHERE User=$(hm_sql_quote "${u}");" 2>/dev/null || true)
+    [[ "${#hosts[@]}" -gt 0 ]] || continue
+
+    for host in "${hosts[@]}"; do
+      echo >> "${out_sql}"
+      echo "-- account ${u}@${host}" >> "${out_sql}"
+      printf 'DROP USER IF EXISTS %s@%s;\n' "$(hm_sql_quote "${u}")" "$(hm_sql_quote "${host}")" >> "${out_sql}"
+
+      create=""
+      create="$(hm_mysql_exec -e "SHOW CREATE USER $(hm_sql_quote "${u}")@$(hm_sql_quote "${host}");" 2>/dev/null | head -1 || true)"
+      if [[ -z "${create}" ]]; then
+        # fallback gdy brak SHOW CREATE USER — authentication_string + plugin
+        create="$(hm_mysql_exec -e "
+SELECT CONCAT(
+  'CREATE USER ', QUOTE(User), '@', QUOTE(Host),
+  ' IDENTIFIED WITH ''', IFNULL(NULLIF(plugin,''), 'mysql_native_password'), ''' AS ',
+  QUOTE(IFNULL(authentication_string, '')),
+  ';'
+)
+FROM mysql.user
+WHERE User=$(hm_sql_quote "${u}") AND Host=$(hm_sql_quote "${host}")
+LIMIT 1;" 2>/dev/null | head -1 || true)"
+      fi
+      if [[ -z "${create}" ]]; then
+        hm_warn "Brak CREATE USER dla ${u}@${host} — pomijam konto."
+        continue
+      fi
+      # SHOW CREATE USER często bez średnika
+      [[ "${create}" == *';' ]] || create="${create};"
+      printf '%s\n' "${create}" >> "${out_sql}"
+
+      grants="$(hm_mysql_exec -e "SHOW GRANTS FOR $(hm_sql_quote "${u}")@$(hm_sql_quote "${host}");" 2>/dev/null || true)"
+      while IFS= read -r line || [[ -n "${line}" ]]; do
+        [[ -n "${line}" ]] || continue
+        [[ "${line}" == *';' ]] || line="${line};"
+        printf '%s\n' "${line}" >> "${out_sql}"
+      done <<< "${grants}"
+      exported=$((exported + 1))
+    done
+  done
+
+  echo >> "${out_sql}"
+  echo "FLUSH PRIVILEGES;" >> "${out_sql}"
+  [[ "${exported}" -gt 0 ]]
+}
+
+# Snapshot konta Unix (passwd/shadow/group) + kopia authorized_keys.
+# Zwraca 0 gdy zapisano meta, 1 gdy brak użytkownika.
+hm_archive_export_unix_account() {
+  local user="$1"
+  local out_meta="$2"
+  local out_keys="$3"
+  local pw sh grp home uid gid shell gecos gname keysf
+
+  hm_is_valid_unix_user "${user}" || return 1
+  pw="$(getent passwd "${user}" 2>/dev/null || true)"
+  [[ -n "${pw}" ]] || return 1
+
+  IFS=':' read -r _ _ uid gid gecos home shell _ <<< "${pw}"
+  sh="$(getent shadow "${user}" 2>/dev/null || true)"
+  local shadow_hash=""
+  if [[ -n "${sh}" ]]; then
+    IFS=':' read -r _ shadow_hash _ <<< "${sh}"
+  fi
+  gname="$(getent group "${gid}" 2>/dev/null | cut -d: -f1 || true)"
+  [[ -n "${gname}" ]] || gname="${user}"
+
+  umask 077
+  {
+    printf 'name=%s\n' "${user}"
+    printf 'uid=%s\n' "${uid}"
+    printf 'gid=%s\n' "${gid}"
+    printf 'group=%s\n' "${gname}"
+    printf 'home=%s\n' "${home}"
+    printf 'shell=%s\n' "${shell}"
+    printf 'gecos=%s\n' "${gecos}"
+    printf 'shadow=%s\n' "${shadow_hash}"
+    printf 'shared=%s\n' "${HM_DEL_USER_SHARED:-0}"
+    printf 'protected=%s\n' "${HM_DEL_USER_PROTECTED:-0}"
+    printf 'exported_at=%s\n' "$(date -Iseconds)"
+  } > "${out_meta}"
+  chmod 600 "${out_meta}"
+
+  : > "${out_keys}"
+  chmod 600 "${out_keys}"
+  if [[ -n "${home}" && -f "${home}/.ssh/authorized_keys" && ! -L "${home}/.ssh" && ! -L "${home}/.ssh/authorized_keys" ]]; then
+    keysf="${home}/.ssh/authorized_keys"
+    # tylko linie wyglądające na klucz (bez śmieci)
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+      [[ -n "${line}" ]] || continue
+      [[ "${line}" =~ ^[[:space:]]*# ]] && { printf '%s\n' "${line}" >> "${out_keys}"; continue; }
+      if declare -F hm_access_is_valid_ssh_key_line >/dev/null 2>&1; then
+        hm_access_is_valid_ssh_key_line "${line}" || continue
+      fi
+      printf '%s\n' "${line}" >> "${out_keys}"
+    done < "${keysf}"
+  fi
+  return 0
+}
+
 # Właściwa logika archiwum — wywoływana z hm_backup_archive_site (push/pop kontekstu REPL).
 _hm_backup_archive_site_body() {
   local domain="${1:-}"
@@ -204,11 +331,27 @@ _hm_backup_archive_site_body() {
   remote_base="$(hm_backup_dest_site "${domain}" "${stamp}")"
 
   local -a archive_dbs=()
-  local dline dname
+  local -a archive_db_users=()
+  local dline dname duser seen_dbu="|"
   for dline in "${HM_DEL_DBS[@]}"; do
     [[ -n "${dline}" ]] || continue
-    IFS='|' read -r dname _ <<<"${dline}"
+    IFS='|' read -r dname duser _ <<<"${dline}"
     [[ -n "${dname}" ]] && archive_dbs+=("${dname}")
+    if [[ -n "${duser}" && "${duser}" != "-" ]] && hm_is_valid_db_name "${duser}"; then
+      if [[ "${seen_dbu}" != *"|${duser}|"* ]]; then
+        seen_dbu="${seen_dbu}${duser}|"
+        archive_db_users+=("${duser}")
+      fi
+    fi
+  done
+  local _du
+  for _du in "${HM_DEL_DB_USERS[@]}"; do
+    [[ -n "${_du}" ]] || continue
+    hm_is_valid_db_name "${_du}" || continue
+    if [[ "${seen_dbu}" != *"|${_du}|"* ]]; then
+      seen_dbu="${seen_dbu}${_du}|"
+      archive_db_users+=("${_du}")
+    fi
   done
   # dołącz też nie-shared prefix-match z skip? — tylko pewne z HM_DEL_DBS
 
@@ -216,10 +359,20 @@ _hm_backup_archive_site_body() {
   if [[ "${#archive_dbs[@]}" -gt 0 ]]; then
     db_desc="${#archive_dbs[@]} baza/baz: $(IFS=', '; echo "${archive_dbs[*]}")"
   fi
+  local dbu_desc="brak"
+  if [[ "${#archive_db_users[@]}" -gt 0 ]]; then
+    dbu_desc="$(IFS=', '; echo "${archive_db_users[*]}")"
+  fi
+  local unix_desc="brak"
+  if [[ -n "${HM_DEL_USER}" ]] && id "${HM_DEL_USER}" >/dev/null 2>&1; then
+    unix_desc="${HM_DEL_USER} (uid/gid/shadow/SSH keys)"
+  fi
 
   local -a plan_steps=(
     "[BACKUP] Utworzenie katalogu archiwum na Google Drive: ${remote_base}"
     "[BACKUP] Zrzut i wysyłka baz danych MySQL (${db_desc}) → db/*.sql.gz"
+    "[BACKUP] Eksport kont MySQL (CREATE USER + GRANTS / hash): ${dbu_desc} → db-accounts.sql"
+    "[BACKUP] Snapshot konta Unix SSH: ${unix_desc} → unix-account.meta + unix-authorized_keys"
     "[BACKUP] Spakowanie i wysyłka plików środowiska ${HM_DEL_ROOT} ($(hm_human_size "${HM_DEL_SIZE}")) → files.tar.gz / files.chunks/"
     "[BACKUP] Zapis konfiguracji vhosta OLS, certyfikatów SSL, crontaba i metadanych PM2 + manifest.json"
     "[WERYFIKACJA] Twarda kontrola integralności wszystkich plików kopii na Google Drive (rozmiar > 0 B)"
@@ -257,6 +410,56 @@ _hm_backup_archive_site_body() {
       return 1
     fi
   done
+
+  # Konta MySQL (hasła jako hash + GRANTS) — wymagane do restore 1:1
+  local has_db_accounts=0
+  local db_acc_sql="${TMP_DIR}/db-accounts-${domain}-${stamp}.sql"
+  if [[ "${#archive_db_users[@]}" -gt 0 ]]; then
+    if hm_archive_export_mysql_accounts "${db_acc_sql}" "${archive_db_users[@]}"; then
+      if hm_rclone_copyto "${db_acc_sql}" "${remote_base}/db-accounts.sql" \
+        || cat "${db_acc_sql}" | hm_rclone_rcat "${remote_base}/db-accounts.sql"; then
+        has_db_accounts=1
+        hm_ok "Wysłano db-accounts.sql (${#archive_db_users[@]} userów: ${dbu_desc})"
+      else
+        rm -f "${db_acc_sql}"
+        hm_archive_abort "Upload db-accounts.sql nieudany. Nic nie usunięto z VPS." "${remote_base}"
+        return 1
+      fi
+    else
+      hm_warn "Nie wyeksportowano kont MySQL (brak CREATE USER / konta nieistniejące) — kontynuuję."
+    fi
+  else
+    hm_info "Brak dedykowanych kont MySQL do eksportu."
+  fi
+  rm -f "${db_acc_sql}"
+
+  # Konto Unix + authorized_keys (hash z shadow)
+  local has_unix_account=0
+  local unix_meta="${TMP_DIR}/unix-account-${domain}-${stamp}.meta"
+  local unix_keys="${TMP_DIR}/unix-keys-${domain}-${stamp}.txt"
+  if [[ -n "${HM_DEL_USER}" ]] && id "${HM_DEL_USER}" >/dev/null 2>&1; then
+    if hm_archive_export_unix_account "${HM_DEL_USER}" "${unix_meta}" "${unix_keys}"; then
+      if hm_rclone_copyto "${unix_meta}" "${remote_base}/unix-account.meta" \
+        || cat "${unix_meta}" | hm_rclone_rcat "${remote_base}/unix-account.meta"; then
+        has_unix_account=1
+        hm_ok "Wysłano unix-account.meta (${HM_DEL_USER})"
+      else
+        rm -f "${unix_meta}" "${unix_keys}"
+        hm_archive_abort "Upload unix-account.meta nieudany. Nic nie usunięto z VPS." "${remote_base}"
+        return 1
+      fi
+      if [[ -s "${unix_keys}" ]]; then
+        hm_rclone_copyto "${unix_keys}" "${remote_base}/unix-authorized_keys" \
+          || cat "${unix_keys}" | hm_rclone_rcat "${remote_base}/unix-authorized_keys" \
+          || hm_warn "Nie wysłano unix-authorized_keys (kontynuuję)."
+      fi
+    else
+      hm_warn "Nie udało się zbudować snapshota konta Unix ${HM_DEL_USER}."
+    fi
+  else
+    hm_info "Brak konta Unix strony do eksportu."
+  fi
+  rm -f "${unix_meta}" "${unix_keys}"
 
   local backup_root="${HM_DEL_ROOT}"
   if [[ -z "${backup_root}" || ! -d "${backup_root}" ]]; then
@@ -361,6 +564,13 @@ _hm_backup_archive_site_body() {
   done
   db_json="${db_json%,}"
 
+  local dbu_json=""
+  for n in "${archive_db_users[@]}"; do
+    [[ -n "${n}" ]] || continue
+    dbu_json="${dbu_json}\"${n}\","
+  done
+  dbu_json="${dbu_json%,}"
+
   local manifest="${TMP_DIR}/manifest-archive-${domain}-${stamp}.json"
   cat > "${manifest}" <<EOF
 {
@@ -374,6 +584,9 @@ _hm_backup_archive_site_body() {
   "site_user": "${HM_DEL_USER}",
   "php": "${HM_SITE_PHP:-}",
   "databases": [${db_json}],
+  "db_users": [${dbu_json}],
+  "db_accounts": ${has_db_accounts},
+  "unix_account": ${has_unix_account},
   "files_mode": "${files_mode}",
   "chunks_count": ${chunks_count},
   "remote": "${remote_base}",
@@ -390,6 +603,14 @@ EOF
   # --- Weryfikacja ---
   if ! hm_backup_verify_remote_archive "${remote_base}" "${files_mode}" "${chunks_count}" "${archive_dbs[@]}"; then
     hm_archive_abort "Archiwizacja przerwana po nieudanej weryfikacji. Nic nie usunięto z VPS." "${remote_base}"
+    return 1
+  fi
+  if [[ "${has_db_accounts}" -eq 1 ]] && ! hm_rclone_file_nonempty "${remote_base}/db-accounts.sql"; then
+    hm_archive_abort "WERYFIKACJA NIEUDANA: brak/pusty db-accounts.sql. Nic nie usunięto z VPS." "${remote_base}"
+    return 1
+  fi
+  if [[ "${has_unix_account}" -eq 1 ]] && ! hm_rclone_file_nonempty "${remote_base}/unix-account.meta"; then
+    hm_archive_abort "WERYFIKACJA NIEUDANA: brak/pusty unix-account.meta. Nic nie usunięto z VPS." "${remote_base}"
     return 1
   fi
 

@@ -72,26 +72,30 @@ hm_complete_filter_sites() {
   printf '%s\n' "${out[@]}"
 }
 
-# Tab: nazwy workerów Supervisora (group:name) + „all”.
-hm_complete_filter_supervisor() {
+# Filtr nazw ze stdin (+ opcjonalne stałe kandydaty): prefix, potem substring.
+# Użycie: { echo a; echo b; } | hm_complete_filter_names partial [extra…]
+hm_complete_filter_names() {
   local partial="${1:-}"
-  local partial_lc name nlc
+  shift || true
+  local partial_lc name nlc e elc
   partial_lc="$(printf '%s' "${partial}" | tr '[:upper:]' '[:lower:]')"
   local -a out=()
 
-  if [[ -z "${partial_lc}" || "all" == "${partial_lc}"* ]]; then
-    out+=("all")
-  fi
+  for e in "$@"; do
+    [[ -n "${e}" ]] || continue
+    elc="$(printf '%s' "${e}" | tr '[:upper:]' '[:lower:]')"
+    if [[ -z "${partial_lc}" || "${elc}" == "${partial_lc}"* || "${elc}" == *"${partial_lc}"* ]]; then
+      out+=("${e}")
+    fi
+  done
 
-  if declare -F hm_supervisor_list_names >/dev/null 2>&1; then
-    while IFS= read -r name; do
-      [[ -n "${name}" ]] || continue
-      nlc="$(printf '%s' "${name}" | tr '[:upper:]' '[:lower:]')"
-      if [[ -z "${partial_lc}" || "${nlc}" == "${partial_lc}"* || "${nlc}" == *"${partial_lc}"* ]]; then
-        out+=("${name}")
-      fi
-    done < <(hm_supervisor_list_names 2>/dev/null || true)
-  fi
+  while IFS= read -r name || [[ -n "${name:-}" ]]; do
+    [[ -n "${name}" ]] || continue
+    nlc="$(printf '%s' "${name}" | tr '[:upper:]' '[:lower:]')"
+    if [[ -z "${partial_lc}" || "${nlc}" == "${partial_lc}"* || "${nlc}" == *"${partial_lc}"* ]]; then
+      out+=("${name}")
+    fi
+  done
 
   local seen="|" c
   for c in "${out[@]}"; do
@@ -99,6 +103,78 @@ hm_complete_filter_supervisor() {
     seen+="${c}|"
     printf '%s\n' "${c}"
   done
+}
+
+# Tab: nazwy workerów Supervisora (group:name) + „all”.
+hm_complete_filter_supervisor() {
+  local partial="${1:-}"
+  {
+    if declare -F hm_supervisor_list_names >/dev/null 2>&1; then
+      hm_supervisor_list_names 2>/dev/null || true
+    fi
+  } | hm_complete_filter_names "${partial}" all
+}
+
+# Tab: bazy MySQL (SHOW DATABASES bez systemowych).
+hm_complete_filter_mysql_dbs() {
+  local partial="${1:-}"
+  {
+    if declare -F hm_list_all_databases >/dev/null 2>&1; then
+      hm_list_all_databases 2>/dev/null || true
+    fi
+  } | hm_complete_filter_names "${partial}"
+}
+
+# Tab: procesy PM2 + „all”.
+hm_complete_filter_pm2() {
+  local partial="${1:-}"
+  {
+    if declare -F hm_pm2_parse_apps >/dev/null 2>&1; then
+      hm_pm2_parse_apps 2>/dev/null | awk -F'|' 'NF && $1 != "" { print $1 }' || true
+    fi
+  } | hm_complete_filter_names "${partial}" all
+}
+
+# Tab: indeksy Redis dbN z INFO keyspace.
+hm_complete_filter_redis_dbs() {
+  local partial="${1:-}"
+  {
+    if declare -F hm_redis_cli >/dev/null 2>&1; then
+      hm_redis_cli INFO keyspace 2>/dev/null \
+        | sed -n 's/^db\([0-9][0-9]*\):.*/\1/p' || true
+    fi
+  } | hm_complete_filter_names "${partial}"
+}
+
+# Tab: id klientów Redis (CLIENT LIST).
+hm_complete_filter_redis_clients() {
+  local partial="${1:-}"
+  {
+    if declare -F hm_redis_cli >/dev/null 2>&1; then
+      hm_redis_cli CLIENT LIST 2>/dev/null \
+        | sed -n 's/.*\<id=\([0-9][0-9]*\).*/\1/p' || true
+    fi
+  } | hm_complete_filter_names "${partial}"
+}
+
+# Tab: użytkownicy z crontabem (cron user / cron edit).
+hm_complete_filter_cron_users() {
+  local partial="${1:-}"
+  {
+    if declare -F hm_cron_list_users_with_crontab >/dev/null 2>&1; then
+      hm_cron_list_users_with_crontab 2>/dev/null || true
+    fi
+  } | hm_complete_filter_names "${partial}"
+}
+
+# Wygodny helper do tab.sh — dopisz domeny do tablicy matches.
+hm_complete_push_sites() {
+  local partial="${1:-}"
+  local m
+  hm_ensure_sites_cached
+  while IFS= read -r m; do
+    [[ -n "${m}" ]] && matches+=("${m}")
+  done < <(hm_complete_filter_sites "${partial}")
 }
 
 hm_complete_commands() {

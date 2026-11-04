@@ -36,12 +36,17 @@ Użycie:
   archive-site <numer|domena>
   (w kontekście) archive
 
-1) Pełna kopia archiwalna na Google Drive (DB + pliki + OLS + SSL + cron + PM2)
+1) Pełna kopia archiwalna na Google Drive:
+   - bazy MySQL (db/*.sql.gz)
+   - konta MySQL 1:1 (db-accounts.sql — CREATE USER + GRANTS / hash hasła)
+   - konto Unix SSH 1:1 (unix-account.meta — uid/gid/shadow + unix-authorized_keys)
+   - pliki, OLS, SSL, cron, PM2, manifest.json
 2) Twarda weryfikacja plików na Drive (Atomic Guard)
 3) Dopiero potem całkowite usunięcie serwisu z VPS (jak delete-site)
 
 Snapshot ma type=archive (chroniony przed backup prune).
 Przywrócenie: backup restore <domena> [stamp]
+  (odtwarza też Unix + konta MySQL, gdy są w snapshocie)
 EOF
 
 _hm_cmd_help archive <<'EOF'
@@ -51,12 +56,17 @@ Użycie:
   archive-site <numer|domena>
   (w kontekście) archive
 
-1) Pełna kopia archiwalna na Google Drive (DB + pliki + OLS + SSL + cron + PM2)
+1) Pełna kopia archiwalna na Google Drive:
+   - bazy MySQL (db/*.sql.gz)
+   - konta MySQL 1:1 (db-accounts.sql — CREATE USER + GRANTS / hash hasła)
+   - konto Unix SSH 1:1 (unix-account.meta — uid/gid/shadow + unix-authorized_keys)
+   - pliki, OLS, SSL, cron, PM2, manifest.json
 2) Twarda weryfikacja plików na Drive (Atomic Guard)
 3) Dopiero potem całkowite usunięcie serwisu z VPS (jak delete-site)
 
 Snapshot ma type=archive (chroniony przed backup prune).
 Przywrócenie: backup restore <domena> [stamp]
+  (odtwarza też Unix + konta MySQL, gdy są w snapshocie)
 EOF
 
 _HM_BACKUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

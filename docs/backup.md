@@ -90,11 +90,24 @@ vps-backups/                          ← root (RCLONE_REMOTE)
   projects.unideverse.com/20261027-150000/   ← kopia jednej strony
     files.tar.gz   (lub files.chunks/)
     db/nazwa.sql.gz
+    db-accounts.sql          ← archive: konta MySQL (CREATE USER + GRANTS)
+    unix-account.meta        ← archive: uid/gid/shell/shadow konta SSH
+    unix-authorized_keys     ← archive: klucze SSH
     vhost.conf
     manifest.json
   db-dumps/
     nazwa-20261027-151000.sql.gz
 ```
+
+### `backup archive` / `webs archive` — restore 1:1
+
+Oprócz dumpów baz i plików snapshot typu `archive` zapisuje:
+
+- **db-accounts.sql** — `SHOW CREATE USER` + `SHOW GRANTS` (hash hasła MySQL, bez plaintextu)
+- **unix-account.meta** — passwd/shadow (hash), uid/gid, home, shell
+- **unix-authorized_keys** — kopia `~/.ssh/authorized_keys`
+
+`backup restore` odtwarza konto Unix przed plikami, a konta MySQL po imporcie baz.
 
 ## Jak działają backupy (miejsce na dysku)
 

@@ -39,9 +39,22 @@ hm_tab_complete() {
   local m
   local re_empty='^[[:space:]]*$'
   local re_backup_site='backup[[:space:]]+(site|restore|list)[[:space:]]'
-  local re_cron_site='cron[[:space:]]+(site|edit)[[:space:]]'
+  local re_cron_site='cron[[:space:]]+site[[:space:]]'
+  local re_cron_user='cron[[:space:]]+(user|edit)[[:space:]]'
   local re_pm2_site='(pm2|node|apps)[[:space:]]+site[[:space:]]'
+  local re_pm2_action='(pm2|node|apps)[[:space:]]+(restart|reload|stop|start|delete|del|logs|log)[[:space:]]'
   local re_sup_action='supervisor[[:space:]]+(start|stop|restart|logs|log|tail)[[:space:]]'
+  local re_mysql_db='(mysql|dbs|db)[[:space:]]+(dump|dump-local|local-dump|import|cli|console|shell|optimize|optimise)[[:space:]]'
+  local re_mysql_dump_flags='(mysql|dbs|db)[[:space:]]+dump[[:space:]]+[^[:space:]]+[[:space:]]'
+  local re_sec_scan='(security|sec)[[:space:]]+scan[[:space:]]'
+  local re_access_site='access[[:space:]]+(status|stat|info)[[:space:]]'
+  local re_access_ssh_site='access[[:space:]]+ssh[[:space:]]+(status|passwd|password)[[:space:]]'
+  local re_access_ssh_keys_site='access[[:space:]]+ssh[[:space:]]+keys[[:space:]]+(list|ls|add|remove|rm|del)[[:space:]]'
+  local re_access_shell_site='access[[:space:]]+ssh[[:space:]]+shell[[:space:]]+(enable|disable|on|off)[[:space:]]'
+  local re_access_ftp_site='access[[:space:]]+ftp[[:space:]]+(list|ls|add|create|passwd|password|delete|del|rm)[[:space:]]'
+  local re_ols_dom='(ols|lsws)[[:space:]]+(htaccess|hta|cache|lscache|proxy)[[:space:]]+(check|enable|on|status|show|flush|clear|purge)[[:space:]]'
+  local re_redis_flush='redis[[:space:]]+flushdb[[:space:]]'
+  local re_redis_kill='redis[[:space:]]+client[[:space:]]+kill[[:space:]]'
 
   if [[ "${prefix}" =~ $re_empty ]]; then
     while IFS= read -r m; do
@@ -68,9 +81,13 @@ hm_tab_complete() {
         done
         ;;
       security|sec)
-        for m in status ports ssh fail2ban ban unban scan help; do
-          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
-        done
+        if [[ "${prefix}" =~ $re_sec_scan ]]; then
+          hm_complete_push_sites "${partial}"
+        else
+          for m in status ports ssh fail2ban ban unban scan help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
         ;;
       htaccess|hta)
         for m in check enable help; do
@@ -165,22 +182,32 @@ hm_tab_complete() {
         ;;
       ols|lsws)
         local re_ols_sub='(ols|lsws)[[:space:]]+(htaccess|hta|cache|lscache|proxy|admin|webadmin)[[:space:]]'
-        if [[ "${prefix}" =~ $re_ols_sub ]]; then
+        if [[ "${prefix}" =~ $re_ols_dom ]]; then
+          # ols cache flush <domena|all>
+          hm_complete_push_sites "${partial}"
+          if [[ "${prefix}" =~ cache|lscache ]]; then
+            [[ -z "${partial}" || "all" == "${partial}"* ]] && matches+=("all")
+          fi
+        elif [[ "${prefix}" =~ $re_ols_sub ]]; then
           case "${BASH_REMATCH[2]}" in
             htaccess|hta)
               for m in check enable help; do
                 [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
               done
+              # ols htaccess <domena> (bez check/enable)
+              hm_complete_push_sites "${partial}"
               ;;
             cache|lscache)
               for m in status flush all help; do
                 [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
               done
+              hm_complete_push_sites "${partial}"
               ;;
             proxy)
               for m in status set-port help; do
                 [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
               done
+              hm_complete_push_sites "${partial}"
               ;;
             admin|webadmin)
               for m in status pass help; do
@@ -214,12 +241,21 @@ hm_tab_complete() {
         done < <(hm_complete_filter_sites "${partial}")
         ;;
       mysql|dbs|db)
-        local re_mysql_dump='(mysql|dbs|db)[[:space:]]+dump[[:space:]]'
         local re_mysql_heavy='(mysql|dbs|db)[[:space:]]+heavy[[:space:]]'
-        if [[ "${prefix}" =~ $re_mysql_dump ]]; then
+        if [[ "${prefix}" =~ $re_mysql_dump_flags ]]; then
           for m in --local help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
+        elif [[ "${prefix}" =~ $re_mysql_db ]]; then
+          if [[ "${partial}" == --* ]]; then
+            for m in --local help; do
+              [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+            done
+          else
+            while IFS= read -r m; do
+              [[ -n "${m}" ]] && matches+=("${m}")
+            done < <(hm_complete_filter_mysql_dbs "${partial}")
+          fi
         elif [[ "${prefix}" =~ $re_mysql_heavy ]]; then
           for m in --min-size help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
@@ -237,10 +273,13 @@ hm_tab_complete() {
         ;;
       cron|crons)
         if [[ "${prefix}" =~ $re_cron_site ]]; then
-          hm_ensure_sites_cached
+          hm_complete_push_sites "${partial}"
+        elif [[ "${prefix}" =~ $re_cron_user ]]; then
           while IFS= read -r m; do
             [[ -n "${m}" ]] && matches+=("${m}")
-          done < <(hm_complete_filter_sites "${partial}")
+          done < <(hm_complete_filter_cron_users "${partial}")
+          # edit może dostać też domenę zamiast usera
+          hm_complete_push_sites "${partial}"
         else
           for m in list ls all global system users site user edit help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
@@ -249,10 +288,11 @@ hm_tab_complete() {
         ;;
       pm2|node|apps)
         if [[ "${prefix}" =~ $re_pm2_site ]]; then
-          hm_ensure_sites_cached
+          hm_complete_push_sites "${partial}"
+        elif [[ "${prefix}" =~ $re_pm2_action ]]; then
           while IFS= read -r m; do
             [[ -n "${m}" ]] && matches+=("${m}")
-          done < <(hm_complete_filter_sites "${partial}")
+          done < <(hm_complete_filter_pm2 "${partial}")
         else
           for m in list ls status all proxy site ports raw restart reload stop start logs save help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
@@ -319,7 +359,15 @@ hm_tab_complete() {
       redis)
         local re_redis_cfg='redis[[:space:]]+config[[:space:]]'
         local re_redis_client='redis[[:space:]]+client[[:space:]]'
-        if [[ "${prefix}" =~ $re_redis_cfg ]]; then
+        if [[ "${prefix}" =~ $re_redis_flush ]]; then
+          while IFS= read -r m; do
+            [[ -n "${m}" ]] && matches+=("${m}")
+          done < <(hm_complete_filter_redis_dbs "${partial}")
+        elif [[ "${prefix}" =~ $re_redis_kill ]]; then
+          while IFS= read -r m; do
+            [[ -n "${m}" ]] && matches+=("${m}")
+          done < <(hm_complete_filter_redis_clients "${partial}")
+        elif [[ "${prefix}" =~ $re_redis_cfg ]]; then
           for m in get set help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
@@ -338,7 +386,13 @@ hm_tab_complete() {
         local re_access_ssh='access[[:space:]]+ssh[[:space:]]'
         local re_access_ftp='access[[:space:]]+ftp[[:space:]]'
         local re_access_shell='access[[:space:]]+ssh[[:space:]]+shell[[:space:]]'
-        if [[ "${prefix}" =~ $re_access_ssh_keys ]]; then
+        if [[ "${prefix}" =~ $re_access_site \
+           || "${prefix}" =~ $re_access_ssh_site \
+           || "${prefix}" =~ $re_access_ssh_keys_site \
+           || "${prefix}" =~ $re_access_shell_site \
+           || "${prefix}" =~ $re_access_ftp_site ]]; then
+          hm_complete_push_sites "${partial}"
+        elif [[ "${prefix}" =~ $re_access_ssh_keys ]]; then
           for m in list ls add remove rm del help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done

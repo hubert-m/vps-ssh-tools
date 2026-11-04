@@ -108,6 +108,160 @@ hm_backup_ols_reload() {
   return 0
 }
 
+# Odtwórz konto Unix z unix-account.meta (+ opcjonalnie authorized_keys).
+# home_override: preferowany $HOME (site_root z restore); puste = wartość z meta.
+hm_backup_restore_unix_account() {
+  local remote_base="$1"
+  local home_override="${2:-}"
+  local meta_tmp keys_tmp
+  local name uid gid group home shell gecos shadow shared protected
+  local line key val
+
+  if ! rclone cat "${remote_base}/unix-account.meta" >/dev/null 2>&1; then
+    hm_info "Brak unix-account.meta w snapshocie — pomijam odtworzenie konta Unix."
+    return 0
+  fi
+
+  meta_tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-unix-meta.XXXXXX")"
+  chmod 600 "${meta_tmp}"
+  if ! rclone cat "${remote_base}/unix-account.meta" > "${meta_tmp}" || [[ ! -s "${meta_tmp}" ]]; then
+    rm -f "${meta_tmp}"
+    hm_warn "Nie udało się pobrać unix-account.meta."
+    return 1
+  fi
+
+  name=""; uid=""; gid=""; group=""; home=""; shell="/bin/bash"; gecos=""; shadow=""
+  shared=0; protected=0
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ -n "${line}" ]] || continue
+    [[ "${line}" == *=* ]] || continue
+    key="${line%%=*}"
+    val="${line#*=}"
+    case "${key}" in
+      name) name="${val}" ;;
+      uid) uid="${val}" ;;
+      gid) gid="${val}" ;;
+      group) group="${val}" ;;
+      home) home="${val}" ;;
+      shell) shell="${val}" ;;
+      gecos) gecos="${val}" ;;
+      shadow) shadow="${val}" ;;
+      shared) shared="${val}" ;;
+      protected) protected="${val}" ;;
+    esac
+  done < "${meta_tmp}"
+  rm -f "${meta_tmp}"
+
+  hm_is_valid_unix_user "${name}" || { hm_err "Nieprawidłowa nazwa Unix w meta: ${name:-?}"; return 1; }
+  [[ -n "${home_override}" ]] && home="${home_override}"
+  [[ -n "${home}" ]] || { hm_err "Brak home w unix-account.meta."; return 1; }
+  [[ -n "${group}" ]] || group="${name}"
+  [[ -n "${shell}" ]] || shell="/bin/bash"
+
+  if id "${name}" >/dev/null 2>&1; then
+    hm_info "Konto Unix ${name} już istnieje (shared=${shared}, protected=${protected}) — aktualizuję shell/hasło/klucze (bez zmiany UID)."
+    usermod -s "${shell}" "${name}" 2>/dev/null || true
+    if [[ -n "${home}" ]]; then
+      usermod -d "${home}" "${name}" 2>/dev/null || true
+    fi
+  else
+    hm_info "Tworzenie konta Unix ${name} (uid=${uid:-auto} gid=${gid:-auto} home=${home})"
+    if [[ -n "${gid}" && "${gid}" =~ ^[0-9]+$ ]]; then
+      if ! getent group "${group}" >/dev/null 2>&1; then
+        groupadd -g "${gid}" "${group}" 2>/dev/null \
+          || groupadd "${group}" 2>/dev/null \
+          || hm_warn "groupadd ${group} nieudany — użyję istniejącej grupy."
+      fi
+    elif ! getent group "${group}" >/dev/null 2>&1; then
+      groupadd "${group}" 2>/dev/null || true
+    fi
+
+    local -a ua=(useradd -M -d "${home}" -s "${shell}" -c "${gecos}" )
+    if getent group "${group}" >/dev/null 2>&1; then
+      ua+=(-g "${group}")
+    fi
+    if [[ -n "${uid}" && "${uid}" =~ ^[0-9]+$ ]] && ! getent passwd "${uid}" >/dev/null 2>&1; then
+      ua+=(-u "${uid}")
+    fi
+    ua+=("${name}")
+    if ! "${ua[@]}"; then
+      hm_err "useradd ${name} nieudany."
+      return 1
+    fi
+    hm_ok "Utworzono użytkownika ${name}."
+  fi
+
+  if [[ -n "${shadow}" && "${shadow}" != "*" && "${shadow}" != "!" && "${shadow}" != "!!" ]]; then
+    if printf '%s:%s\n' "${name}" "${shadow}" | chpasswd -e 2>/dev/null; then
+      hm_ok "Przywrócono hash hasła Unix (${name})."
+    else
+      hm_warn "chpasswd -e nieudany dla ${name} — hasło SSH może wymagać ręcznego ustawienia."
+    fi
+  else
+    hm_info "Brak użytecznego hasha shadow dla ${name} (konto bez hasła / zablokowane w snapshocie)."
+  fi
+
+  # authorized_keys
+  keys_tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-unix-keys.XXXXXX")"
+  chmod 600 "${keys_tmp}"
+  if rclone cat "${remote_base}/unix-authorized_keys" > "${keys_tmp}" 2>/dev/null && [[ -s "${keys_tmp}" ]]; then
+    mkdir -p "${home}/.ssh"
+    chmod 700 "${home}/.ssh"
+    if [[ -f "${home}/.ssh/authorized_keys" ]]; then
+      # scal: dopisz brakujące linie
+      local kline
+      while IFS= read -r kline || [[ -n "${kline}" ]]; do
+        [[ -n "${kline}" ]] || continue
+        [[ "${kline}" =~ ^[[:space:]]*# ]] && continue
+        if ! grep -Fqx "${kline}" "${home}/.ssh/authorized_keys" 2>/dev/null; then
+          printf '%s\n' "${kline}" >> "${home}/.ssh/authorized_keys"
+        fi
+      done < "${keys_tmp}"
+    else
+      cp -f "${keys_tmp}" "${home}/.ssh/authorized_keys"
+    fi
+    chmod 600 "${home}/.ssh/authorized_keys"
+    chown -R "${name}:${group}" "${home}/.ssh" 2>/dev/null || chown -R "${name}:${name}" "${home}/.ssh" 2>/dev/null || true
+    hm_ok "Przywrócono authorized_keys → ${home}/.ssh/authorized_keys"
+  fi
+  rm -f "${keys_tmp}"
+
+  HM_SITE_USER="${name}"
+  return 0
+}
+
+# Odtwórz konta MySQL z db-accounts.sql (DROP IF EXISTS + CREATE + GRANTS).
+hm_backup_restore_db_accounts() {
+  local remote_base="$1"
+  local cli sock_args=() sqlf
+
+  if ! rclone cat "${remote_base}/db-accounts.sql" >/dev/null 2>&1; then
+    hm_info "Brak db-accounts.sql w snapshocie — pomijam odtworzenie kont MySQL."
+    return 0
+  fi
+
+  cli="$(hm_mysql_cli)" || { hm_err "Brak klienta mysql/mariadb."; return 1; }
+  [[ -n "${MYSQL_SOCKET:-}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
+
+  sqlf="$(mktemp "${TMP_DIR:-/tmp}/hmtools-db-accounts.XXXXXX.sql")"
+  chmod 600 "${sqlf}"
+  if ! rclone cat "${remote_base}/db-accounts.sql" > "${sqlf}" || [[ ! -s "${sqlf}" ]]; then
+    rm -f "${sqlf}"
+    hm_err "Nie udało się pobrać db-accounts.sql."
+    return 1
+  fi
+
+  hm_info "Odtwarzanie kont MySQL z db-accounts.sql…"
+  if ! "${cli}" "${sock_args[@]}" < "${sqlf}"; then
+    rm -f "${sqlf}"
+    hm_err "Import db-accounts.sql nieudany."
+    return 1
+  fi
+  rm -f "${sqlf}"
+  hm_ok "Konta MySQL odtworzone (CREATE USER + GRANTS)."
+  return 0
+}
+
 # Wstaw mapy do listenerów. Plik maps: linie „listener<TAB>mapline”
 # (listener=* → wszystkie listenery; deduplikacja per listener).
 hm_ols_insert_maps_into_listeners() {
@@ -465,12 +619,26 @@ _hm_backup_restore_body() {
 
   local -a plan_steps=()
   local restore_ols=0
+  local restore_unix=0
+  local restore_db_acc=0
   local db_list=""
   local snap_type=""
   local created_target=0
-  snap_type="$(hm_backup_json_str "$(hm_backup_cat_manifest "${remote_base}")" "type")"
+  local man_json
+  man_json="$(hm_backup_cat_manifest "${remote_base}")"
+  snap_type="$(hm_backup_json_str "${man_json}" "type")"
+
+  if rclone cat "${remote_base}/unix-account.meta" >/dev/null 2>&1; then
+    restore_unix=1
+  fi
+  if rclone cat "${remote_base}/db-accounts.sql" >/dev/null 2>&1; then
+    restore_db_acc=1
+  fi
 
   if [[ "${db_only}" -eq 0 ]]; then
+    if [[ "${restore_unix}" -eq 1 ]]; then
+      plan_steps+=("Odtworzenie konta Unix SSH z unix-account.meta (useradd/uid/gid/shadow + authorized_keys)")
+    fi
     plan_steps+=("Pobranie i rozpakowanie archiwum plików z ${remote_base} do ${target_dir} (nadpisanie plików strony)")
     if rclone cat "${remote_base}/ols-vhost-dir.tar.gz" >/dev/null 2>&1 \
       || rclone cat "${remote_base}/ols-httpd-snippet.conf" >/dev/null 2>&1 \
@@ -478,19 +646,22 @@ _hm_backup_restore_body() {
       restore_ols=1
       plan_steps+=("Odtworzenie vhosta OLS (katalog ${OLS_VHOSTS:-vhosts}/${domain}, blok virtualhost + map w ${OLS_CONF:-httpd_config.conf})")
     fi
-    if [[ -n "${HM_SITE_USER:-}" ]] && id "${HM_SITE_USER}" >/dev/null 2>&1; then
-      plan_steps+=("Ustawienie właściciela plików chown -R ${HM_SITE_USER}:${HM_SITE_USER} na ${target_dir}")
+    if [[ -n "${HM_SITE_USER:-}" ]] || [[ "${restore_unix}" -eq 1 ]]; then
+      plan_steps+=("Ustawienie właściciela plików chown -R na ${target_dir} (po odtworzeniu konta Unix)")
     fi
   fi
   if [[ "${files_only}" -eq 0 ]]; then
     db_list="$(rclone lsf "${remote_base}/db/" 2>/dev/null | grep '\.sql\.gz$' | sed 's|.*/||;s|\.sql\.gz$||' | paste -sd',' - || true)"
     [[ -z "${db_list}" ]] && db_list="$(rclone cat "${remote_base}/manifest.json" 2>/dev/null | grep -oE '"databases?"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 || true)"
     plan_steps+=("Pobranie i import zrzutów baz danych (${db_list:-z snapshota}) z nadpisaniem tabel")
+    if [[ "${restore_db_acc}" -eq 1 ]]; then
+      plan_steps+=("Odtworzenie kont MySQL z db-accounts.sql (CREATE USER + GRANTS / ten sam hash hasła)")
+    fi
   fi
   plan_steps+=("Przeładowanie OpenLiteSpeed (ols reload)")
 
   local warn_extra=""
-  [[ "${snap_type}" == "archive" ]] && warn_extra=" Snapshot typu archive — odtwarzanie po usunięciu strony z VPS (vhost OLS + pliki + DB)."
+  [[ "${snap_type}" == "archive" ]] && warn_extra=" Snapshot typu archive — odtwarzanie po usunięciu strony z VPS (Unix + vhost OLS + pliki + DB + konta MySQL)."
 
   if ! hm_confirm_plan_critical "${domain}" \
     "backup restore — ${domain} (${stamp})" \
@@ -503,6 +674,13 @@ _hm_backup_restore_body() {
   if [[ ! -d "${target_dir}" ]]; then
     mkdir -p "${target_dir}" || { hm_err "Nie można utworzyć ${target_dir}"; return 1; }
     created_target=1
+  fi
+
+  # Unix PRZED plikami — chown i SSH działają od razu po rozpakowaniu
+  if [[ "${db_only}" -eq 0 && "${restore_unix}" -eq 1 ]]; then
+    hm_backup_restore_unix_account "${remote_base}" "${target_dir}" || {
+      hm_warn "Odtworzenie konta Unix nieudane — kontynuuję restore plików/DB."
+    }
   fi
 
   if [[ "${db_only}" -eq 0 ]]; then
@@ -527,6 +705,12 @@ _hm_backup_restore_body() {
 
   if [[ "${files_only}" -eq 0 ]]; then
     hm_backup_restore_dbs "${remote_base}" || return 1
+    if [[ "${restore_db_acc}" -eq 1 ]]; then
+      hm_backup_restore_db_accounts "${remote_base}" || {
+        hm_err "Odtworzenie kont MySQL nieudane — bazy są zaimportowane, nadaj GRANT ręcznie."
+        return 1
+      }
+    fi
   fi
 
   hm_backup_ols_reload
