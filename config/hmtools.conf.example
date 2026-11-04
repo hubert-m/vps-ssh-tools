@@ -53,6 +53,10 @@ BACKUP_EXCLUDES="cache node_modules .git *.log tmp temp wp-content/cache wp-cont
 # Usuwaj snapshoty starsze niż N dni (zawsze zostaw BACKUP_KEEP_MIN najnowszych na katalog)
 BACKUP_KEEP_DAYS=14
 BACKUP_KEEP_MIN=3
+# Niepełne snapshoty młodsze niż N godzin nie są kasowane przez prune (ochrona trwającego backupu)
+BACKUP_ORPHAN_GRACE_HOURS=24
+# Opcjonalne szyfrowanie klienta (openssl AES-256-CBC) dla db-accounts / unix-account / system-configs
+# BACKUP_ENCRYPT_PASSPHRASE="zmień-mnie"
 
 # Harmonogram (backup schedule enable) → /etc/cron.d/hmtools-backup
 # Godzina codziennego backup full (0–23); prune godzinę później gdy =1

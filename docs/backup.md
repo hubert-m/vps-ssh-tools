@@ -109,7 +109,11 @@ Oprócz dumpów baz i plików snapshot typu `archive` zapisuje:
 
 `backup restore` odtwarza konto Unix przed plikami, a konta MySQL po imporcie baz.
 
-**Katalog plików:** pakowany jest pełny katalog domowy użytkownika strony (gdy `$HOME` obejmuje site root / vhRoot) — w archiwum są też ukryte elementy w stylu `.ssh`, `.pm2`, `.config`, `.bash_history`. `tar` bierze zawartość `.` (w tym pliki kropkowe); `BACKUP_EXCLUDES` nie wyklucza tych katalogów.
+**Katalog plików:** pakowany jest pełny katalog domowy użytkownika strony (gdy `$HOME` obejmuje site root / vhRoot) — w archiwum są też ukryte elementy w stylu `.ssh`, `.pm2`, `.config`, `.bash_history`. `tar` bierze zawartość `.` (w tym pliki kropkowe); `BACKUP_EXCLUDES` nie wyklucza tych katalogów. Child domain ze współdzielonym home mastera pakuje tylko swój **docroot**.
+
+**Bezpieczeństwo:** `system-configs` bez `/etc/shadow` i `privkey.pem`; opcjonalnie `BACKUP_ENCRYPT_PASSPHRASE` (openssl) dla `db-accounts` / `unix-account` / system-configs. Wspólny `flock` dla backup/archive/restore/prune; prune nie kasuje świeżych orphanów (`BACKUP_ORPHAN_GRACE_HOURS`).
+
+**Full restore:** `backup restore-full [stamp] [--system]`.
 
 ## Jak działają backupy (miejsce na dysku)
 

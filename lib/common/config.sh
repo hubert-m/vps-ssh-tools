@@ -12,6 +12,10 @@ hm_load_config() {
   BACKUP_HOST_LABEL="${BACKUP_HOST_LABEL:-}"
   BACKUP_KEEP_DAYS="${BACKUP_KEEP_DAYS:-14}"
   BACKUP_KEEP_MIN="${BACKUP_KEEP_MIN:-3}"
+  # Niepełne snapshoty (bez manifestu) młodsze niż N godzin — NIE kasuj (prune vs trwający backup)
+  BACKUP_ORPHAN_GRACE_HOURS="${BACKUP_ORPHAN_GRACE_HOURS:-24}"
+  # Opcjonalnie: passphrase openssl (AES-256-CBC) dla db-accounts.sql / unix-account.meta / system-configs
+  # BACKUP_ENCRYPT_PASSPHRASE=""
   BACKUP_SCHEDULE_HOUR="${BACKUP_SCHEDULE_HOUR:-3}"
   BACKUP_SCHEDULE_PRUNE="${BACKUP_SCHEDULE_PRUNE:-1}"
   LOG_ENABLED="${LOG_ENABLED:-1}"

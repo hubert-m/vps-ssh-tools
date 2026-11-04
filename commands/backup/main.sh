@@ -14,9 +14,11 @@ Użycie:
   backup restore <domena> [stamp] [--files-only|--db-only]
                             Odtwórz pliki (tar lub chunks) + bazy; bez stamp = najnowszy
                             (działa też dla domen tylko na Drive po webs archive)
+  backup restore-full [stamp] [--system]
+                            Odtwórz snapshot full/ (bazy + db-accounts; --system = system-configs)
   backup prune [--days N] [--dry-run] [--yes]
                             Usuń stare snapshoty (BACKUP_KEEP_DAYS / BACKUP_KEEP_MIN)
-                            Snapshoty type=archive są chronione przed prune
+                            Snapshoty type=archive chronione; świeże orphan < BACKUP_ORPHAN_GRACE_HOURS pomijane
   backup schedule [enable|disable|status]
                             Cron: /etc/cron.d/hmtools-backup + log backup-cron.log
   backup test               Test połączenia rclone
@@ -124,6 +126,9 @@ cmd_backup() {
       ;;
     restore)
       hm_backup_restore "$@"
+      ;;
+    restore-full|restore_full)
+      hm_backup_restore_full "$@"
       ;;
     prune|cleanup|rotate)
       hm_backup_prune "$@"

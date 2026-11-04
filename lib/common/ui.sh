@@ -55,6 +55,17 @@ hm_sql_quote() {
   printf "'%s'" "${s}"
 }
 
+# Escapowanie wartości string do JSON (dla heredoców manifestów backup).
+hm_json_escape_str() {
+  local s="${1:-}"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "${s}"
+}
+
 hm_confirm() {
   local prompt="${1:-Kontynuować?}"
   local reply

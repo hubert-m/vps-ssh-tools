@@ -256,8 +256,8 @@ hm_set_site_context() {
   HM_SITE_STATUS="${status}"
 }
 
-hm_find_site_by_arg() {
-  # arg = numer (1-based) lub domena
+# Dokładna nazwa domeny lub numer z listy — BEZ partial match (backup restore/archive).
+hm_find_site_by_arg_exact() {
   local arg="$1"
   hm_discover_sites
   if [[ "${arg}" =~ ^[0-9]+$ ]]; then
@@ -276,16 +276,49 @@ hm_find_site_by_arg() {
       return 0
     fi
   done
-  # częściowe dopasowanie
-  local matches=()
+  return 1
+}
+
+hm_find_site_by_arg() {
+  # arg = numer (1-based) lub domena
+  # $2 = "exact" → tylko dokładna nazwa/numer (jak hm_find_site_by_arg_exact)
+  local arg="$1"
+  local mode="${2:-}"
+  if [[ "${mode}" == "exact" ]]; then
+    hm_find_site_by_arg_exact "${arg}"
+    return $?
+  fi
+  # najpierw dokładne
+  local exact=""
+  exact="$(hm_find_site_by_arg_exact "${arg}" 2>/dev/null || true)"
+  if [[ -n "${exact}" ]]; then
+    echo "${exact}"
+    return 0
+  fi
+  # numer poza zakresem już obsłużony w exact (hm_err) — powtórz dla komunikatu
+  if [[ "${arg}" =~ ^[0-9]+$ ]]; then
+    hm_find_site_by_arg_exact "${arg}"
+    return $?
+  fi
+
+  hm_discover_sites
+  # częściowe dopasowanie — NIGDY po cichu: TTY → potwierdzenie; inaczej błąd z podpowiedzią
+  local matches=() d
   for d in "${HM_SITES_LIST[@]}"; do
     if [[ "${d}" == *"${arg}"* ]]; then
       matches+=("${d}")
     fi
   done
   if [[ "${#matches[@]}" -eq 1 ]]; then
-    echo "${matches[0]}"
-    return 0
+    if [[ -t 0 && -t 1 ]] && declare -F hm_confirm >/dev/null 2>&1; then
+      if hm_confirm "Nie znaleziono dokładnej domeny „${arg}”. Czy chodziło o ${matches[0]}"; then
+        echo "${matches[0]}"
+        return 0
+      fi
+      return 1
+    fi
+    hm_err "Nie znaleziono dokładnej domeny „${arg}” (jedyna podobna: ${matches[0]}). Podaj pełną nazwę lub numer z listy."
+    return 1
   fi
   if [[ "${#matches[@]}" -gt 1 ]]; then
     hm_err "Ambiguous: ${matches[*]}"

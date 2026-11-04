@@ -7,10 +7,12 @@ hm_backup_restore_files() {
   mode="$(hm_backup_detect_files_mode "${remote_base}")"
   mkdir -p "${target_dir}"
 
+  # --no-same-owner: numeryczne UID z innego VPS nie „kradną” plików obcemu lokalnemu userowi;
+  # właściciela ustawiamy potem przez hm_backup_restore_fix_ownership.
   case "${mode}" in
     tar)
       hm_info "Odtwarzanie plików (stream files.tar.gz) → ${target_dir}"
-      if ! rclone cat "${remote_base}/files.tar.gz" | tar -xzf - -C "${target_dir}"; then
+      if ! rclone cat "${remote_base}/files.tar.gz" | tar --no-same-owner -xzf - -C "${target_dir}"; then
         hm_err "Rozpakowanie files.tar.gz nieudane."
         return 1
       fi
@@ -30,7 +32,7 @@ hm_backup_restore_files() {
         for part in "${chunk_parts[@]}"; do
           rclone cat "${remote_base}/files.chunks/${part}" || exit 1
         done
-      ) | tar -xzf - -C "${target_dir}"; then
+      ) | tar --no-same-owner -xzf - -C "${target_dir}"; then
         hm_status_clear
         hm_err "Rozpakowanie files.chunks nieudane."
         return 1
@@ -43,6 +45,57 @@ hm_backup_restore_files() {
       ;;
   esac
   hm_ok "Pliki odtworzone."
+}
+
+# Po restore: user:user wewnątrz, ale public_html/docroot zachowuje grupę WWW (nogroup/lsadm) — jak perms fix.
+hm_backup_restore_fix_ownership() {
+  local target_dir="$1"
+  local user="$2"
+  local docroot="${3:-}"
+  local webgrp=""
+
+  [[ -n "${user}" ]] && id "${user}" >/dev/null 2>&1 || return 1
+  [[ -n "${target_dir}" && -d "${target_dir}" ]] || return 1
+
+  if declare -F hm_os_web_group >/dev/null 2>&1; then
+    webgrp="$(hm_os_web_group 2>/dev/null || true)"
+  fi
+  [[ -n "${webgrp}" ]] || webgrp="nogroup"
+  if ! getent group "${webgrp}" >/dev/null 2>&1; then
+    webgrp="${user}"
+  fi
+
+  hm_info "chown plików → ${user}:${user} (docroot/public_html: ${user}:${webgrp})"
+  # root katalogu strony
+  chown "${user}:${user}" -- "${target_dir}" 2>/dev/null || true
+
+  # zawartość — nie zmieniaj grupy samego public_html/docroot w tym samym przebiegu
+  local ent base
+  while IFS= read -r -d '' ent; do
+    [[ -L "${ent}" ]] && continue
+    base="$(basename "${ent}")"
+    if [[ "${base}" == "public_html" ]]; then
+      # wnętrze public_html → user:user; sam katalog → user:webgrp
+      find -P "${ent}" -xdev -mindepth 1 -maxdepth 1 -print0 2>/dev/null \
+        | while IFS= read -r -d '' inner; do
+            [[ -L "${inner}" ]] && continue
+            chown -R "${user}:${user}" -- "${inner}" 2>/dev/null || true
+          done
+      chown "${user}:${webgrp}" -- "${ent}" 2>/dev/null || chown "${user}:${user}" -- "${ent}" 2>/dev/null || true
+      continue
+    fi
+    chown -R "${user}:${user}" -- "${ent}" 2>/dev/null || true
+  done < <(find -P "${target_dir}" -xdev -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
+
+  if [[ -n "${docroot}" && -d "${docroot}" ]]; then
+    local rd rt
+    rd="$(realpath -m "${docroot}" 2>/dev/null || echo "${docroot}")"
+    rt="$(realpath -m "${target_dir}" 2>/dev/null || echo "${target_dir}")"
+    if [[ "${rd}" == "${rt}" || "${rd}" == "${rt}"/* ]]; then
+      chown "${user}:${webgrp}" -- "${docroot}" 2>/dev/null || true
+    fi
+  fi
+  return 0
 }
 
 hm_backup_restore_dbs() {
@@ -108,6 +161,42 @@ hm_backup_ols_reload() {
   return 0
 }
 
+# Pobierz plik z Drive; jeśli .enc — deszyfruj (BACKUP_ENCRYPT_PASSPHRASE).
+hm_backup_fetch_maybe_decrypt() {
+  local remote_base="$1"
+  local base_name="$2"   # np. unix-account.meta / db-accounts.sql
+  local out_file="$3"
+  local remote_path enc_tmp
+
+  if rclone cat "${remote_base}/${base_name}.enc" >/dev/null 2>&1; then
+    remote_path="${remote_base}/${base_name}.enc"
+    if [[ -z "${BACKUP_ENCRYPT_PASSPHRASE:-}" ]]; then
+      hm_err "Snapshot ma ${base_name}.enc — ustaw BACKUP_ENCRYPT_PASSPHRASE."
+      return 1
+    fi
+    enc_tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-enc.XXXXXX")"
+    chmod 600 "${enc_tmp}" "${out_file}" 2>/dev/null || true
+    if ! rclone cat "${remote_path}" > "${enc_tmp}" || [[ ! -s "${enc_tmp}" ]]; then
+      rm -f "${enc_tmp}"
+      return 1
+    fi
+    if ! openssl enc -d -aes-256-cbc -pbkdf2 -pass env:BACKUP_ENCRYPT_PASSPHRASE \
+      -in "${enc_tmp}" -out "${out_file}" 2>/dev/null; then
+      rm -f "${enc_tmp}"
+      hm_err "Deszyfracja ${base_name}.enc nieudana."
+      return 1
+    fi
+    rm -f "${enc_tmp}"
+    return 0
+  fi
+  if rclone cat "${remote_base}/${base_name}" >/dev/null 2>&1; then
+    rclone cat "${remote_base}/${base_name}" > "${out_file}"
+    [[ -s "${out_file}" ]]
+    return $?
+  fi
+  return 1
+}
+
 # Odtwórz konto Unix z unix-account.meta (+ opcjonalnie authorized_keys).
 # home_override: preferowany $HOME (site_root z restore); puste = wartość z meta.
 hm_backup_restore_unix_account() {
@@ -117,14 +206,14 @@ hm_backup_restore_unix_account() {
   local name uid gid group home shell gecos shadow shared protected
   local line key val
 
-  if ! rclone cat "${remote_base}/unix-account.meta" >/dev/null 2>&1; then
-    hm_info "Brak unix-account.meta w snapshocie — pomijam odtworzenie konta Unix."
-    return 0
-  fi
-
   meta_tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-unix-meta.XXXXXX")"
   chmod 600 "${meta_tmp}"
-  if ! rclone cat "${remote_base}/unix-account.meta" > "${meta_tmp}" || [[ ! -s "${meta_tmp}" ]]; then
+  if ! hm_backup_fetch_maybe_decrypt "${remote_base}" "unix-account.meta" "${meta_tmp}"; then
+    rm -f "${meta_tmp}"
+    hm_info "Brak unix-account.meta(.enc) w snapshocie — pomijam odtworzenie konta Unix."
+    return 0
+  fi
+  if [[ ! -s "${meta_tmp}" ]]; then
     rm -f "${meta_tmp}"
     hm_warn "Nie udało się pobrać unix-account.meta."
     return 1
@@ -235,21 +324,21 @@ hm_backup_restore_db_accounts() {
   local remote_base="$1"
   local cli sock_args=() sqlf
 
-  if ! rclone cat "${remote_base}/db-accounts.sql" >/dev/null 2>&1; then
-    hm_info "Brak db-accounts.sql w snapshocie — pomijam odtworzenie kont MySQL."
-    return 0
-  fi
-
-  cli="$(hm_mysql_cli)" || { hm_err "Brak klienta mysql/mariadb."; return 1; }
-  [[ -n "${MYSQL_SOCKET:-}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
-
   sqlf="$(mktemp "${TMP_DIR:-/tmp}/hmtools-db-accounts.XXXXXX.sql")"
   chmod 600 "${sqlf}"
-  if ! rclone cat "${remote_base}/db-accounts.sql" > "${sqlf}" || [[ ! -s "${sqlf}" ]]; then
+  if ! hm_backup_fetch_maybe_decrypt "${remote_base}" "db-accounts.sql" "${sqlf}"; then
+    rm -f "${sqlf}"
+    hm_info "Brak db-accounts.sql(.enc) w snapshocie — pomijam odtworzenie kont MySQL."
+    return 0
+  fi
+  if [[ ! -s "${sqlf}" ]]; then
     rm -f "${sqlf}"
     hm_err "Nie udało się pobrać db-accounts.sql."
     return 1
   fi
+
+  cli="$(hm_mysql_cli)" || { rm -f "${sqlf}"; hm_err "Brak klienta mysql/mariadb."; return 1; }
+  [[ -n "${MYSQL_SOCKET:-}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
 
   hm_info "Odtwarzanie kont MySQL z db-accounts.sql…"
   if ! "${cli}" "${sock_args[@]}" < "${sqlf}"; then
@@ -525,6 +614,11 @@ _hm_backup_restore_body() {
     esac
   done
 
+  if [[ "${files_only}" -eq 1 && "${db_only}" -eq 1 ]]; then
+    hm_err "Flagi --files-only i --db-only wykluczają się — podaj co najwyżej jedną."
+    return 1
+  fi
+
   if [[ -z "${domain}" ]]; then
     domain="${HM_SITE_DOMAIN:-}"
   fi
@@ -536,21 +630,22 @@ _hm_backup_restore_body() {
 
   local domain_arg="${domain}"
   local resolved=""
+  # TYLKO dokładna nazwa / numer — partial match po cichu brałby np. child.alpha.test zamiast alpha.test
   if [[ -n "${HM_SITE_DOMAIN}" && "${HM_SITE_DOMAIN}" == "${domain_arg}" ]]; then
     resolved="${domain_arg}"
   else
-    resolved="$(hm_find_site_by_arg "${domain_arg}" 2>/dev/null || true)"
+    resolved="$(hm_find_site_by_arg_exact "${domain_arg}" 2>/dev/null || true)"
   fi
 
   if [[ -n "${resolved}" ]]; then
     domain="${resolved}"
     hm_set_site_context "${domain}"
   else
-    # zarchiwizowana / usunięta z VPS — przywróć z Drive po nazwie domeny
+    # zarchiwizowana / usunięta z VPS — Drive po DOKŁADNEJ nazwie z argumentu
     domain="${domain_arg}"
-    hm_info "Domena ${domain} nie jest na lokalnej liście VPS — szukam snapshotów na Drive…"
+    hm_info "Domena ${domain} nie jest lokalnie (dokładna nazwa) — szukam snapshotów na Drive…"
     if [[ -z "$(hm_backup_list_stamps "${domain}" | head -1)" ]]; then
-      hm_err "Brak snapshotów na Drive dla ${domain} i brak lokalnej strony."
+      hm_err "Brak snapshotów na Drive dla „${domain}” i brak lokalnej strony o tej dokładnej nazwie."
       return 1
     fi
   fi
@@ -618,7 +713,7 @@ _hm_backup_restore_body() {
     fi
   fi
 
-  hm_backup_check_space || return 1
+  hm_backup_check_space "${target_dir}" || return 1
 
   local -a plan_steps=()
   local restore_ols=0
@@ -631,10 +726,12 @@ _hm_backup_restore_body() {
   man_json="$(hm_backup_cat_manifest "${remote_base}")"
   snap_type="$(hm_backup_json_str "${man_json}" "type")"
 
-  if rclone cat "${remote_base}/unix-account.meta" >/dev/null 2>&1; then
+  if rclone cat "${remote_base}/unix-account.meta" >/dev/null 2>&1 \
+    || rclone cat "${remote_base}/unix-account.meta.enc" >/dev/null 2>&1; then
     restore_unix=1
   fi
-  if rclone cat "${remote_base}/db-accounts.sql" >/dev/null 2>&1; then
+  if rclone cat "${remote_base}/db-accounts.sql" >/dev/null 2>&1 \
+    || rclone cat "${remote_base}/db-accounts.sql.enc" >/dev/null 2>&1; then
     restore_db_acc=1
   fi
 
@@ -642,7 +739,7 @@ _hm_backup_restore_body() {
     if [[ "${restore_unix}" -eq 1 ]]; then
       plan_steps+=("Odtworzenie konta Unix SSH z unix-account.meta (useradd/uid/gid/shadow + authorized_keys)")
     fi
-    plan_steps+=("Pobranie i rozpakowanie archiwum plików z ${remote_base} do ${target_dir} (nadpisanie plików strony)")
+    plan_steps+=("Pobranie i rozpakowanie archiwum plików z ${remote_base} do ${target_dir} (tar --no-same-owner; nadpisanie plików strony)")
     if rclone cat "${remote_base}/ols-vhost-dir.tar.gz" >/dev/null 2>&1 \
       || rclone cat "${remote_base}/ols-httpd-snippet.conf" >/dev/null 2>&1 \
       || rclone cat "${remote_base}/vhost.conf" >/dev/null 2>&1; then
@@ -650,7 +747,7 @@ _hm_backup_restore_body() {
       plan_steps+=("Odtworzenie vhosta OLS (katalog ${OLS_VHOSTS:-vhosts}/${domain}, blok virtualhost + map w ${OLS_CONF:-httpd_config.conf})")
     fi
     if [[ -n "${HM_SITE_USER:-}" ]] || [[ "${restore_unix}" -eq 1 ]]; then
-      plan_steps+=("Ustawienie właściciela plików chown -R na ${target_dir} (po odtworzeniu konta Unix)")
+      plan_steps+=("Właściciel plików: ${HM_SITE_USER:-user}:${HM_SITE_USER:-user} wewnątrz; public_html/docroot → grupa WWW (nogroup/lsadm), nie user:user")
     fi
   fi
   if [[ "${files_only}" -eq 0 ]]; then
@@ -700,8 +797,7 @@ _hm_backup_restore_body() {
       }
     fi
     if [[ -n "${HM_SITE_USER:-}" ]] && id "${HM_SITE_USER}" >/dev/null 2>&1; then
-      hm_info "chown -R ${HM_SITE_USER}: → ${target_dir}"
-      chown -R "${HM_SITE_USER}:${HM_SITE_USER}" "${target_dir}" 2>/dev/null \
+      hm_backup_restore_fix_ownership "${target_dir}" "${HM_SITE_USER}" "${HM_SITE_DOCROOT:-}" \
         || hm_warn "chown częściowo nieudany (kontynuuję)."
     fi
   fi
@@ -722,8 +818,100 @@ _hm_backup_restore_body() {
 
 hm_backup_restore() {
   local rc=0
+  hm_load_config
+  hm_backup_acquire_lock || return 1
+  trap 'hm_backup_release_lock' RETURN
   hm_site_context_push
   _hm_backup_restore_body "$@" || rc=$?
   hm_site_context_pop
   return "${rc}"
+}
+
+# Odtwórz snapshot full/<stamp>/ — system-configs + databases + sites/* + db-accounts.
+hm_backup_restore_full() {
+  local stamp="${1:-}"
+  hm_load_config
+  hm_detect_all
+  hm_rclone_check || return 1
+  hm_backup_acquire_lock || return 1
+  trap 'hm_backup_release_lock' RETURN
+
+  if [[ -z "${stamp}" ]]; then
+    local list
+    list="$(hm_backup_list_stamps "full")"
+    if [[ -z "${list}" ]]; then
+      hm_err "Brak snapshotów full/ na Drive."
+      return 1
+    fi
+    printf '%s\n' "${list}" | head -20 | sed 's/^/  /'
+    stamp="$(printf '%s\n' "${list}" | head -1)"
+    hm_info "Wybrano najnowszy full: ${stamp}"
+  fi
+  [[ "${stamp}" =~ ^[0-9]{8}-[0-9]{6}$ ]] || { hm_err "Nieprawidłowy stamp: ${stamp}"; return 1; }
+
+  local remote_base
+  remote_base="$(hm_backup_dest_full "${stamp}")"
+  if hm_backup_snapshot_is_incomplete "${remote_base}"; then
+    hm_err "Snapshot full ${stamp} niepełny — odmowa restore."
+    return 1
+  fi
+
+  local -a plan=(
+    "Opcjonalnie: system-configs.tar.gz(.enc) → / (OSTROŻNIE — nadpisze /etc bez shadow)"
+    "Import wszystkich baz z ${remote_base}/databases/*.sql.gz"
+    "Odtworzenie kont MySQL z db-accounts.sql(.enc) jeśli obecne"
+    "Dla każdej domeny w sites/: rozpakowanie plików (wymaga ręcznego/per-site restore OLS)"
+  )
+  if ! hm_confirm_plan_critical "full" \
+    "backup restore-full — ${stamp}" \
+    "Pełny restore serwera — trudny do cofnięcia. system-configs domyślnie POMIJANE (flaga --system)." \
+    "${plan[@]}"; then
+    return 1
+  fi
+
+  local do_system=0 a
+  for a in "${@:2}"; do
+    [[ "${a}" == "--system" ]] && do_system=1
+  done
+
+  if [[ "${do_system}" -eq 1 ]]; then
+    local sys_tmp
+    sys_tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-sys.XXXXXX.tar.gz")"
+    if hm_backup_fetch_maybe_decrypt "${remote_base}" "system-configs.tar.gz" "${sys_tmp}"; then
+      hm_warn "Rozpakowuję system-configs do / (bez shadow w archiwum)…"
+      tar -xzf "${sys_tmp}" -C / 2>/dev/null || hm_warn "Częściowy błąd tar system-configs."
+      hm_ok "system-configs zastosowane."
+    else
+      hm_warn "Brak system-configs.tar.gz(.enc)."
+    fi
+    rm -f "${sys_tmp}"
+  else
+    hm_info "Pomijam system-configs (dodaj --system aby zastosować)."
+  fi
+
+  # Bazy
+  local f name cli sock_args=()
+  cli="$(hm_mysql_cli)" || { hm_err "Brak mysql."; return 1; }
+  [[ -n "${MYSQL_SOCKET:-}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
+  while IFS= read -r f; do
+    [[ -n "${f}" ]] || continue
+    name="${f%.sql.gz}"
+    name="${name##*/}"
+    hm_is_valid_db_name "${name}" || continue
+    hm_info "Import DB ${name}…"
+    "${cli}" "${sock_args[@]}" -e "CREATE DATABASE IF NOT EXISTS \`${name}\`;" 2>/dev/null || true
+    rclone cat "${remote_base}/databases/${name}.sql.gz" | gunzip -c | "${cli}" "${sock_args[@]}" "${name}" \
+      || hm_warn "Import ${name} nieudany."
+  done < <(rclone lsf "${remote_base}/databases/" 2>/dev/null | grep '\.sql\.gz$' || true)
+
+  hm_backup_restore_db_accounts "${remote_base}" || hm_warn "db-accounts restore nieudany."
+
+  hm_info "Strony: użyj backup restore <domena> dla poszczególnych vhostów albo rozpakuj sites/<domena>/ ręcznie."
+  local site
+  while IFS= read -r site; do
+    [[ -n "${site}" ]] || continue
+    hm_info "  dostępne w snapshocie: sites/${site}/"
+  done < <(rclone lsd "${remote_base}/sites/" 2>/dev/null | awk '{print $NF}' || true)
+
+  hm_ok "restore-full ${stamp} — bazy/konta zakończone (pliki stron: per-domena)."
 }

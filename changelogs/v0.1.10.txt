@@ -14,3 +14,7 @@
 - Feat: `backup archive` — eksport kont MySQL 1:1 (`db-accounts.sql`: CREATE USER + GRANTS / hash) oraz konta Unix SSH (`unix-account.meta` + `unix-authorized_keys`)
 - Feat: `backup restore` — odtwarza konto Unix (przed plikami) i konta MySQL (po imporcie baz), gdy są w snapshocie archive
 - Feat: `backup` / `archive` — pliki z pełnego `$HOME` użytkownika strony (gdy obejmuje site root): `.ssh`, `.pm2`, `.config`, historia itd.; `site_root` w manifeście = faktycznie spakowany katalog
+- Fix: `backup restore` — `chown` nie gubi grupy `public_html` (nogroup/lsadm); tar `--no-same-owner`; odrzucenie `--files-only`+`--db-only`; check miejsca na FS docelowym; escapowanie JSON w manifestach
+- Feat/Sec: `backup full` — `db-accounts.sql`, `restore-full`; system-configs bez shadow/privkey; opcjonalne `BACKUP_ENCRYPT_PASSPHRASE`; flock; prune grace orphan; sha256 wrażliwych plików archive; child ze współdzielonym home → tylko docroot; umask w subshellu
+- Fix: `hm_find_site_by_arg` — brak cichego partial match; `backup restore`/`archive` używają dokładnej nazwy (`hm_find_site_by_arg_exact`)
+- Fix: `backup archive` db-accounts — `hm_mysql_exec_raw` (`-N -B -r`) dla SHOW CREATE USER/GRANTS (bez podwójnego `\\_` przy bazach z `_`)

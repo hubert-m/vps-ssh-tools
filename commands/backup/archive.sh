@@ -212,10 +212,11 @@ hm_archive_export_mysql_accounts() {
       printf 'DROP USER IF EXISTS %s@%s;\n' "$(hm_sql_quote "${u}")" "$(hm_sql_quote "${host}")" >> "${out_sql}"
 
       create=""
-      create="$(hm_mysql_exec -e "SHOW CREATE USER $(hm_sql_quote "${u}")@$(hm_sql_quote "${host}");" 2>/dev/null | head -1 || true)"
+      # -r (raw): batch bez -r podwaja backslashe w SHOW GRANTS (`alpha\_x` → `alpha\\_x`)
+      create="$(hm_mysql_exec_raw -e "SHOW CREATE USER $(hm_sql_quote "${u}")@$(hm_sql_quote "${host}");" 2>/dev/null | head -1 || true)"
       if [[ -z "${create}" ]]; then
         # fallback gdy brak SHOW CREATE USER — authentication_string + plugin
-        create="$(hm_mysql_exec -e "
+        create="$(hm_mysql_exec_raw -e "
 SELECT CONCAT(
   'CREATE USER ', QUOTE(User), '@', QUOTE(Host),
   ' IDENTIFIED WITH ''', IFNULL(NULLIF(plugin,''), 'mysql_native_password'), ''' AS ',
@@ -234,7 +235,7 @@ LIMIT 1;" 2>/dev/null | head -1 || true)"
       [[ "${create}" == *';' ]] || create="${create};"
       printf '%s\n' "${create}" >> "${out_sql}"
 
-      grants="$(hm_mysql_exec -e "SHOW GRANTS FOR $(hm_sql_quote "${u}")@$(hm_sql_quote "${host}");" 2>/dev/null || true)"
+      grants="$(hm_mysql_exec_raw -e "SHOW GRANTS FOR $(hm_sql_quote "${u}")@$(hm_sql_quote "${host}");" 2>/dev/null || true)"
       while IFS= read -r line || [[ -n "${line}" ]]; do
         [[ -n "${line}" ]] || continue
         [[ "${line}" == *';' ]] || line="${line};"
@@ -270,36 +271,38 @@ hm_archive_export_unix_account() {
   gname="$(getent group "${gid}" 2>/dev/null | cut -d: -f1 || true)"
   [[ -n "${gname}" ]] || gname="${user}"
 
-  umask 077
-  {
-    printf 'name=%s\n' "${user}"
-    printf 'uid=%s\n' "${uid}"
-    printf 'gid=%s\n' "${gid}"
-    printf 'group=%s\n' "${gname}"
-    printf 'home=%s\n' "${home}"
-    printf 'shell=%s\n' "${shell}"
-    printf 'gecos=%s\n' "${gecos}"
-    printf 'shadow=%s\n' "${shadow_hash}"
-    printf 'shared=%s\n' "${HM_DEL_USER_SHARED:-0}"
-    printf 'protected=%s\n' "${HM_DEL_USER_PROTECTED:-0}"
-    printf 'exported_at=%s\n' "$(date -Iseconds)"
-  } > "${out_meta}"
-  chmod 600 "${out_meta}"
+  # umask tylko w subshellu — nie wycieka na resztę procesu archive
+  (
+    umask 077
+    {
+      printf 'name=%s\n' "${user}"
+      printf 'uid=%s\n' "${uid}"
+      printf 'gid=%s\n' "${gid}"
+      printf 'group=%s\n' "${gname}"
+      printf 'home=%s\n' "${home}"
+      printf 'shell=%s\n' "${shell}"
+      printf 'gecos=%s\n' "${gecos}"
+      printf 'shadow=%s\n' "${shadow_hash}"
+      printf 'shared=%s\n' "${HM_DEL_USER_SHARED:-0}"
+      printf 'protected=%s\n' "${HM_DEL_USER_PROTECTED:-0}"
+      printf 'exported_at=%s\n' "$(date -Iseconds)"
+    } > "${out_meta}"
+    chmod 600 "${out_meta}"
 
-  : > "${out_keys}"
-  chmod 600 "${out_keys}"
-  if [[ -n "${home}" && -f "${home}/.ssh/authorized_keys" && ! -L "${home}/.ssh" && ! -L "${home}/.ssh/authorized_keys" ]]; then
-    keysf="${home}/.ssh/authorized_keys"
-    # tylko linie wyglądające na klucz (bez śmieci)
-    while IFS= read -r line || [[ -n "${line}" ]]; do
-      [[ -n "${line}" ]] || continue
-      [[ "${line}" =~ ^[[:space:]]*# ]] && { printf '%s\n' "${line}" >> "${out_keys}"; continue; }
-      if declare -F hm_access_is_valid_ssh_key_line >/dev/null 2>&1; then
-        hm_access_is_valid_ssh_key_line "${line}" || continue
-      fi
-      printf '%s\n' "${line}" >> "${out_keys}"
-    done < "${keysf}"
-  fi
+    : > "${out_keys}"
+    chmod 600 "${out_keys}"
+    if [[ -n "${home}" && -f "${home}/.ssh/authorized_keys" && ! -L "${home}/.ssh" && ! -L "${home}/.ssh/authorized_keys" ]]; then
+      keysf="${home}/.ssh/authorized_keys"
+      while IFS= read -r line || [[ -n "${line}" ]]; do
+        [[ -n "${line}" ]] || continue
+        [[ "${line}" =~ ^[[:space:]]*# ]] && { printf '%s\n' "${line}" >> "${out_keys}"; continue; }
+        if declare -F hm_access_is_valid_ssh_key_line >/dev/null 2>&1; then
+          hm_access_is_valid_ssh_key_line "${line}" || continue
+        fi
+        printf '%s\n' "${line}" >> "${out_keys}"
+      done < "${keysf}"
+    fi
+  )
   return 0
 }
 
@@ -315,8 +318,13 @@ _hm_backup_archive_site_body() {
   hm_detect_all
   hm_rclone_check || return 1
   hm_backup_check_space || return 1
+  hm_backup_acquire_lock || return 1
+  trap 'hm_backup_release_lock' RETURN
 
-  domain="$(hm_find_site_by_arg "${domain}")" || return 1
+  domain="$(hm_find_site_by_arg_exact "${domain}" 2>/dev/null)" || {
+    # exact fail — spróbuj z potwierdzeniem partial (TTY) albo jasny błąd
+    domain="$(hm_find_site_by_arg "${domain}")" || return 1
+  }
 
   hm_status_line "Inwentaryzacja ${domain}…"
   if ! hm_site_collect_delete_inventory "${domain}" 0 0 0; then
@@ -421,16 +429,22 @@ _hm_backup_archive_site_body() {
 
   # Konta MySQL (hasła jako hash + GRANTS) — wymagane do restore 1:1
   local has_db_accounts=0
+  local db_acc_sha="" unix_meta_sha=""
   local db_acc_sql="${TMP_DIR}/db-accounts-${domain}-${stamp}.sql"
   if [[ "${#archive_db_users[@]}" -gt 0 ]]; then
     if hm_archive_export_mysql_accounts "${db_acc_sql}" "${archive_db_users[@]}"; then
-      if hm_rclone_copyto "${db_acc_sql}" "${remote_base}/db-accounts.sql" \
-        || cat "${db_acc_sql}" | hm_rclone_rcat "${remote_base}/db-accounts.sql"; then
+      local enc_db remote_db
+      enc_db="$(hm_backup_maybe_encrypt_file "${db_acc_sql}")"
+      remote_db="db-accounts.sql"
+      [[ "${enc_db}" == *.enc ]] && remote_db="db-accounts.sql.enc"
+      db_acc_sha="$(hm_backup_sha256_file "${enc_db}" || true)"
+      if hm_rclone_copyto "${enc_db}" "${remote_base}/${remote_db}" \
+        || cat "${enc_db}" | hm_rclone_rcat "${remote_base}/${remote_db}"; then
         has_db_accounts=1
-        hm_ok "Wysłano db-accounts.sql (${#archive_db_users[@]} userów: ${dbu_desc})"
+        hm_ok "Wysłano ${remote_db} (${#archive_db_users[@]} userów: ${dbu_desc})"
       else
-        rm -f "${db_acc_sql}"
-        hm_archive_abort "Upload db-accounts.sql nieudany. Nic nie usunięto z VPS." "${remote_base}"
+        rm -f "${db_acc_sql}" "${db_acc_sql}.enc"
+        hm_archive_abort "Upload ${remote_db} nieudany. Nic nie usunięto z VPS." "${remote_base}"
         return 1
       fi
     else
@@ -439,7 +453,7 @@ _hm_backup_archive_site_body() {
   else
     hm_info "Brak dedykowanych kont MySQL do eksportu."
   fi
-  rm -f "${db_acc_sql}"
+  rm -f "${db_acc_sql}" "${db_acc_sql}.enc" 2>/dev/null || true
 
   # Konto Unix + authorized_keys (hash z shadow)
   local has_unix_account=0
@@ -447,13 +461,18 @@ _hm_backup_archive_site_body() {
   local unix_keys="${TMP_DIR}/unix-keys-${domain}-${stamp}.txt"
   if [[ -n "${HM_DEL_USER}" ]] && id "${HM_DEL_USER}" >/dev/null 2>&1; then
     if hm_archive_export_unix_account "${HM_DEL_USER}" "${unix_meta}" "${unix_keys}"; then
-      if hm_rclone_copyto "${unix_meta}" "${remote_base}/unix-account.meta" \
-        || cat "${unix_meta}" | hm_rclone_rcat "${remote_base}/unix-account.meta"; then
+      local enc_ux remote_ux
+      enc_ux="$(hm_backup_maybe_encrypt_file "${unix_meta}")"
+      remote_ux="unix-account.meta"
+      [[ "${enc_ux}" == *.enc ]] && remote_ux="unix-account.meta.enc"
+      unix_meta_sha="$(hm_backup_sha256_file "${enc_ux}" || true)"
+      if hm_rclone_copyto "${enc_ux}" "${remote_base}/${remote_ux}" \
+        || cat "${enc_ux}" | hm_rclone_rcat "${remote_base}/${remote_ux}"; then
         has_unix_account=1
-        hm_ok "Wysłano unix-account.meta (${HM_DEL_USER})"
+        hm_ok "Wysłano ${remote_ux} (${HM_DEL_USER})"
       else
-        rm -f "${unix_meta}" "${unix_keys}"
-        hm_archive_abort "Upload unix-account.meta nieudany. Nic nie usunięto z VPS." "${remote_base}"
+        rm -f "${unix_meta}" "${unix_keys}" "${unix_meta}.enc"
+        hm_archive_abort "Upload ${remote_ux} nieudany. Nic nie usunięto z VPS." "${remote_base}"
         return 1
       fi
       if [[ -s "${unix_keys}" ]]; then
@@ -467,7 +486,7 @@ _hm_backup_archive_site_body() {
   else
     hm_info "Brak konta Unix strony do eksportu."
   fi
-  rm -f "${unix_meta}" "${unix_keys}"
+  rm -f "${unix_meta}" "${unix_keys}" "${unix_meta}.enc" 2>/dev/null || true
 
   local backup_root="${archive_files_root}"
   if [[ -z "${backup_root}" || ! -d "${backup_root}" ]]; then
@@ -584,25 +603,36 @@ _hm_backup_archive_site_body() {
   dbu_json="${dbu_json%,}"
 
   local manifest="${TMP_DIR}/manifest-archive-${domain}-${stamp}.json"
+  local _j_domain _j_host _j_root _j_doc _j_user _j_php _j_remote _j_uhome
+  _j_domain="$(hm_json_escape_str "${domain}")"
+  _j_host="$(hm_json_escape_str "${BACKUP_HOST_LABEL:-}")"
+  _j_root="$(hm_json_escape_str "${backup_root}")"
+  _j_doc="$(hm_json_escape_str "${HM_DEL_DOCROOT}")"
+  _j_user="$(hm_json_escape_str "${HM_DEL_USER}")"
+  _j_uhome="$(hm_json_escape_str "$(getent passwd "${HM_DEL_USER}" 2>/dev/null | cut -d: -f6 || true)")"
+  _j_php="$(hm_json_escape_str "${HM_SITE_PHP:-}")"
+  _j_remote="$(hm_json_escape_str "${remote_base}")"
   cat > "${manifest}" <<EOF
 {
   "type": "archive",
   "archived": true,
-  "domain": "${domain}",
-  "host": "${BACKUP_HOST_LABEL:-}",
+  "domain": "${_j_domain}",
+  "host": "${_j_host}",
   "stamp": "${stamp}",
-  "site_root": "${backup_root}",
-  "docroot": "${HM_DEL_DOCROOT}",
-  "site_user": "${HM_DEL_USER}",
-  "unix_home": "$(getent passwd "${HM_DEL_USER}" 2>/dev/null | cut -d: -f6 || true)",
-  "php": "${HM_SITE_PHP:-}",
+  "site_root": "${_j_root}",
+  "docroot": "${_j_doc}",
+  "site_user": "${_j_user}",
+  "unix_home": "${_j_uhome}",
+  "php": "${_j_php}",
   "databases": [${db_json}],
   "db_users": [${dbu_json}],
   "db_accounts": ${has_db_accounts},
   "unix_account": ${has_unix_account},
+  "sha256_db_accounts": "$(hm_json_escape_str "${db_acc_sha}")",
+  "sha256_unix_account": "$(hm_json_escape_str "${unix_meta_sha}")",
   "files_mode": "${files_mode}",
   "chunks_count": ${chunks_count},
-  "remote": "${remote_base}",
+  "remote": "${_j_remote}",
   "created_at": "$(date -Iseconds)"
 }
 EOF
@@ -618,13 +648,34 @@ EOF
     hm_archive_abort "Archiwizacja przerwana po nieudanej weryfikacji. Nic nie usunięto z VPS." "${remote_base}"
     return 1
   fi
-  if [[ "${has_db_accounts}" -eq 1 ]] && ! hm_rclone_file_nonempty "${remote_base}/db-accounts.sql"; then
-    hm_archive_abort "WERYFIKACJA NIEUDANA: brak/pusty db-accounts.sql. Nic nie usunięto z VPS." "${remote_base}"
+  local _db_remote="db-accounts.sql"
+  hm_rclone_file_nonempty "${remote_base}/db-accounts.sql.enc" 2>/dev/null && _db_remote="db-accounts.sql.enc"
+  local _ux_remote="unix-account.meta"
+  hm_rclone_file_nonempty "${remote_base}/unix-account.meta.enc" 2>/dev/null && _ux_remote="unix-account.meta.enc"
+  if [[ "${has_db_accounts}" -eq 1 ]] && ! hm_rclone_file_nonempty "${remote_base}/${_db_remote}"; then
+    hm_archive_abort "WERYFIKACJA NIEUDANA: brak/pusty ${_db_remote}. Nic nie usunięto z VPS." "${remote_base}"
     return 1
   fi
-  if [[ "${has_unix_account}" -eq 1 ]] && ! hm_rclone_file_nonempty "${remote_base}/unix-account.meta"; then
-    hm_archive_abort "WERYFIKACJA NIEUDANA: brak/pusty unix-account.meta. Nic nie usunięto z VPS." "${remote_base}"
+  if [[ "${has_unix_account}" -eq 1 ]] && ! hm_rclone_file_nonempty "${remote_base}/${_ux_remote}"; then
+    hm_archive_abort "WERYFIKACJA NIEUDANA: brak/pusty ${_ux_remote}. Nic nie usunięto z VPS." "${remote_base}"
     return 1
+  fi
+  # SHA256 (gdy remote wspiera hashsum) — wykrycie uszkodzonego uploadu przed usunięciem z VPS
+  if [[ -n "${db_acc_sha}" && "${has_db_accounts}" -eq 1 ]]; then
+    local remote_hash
+    remote_hash="$(hm_rclone_remote_sha256 "${remote_base}/${_db_remote}" || true)"
+    if [[ -n "${remote_hash}" && "${remote_hash}" != "${db_acc_sha}" ]]; then
+      hm_archive_abort "WERYFIKACJA NIEUDANA: SHA256 ${_db_remote} lokalnie≠Drive. Nic nie usunięto z VPS." "${remote_base}"
+      return 1
+    fi
+  fi
+  if [[ -n "${unix_meta_sha}" && "${has_unix_account}" -eq 1 ]]; then
+    local remote_hash_u
+    remote_hash_u="$(hm_rclone_remote_sha256 "${remote_base}/${_ux_remote}" || true)"
+    if [[ -n "${remote_hash_u}" && "${remote_hash_u}" != "${unix_meta_sha}" ]]; then
+      hm_archive_abort "WERYFIKACJA NIEUDANA: SHA256 ${_ux_remote} lokalnie≠Drive. Nic nie usunięto z VPS." "${remote_base}"
+      return 1
+    fi
   fi
 
   # --- Faza II: usunięcie ---

@@ -28,12 +28,20 @@ hm_backup_prune_scope() {
   done < <(hm_backup_list_stamps "${rel}")
 
   local total="${#stamps[@]}"
-  local i=0 epoch remote_base
+  local i=0 epoch remote_base grace_h grace_cut
   local -a complete=()
-  # 1) niepełne/osierocone (brak manifestu / status partial|failed) — zawsze do purge, nie liczą się do keep_min
+  grace_h="${BACKUP_ORPHAN_GRACE_HOURS:-24}"
+  [[ "${grace_h}" =~ ^[0-9]+$ ]] || grace_h=24
+  grace_cut=$((now - grace_h * 3600))
+  # 1) niepełne/osierocone — do purge TYLKO gdy starsze niż grace (trwający backup ma świeży stamp bez manifestu)
   for s in "${stamps[@]}"; do
     remote_base="$(hm_rclone_dest "${rel}/${s}")"
     if hm_backup_snapshot_is_incomplete "${remote_base}"; then
+      epoch="$(hm_backup_stamp_epoch "${s}")"
+      if [[ "${epoch}" -gt 0 && "${epoch}" -ge "${grace_cut}" ]]; then
+        hm_warn "Pomijam świeży niepełny snapshot (<${grace_h}h, możliwy trwający backup): ${rel}/${s}"
+        continue
+      fi
       hm_warn "Niepełny/osierocony snapshot → do usunięcia: ${rel}/${s}"
       printf '%s\n' "${remote_base}"
       continue
@@ -88,6 +96,8 @@ hm_backup_prune() {
 
   hm_load_config
   hm_rclone_check || return 1
+  hm_backup_acquire_lock || return 1
+  trap 'hm_backup_release_lock' RETURN
   days="${days:-${BACKUP_KEEP_DAYS}}"
   local keep_min="${BACKUP_KEEP_MIN}"
   if ! [[ "${days}" =~ ^[0-9]+$ ]]; then
@@ -100,6 +110,7 @@ hm_backup_prune() {
 
   echo "${C_BOLD}Backup prune${C_RESET}"
   echo "  Retencja : ${days} dni (zostaw min. ${keep_min} najnowszych na katalog)"
+  echo "  Grace orphan: ${BACKUP_ORPHAN_GRACE_HOURS:-24}h (świeże bez manifestu nie kasowane)"
   echo "  Dry-run  : $([[ "${dry_run}" -eq 1 ]] && echo tak || echo nie)"
   echo
 

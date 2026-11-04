@@ -21,6 +21,18 @@ hm_mysql_exec() {
   fi
 }
 
+# Jak hm_mysql_exec, ale z -r (raw) — bez podwójnego escapowania `\_` w SHOW GRANTS
+# (batch bez -r zamienia `\` → `\\`, co psuje granty typu `alpha\_x\_y` przy restore).
+hm_mysql_exec_raw() {
+  local cli
+  cli="$(hm_mysql_cli)" || return 1
+  if [[ -n "${MYSQL_SOCKET}" ]]; then
+    "${cli}" --socket="${MYSQL_SOCKET}" -N -B -r "$@"
+  else
+    "${cli}" -N -B -r "$@"
+  fi
+}
+
 hm_db_size_bytes() {
   local dbname="$1"
   if ! hm_is_valid_db_name "${dbname}"; then

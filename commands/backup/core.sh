@@ -2,19 +2,131 @@
 # Backup: upload / site / full
 
 hm_backup_check_space() {
+  # $1 opcjonalnie — ścieżka do sprawdzenia (domyślnie /); restore podaje target_dir
+  local path="${1:-/}"
   local free
-  free="$(hm_disk_free_percent /)"
+  # katalog docelowy może jeszcze nie istnieć — sprawdź parent / mount
+  if [[ ! -d "${path}" ]]; then
+    path="$(dirname "${path}")"
+  fi
+  [[ -d "${path}" ]] || path="/"
+  free="$(hm_disk_free_percent "${path}")"
   if [[ -z "${free}" ]]; then
-    hm_warn "Nie udało się odczytać wolnego miejsca na dysku."
+    hm_warn "Nie udało się odczytać wolnego miejsca na dysku (${path})."
     return 0
   fi
   if [[ "${free}" -lt "${MIN_FREE_PERCENT}" ]]; then
-    hm_err "Za mało wolnego miejsca: ${free}% (wymagane >= ${MIN_FREE_PERCENT}%)."
-    hm_err "Backup przerwany, aby nie zapełnić dysku. Zwolnij miejsce lub obniż MIN_FREE_PERCENT w hmtools.conf."
+    hm_err "Za mało wolnego miejsca na ${path}: ${free}% (wymagane >= ${MIN_FREE_PERCENT}%)."
+    hm_err "Backup/restore przerwany, aby nie zapełnić dysku. Zwolnij miejsce lub obniż MIN_FREE_PERCENT w hmtools.conf."
     return 1
   fi
-  hm_info "Wolne miejsce: ${free}% (próg ${MIN_FREE_PERCENT}%)."
+  hm_info "Wolne miejsce (${path}): ${free}% (próg ${MIN_FREE_PERCENT}%)."
   return 0
+}
+
+# Wspólny flock: backup / archive / restore / prune nie mogą działać równolegle.
+hm_backup_acquire_lock() {
+  local lock_dir lock
+  if [[ -d /run && -w /run ]]; then
+    lock="/run/hmtools-backup.lock"
+  else
+    lock_dir="${TMP_DIR:-/tmp}"
+    mkdir -p "${lock_dir}" 2>/dev/null || true
+    lock="${lock_dir}/hmtools-backup.lock"
+  fi
+  HM_BACKUP_LOCK_PATH="${lock}"
+  # shellcheck disable=SC2094
+  exec 9>"${lock}"
+  if ! flock -n 9; then
+    hm_err "Inna operacja backup/archive/restore/prune w toku (flock: ${lock})."
+    exec 9>&- 2>/dev/null || true
+    return 1
+  fi
+  return 0
+}
+
+hm_backup_release_lock() {
+  flock -u 9 2>/dev/null || true
+  exec 9>&- 2>/dev/null || true
+  unset HM_BACKUP_LOCK_PATH 2>/dev/null || true
+}
+
+# Szyfrowanie opcjonalne (BACKUP_ENCRYPT_PASSPHRASE) — AES-256-CBC + pbkdf2.
+# stdout: ścieżka pliku do uploadu (src lub src.enc)
+hm_backup_maybe_encrypt_file() {
+  local src="$1"
+  local out="${src}.enc"
+  [[ -f "${src}" ]] || { printf '%s\n' "${src}"; return 1; }
+  if [[ -z "${BACKUP_ENCRYPT_PASSPHRASE:-}" ]]; then
+    printf '%s\n' "${src}"
+    return 0
+  fi
+  if ! hm_have_cmd openssl; then
+    hm_warn "BACKUP_ENCRYPT_PASSPHRASE ustawione, ale brak openssl — wysyłam plaintext."
+    printf '%s\n' "${src}"
+    return 0
+  fi
+  if openssl enc -aes-256-cbc -pbkdf2 -salt \
+    -pass env:BACKUP_ENCRYPT_PASSPHRASE \
+    -in "${src}" -out "${out}" 2>/dev/null; then
+    chmod 600 "${out}" 2>/dev/null || true
+    printf '%s\n' "${out}"
+    return 0
+  fi
+  hm_warn "openssl enc nieudany — plaintext."
+  printf '%s\n' "${src}"
+}
+
+hm_backup_sha256_file() {
+  local f="$1"
+  [[ -f "${f}" ]] || return 1
+  if hm_have_cmd sha256sum; then
+    sha256sum "${f}" 2>/dev/null | awk '{print $1}'
+  elif hm_have_cmd shasum; then
+    shasum -a 256 "${f}" 2>/dev/null | awk '{print $1}'
+  else
+    return 1
+  fi
+}
+
+# SHA256 pliku na Drive (gdy remote wspiera hashsum); inaczej pusty string.
+hm_rclone_remote_sha256() {
+  local remote="$1"
+  rclone hashsum SHA256 "${remote}" 2>/dev/null | awk '{print $1}' | head -1
+}
+
+# Gdy kilka domen dzieli ten sam vhRoot/home — child pakuje tylko docroot (bez duplikatu całego home).
+hm_backup_prefer_docroot_if_shared_home() {
+  local domain="$1"
+  local root="$2"
+  local docroot="$3"
+  local other o_root root_n doc_n
+
+  [[ -n "${root}" && -d "${root}" ]] || { printf '%s\n' "${root}"; return 0; }
+  root_n="$(realpath -m "${root}" 2>/dev/null || echo "${root}")"
+  root_n="${root_n%/}"
+  doc_n=""
+  if [[ -n "${docroot}" && -d "${docroot}" ]]; then
+    doc_n="$(realpath -m "${docroot}" 2>/dev/null || echo "${docroot}")"
+    doc_n="${doc_n%/}"
+  fi
+
+  declare -F hm_discover_sites >/dev/null 2>&1 && hm_discover_sites >/dev/null 2>&1 || true
+  for other in "${HM_SITES_LIST[@]:-}"; do
+    [[ -n "${other}" && "${other}" != "${domain}" ]] || continue
+    o_root="$(hm_ols_vhroot_for_domain "${other}" 2>/dev/null || true)"
+    [[ -n "${o_root}" && -d "${o_root}" ]] || continue
+    o_root="$(realpath -m "${o_root}" 2>/dev/null || echo "${o_root}")"
+    o_root="${o_root%/}"
+    if [[ "${o_root}" == "${root_n}" ]]; then
+      if [[ -n "${doc_n}" && "${doc_n}" == "${root_n}"/* && "${doc_n}" != "${root_n}" ]]; then
+        hm_info "Współdzielony home z ${other} — pakuję tylko docroot ${doc_n} (bez duplikatu całego HOME)." >&2
+        printf '%s\n' "${doc_n}"
+        return 0
+      fi
+    fi
+  done
+  printf '%s\n' "${root_n}"
 }
 
 hm_backup_tar_excludes() {
@@ -286,6 +398,8 @@ hm_backup_site() {
   hm_detect_all
   hm_rclone_check || return 1
   hm_backup_check_space || return 1
+  hm_backup_acquire_lock || return 1
+  trap 'hm_backup_release_lock' RETURN
 
   hm_site_context_push "${domain}" || return 1
   local stamp remote_base
@@ -321,12 +435,13 @@ hm_backup_site() {
   done < <(hm_dbs_for_site "${domain}" "${HM_SITE_DOCROOT}" "${HM_SITE_ROOT}" "${HM_SITE_USER}")
   db_list="${db_list%,}"
 
-  # Pliki — pełny HOME użytkownika strony, gdy obejmuje site root (.ssh/.pm2/…)
+  # Pliki — pełny HOME (gdy obejmuje site root); child ze współdzielonym home → tylko docroot
   local backup_root
   backup_root="$(hm_backup_resolve_files_root "${HM_SITE_ROOT:-${HM_SITE_DOCROOT}}" "${HM_SITE_USER}")"
   if [[ -z "${backup_root}" || ! -d "${backup_root}" ]]; then
     backup_root="${HM_SITE_ROOT:-${HM_SITE_DOCROOT}}"
   fi
+  backup_root="$(hm_backup_prefer_docroot_if_shared_home "${domain}" "${backup_root}" "${HM_SITE_DOCROOT}")"
   if [[ -z "${backup_root}" || ! -d "${backup_root}" ]]; then
     hm_err "Brak katalogu strony do backupu."
     hm_site_context_pop
@@ -360,20 +475,28 @@ hm_backup_site() {
     fail_db_json="$(printf '%s\n' "${failed_dbs[@]}" | awk 'BEGIN{printf "["} {printf sep "\"" $0 "\""; sep=","} END{printf "]"}')"
   fi
 
+  local _j_domain _j_host _j_root _j_doc _j_user _j_php _j_remote
+  _j_domain="$(hm_json_escape_str "${domain}")"
+  _j_host="$(hm_json_escape_str "${BACKUP_HOST_LABEL}")"
+  _j_root="$(hm_json_escape_str "${backup_root}")"
+  _j_doc="$(hm_json_escape_str "${HM_SITE_DOCROOT}")"
+  _j_user="$(hm_json_escape_str "${HM_SITE_USER:-}")"
+  _j_php="$(hm_json_escape_str "${HM_SITE_PHP}")"
+  _j_remote="$(hm_json_escape_str "${remote_base}")"
   cat > "${manifest}" <<EOF
 {
   "type": "site",
   "status": "${status}",
-  "domain": "${domain}",
-  "host": "${BACKUP_HOST_LABEL}",
+  "domain": "${_j_domain}",
+  "host": "${_j_host}",
   "stamp": "${stamp}",
-  "site_root": "${backup_root}",
-  "docroot": "${HM_SITE_DOCROOT}",
-  "site_user": "${HM_SITE_USER:-}",
-  "php": "${HM_SITE_PHP}",
+  "site_root": "${_j_root}",
+  "docroot": "${_j_doc}",
+  "site_user": "${_j_user}",
+  "php": "${_j_php}",
   "databases": [${db_list}],
   "failed_databases": ${fail_db_json},
-  "remote": "${remote_base}",
+  "remote": "${_j_remote}",
   "created_at": "$(date -Iseconds)"
 }
 EOF
@@ -415,30 +538,40 @@ hm_backup_system_configs() {
     return 0
   fi
 
-  # Lekki tar wybranych ścieżek (bez ogromnych logów) — stream, bez lokalnego archiwum
-  local tar_err tar_rc gzip_rc rcat_rc
+  # BEZ /etc/shadow|gshadow oraz kluczy prywatnych SSL (privkey / *.key) — nie na plaintext Drive
+  local tar_err tar_rc gzip_rc rcat_rc local_gz enc_path remote_name
   tar_err="$(mktemp "${TMP_DIR:-/tmp}/hmtools-syscfg.XXXXXX.err")"
+  local_gz="$(mktemp "${TMP_DIR:-/tmp}/hmtools-syscfg.XXXXXX.tar.gz")"
   set +e
   set +o pipefail
-  # shellcheck disable=SC2086
   tar --warning=no-file-changed --ignore-failed-read -cf - \
     --exclude='*.log' --exclude='cache' --exclude='tmp' \
-    "${paths[@]}" 2>"${tar_err}" | gzip -c | hm_rclone_rcat "${remote_base}/system-configs.tar.gz"
-  local -a _ps=( "${PIPESTATUS[@]}" )
-  tar_rc=${_ps[0]:-1}
-  gzip_rc=${_ps[1]:-1}
-  rcat_rc=${_ps[2]:-1}
+    --exclude='shadow' --exclude='shadow-' --exclude='gshadow' --exclude='gshadow-' \
+    --exclude='privkey.pem' --exclude='privkey.*.pem' --exclude='*.key' \
+    "${paths[@]}" 2>"${tar_err}" | gzip -c > "${local_gz}"
+  tar_rc=$?
   set -o pipefail
   set -e
   if [[ -s "${tar_err}" ]]; then
     hm_warn "tar (system): $(head -c 200 "${tar_err}" | tr '\n' ' ')"
   fi
   rm -f "${tar_err}"
-  if [[ "${gzip_rc}" -eq 0 && "${rcat_rc}" -eq 0 ]] && hm_tar_pipe_ok "${tar_rc}"; then
-    hm_ok "Konfiguracje systemowe OK."
+  if ! hm_tar_pipe_ok "${tar_rc}" || [[ ! -s "${local_gz}" ]]; then
+    rm -f "${local_gz}"
+    hm_err "Błąd archiwum konfiguracji systemowych (tar=${tar_rc})."
+    return 1
+  fi
+
+  enc_path="$(hm_backup_maybe_encrypt_file "${local_gz}")"
+  remote_name="system-configs.tar.gz"
+  [[ "${enc_path}" == *.enc ]] && remote_name="system-configs.tar.gz.enc"
+  if hm_rclone_copyto "${enc_path}" "${remote_base}/${remote_name}"; then
+    hm_ok "Konfiguracje systemowe OK (${remote_name}; bez shadow/privkey)."
+    rm -f "${local_gz}" "${local_gz}.enc" 2>/dev/null || true
     return 0
   fi
-  hm_err "Błąd archiwum konfiguracji systemowych (tar=${tar_rc} gzip=${gzip_rc} rcat=${rcat_rc})."
+  rm -f "${local_gz}" "${local_gz}.enc" 2>/dev/null || true
+  hm_err "Upload konfiguracji systemowych nieudany."
   return 1
 }
 
@@ -472,6 +605,8 @@ hm_backup_full() {
   hm_detect_all
   hm_rclone_check || return 1
   hm_backup_check_space || return 1
+  hm_backup_acquire_lock || return 1
+  trap 'hm_backup_release_lock' RETURN
 
   local stamp remote_base
   stamp="$(hm_backup_stamp)"
@@ -481,10 +616,13 @@ hm_backup_full() {
   hm_info "Pełny backup serwera"
   hm_info "Root Drive: ${RCLONE_REMOTE}"
   hm_info "Cel: ${remote_base}"
+  if [[ -z "${BACKUP_ENCRYPT_PASSPHRASE:-}" ]]; then
+    hm_warn "BACKUP_ENCRYPT_PASSPHRASE nieustawione — wrażliwe artefakty (db-accounts / opcjonalnie system-configs) idą bez szyfrowania klienta. Zalecane: passphrase lub rclone crypt remote."
+  fi
   hm_rclone_ensure_backup_layout
   hm_rclone_mkdir "${remote_base}"
 
-  local cfg_ok=1 sites_fail=0 db_ok=1
+  local cfg_ok=1 sites_fail=0 db_ok=1 db_acc_ok=0
   local -a failed_sites=()
   HM_BACKUP_DB_FAILED=()
   if ! hm_backup_system_configs "${remote_base}"; then
@@ -493,6 +631,39 @@ hm_backup_full() {
   if ! hm_backup_all_databases "${remote_base}"; then
     db_ok=0
   fi
+
+  # Konta MySQL wszystkich nie-systemowych użytkowników (CREATE USER + GRANTS)
+  mkdir -p "${TMP_DIR}"
+  local db_acc_sql="${TMP_DIR}/db-accounts-full-${stamp}.sql"
+  local -a full_db_users=()
+  local _u
+  while IFS= read -r _u; do
+    [[ -n "${_u}" ]] || continue
+    case "${_u}" in
+      root|mysql|mariadb.sys|debian-sys-maint|phpmyadmin|cyberpanel) continue ;;
+    esac
+    hm_is_valid_db_name "${_u}" || continue
+    full_db_users+=("${_u}")
+  done < <(hm_mysql_exec -e "SELECT DISTINCT User FROM mysql.user;" 2>/dev/null || true)
+  if [[ "${#full_db_users[@]}" -gt 0 ]] && declare -F hm_archive_export_mysql_accounts >/dev/null 2>&1; then
+    if hm_archive_export_mysql_accounts "${db_acc_sql}" "${full_db_users[@]}"; then
+      local enc_acc remote_acc
+      enc_acc="$(hm_backup_maybe_encrypt_file "${db_acc_sql}")"
+      remote_acc="db-accounts.sql"
+      [[ "${enc_acc}" == *.enc ]] && remote_acc="db-accounts.sql.enc"
+      if hm_rclone_copyto "${enc_acc}" "${remote_base}/${remote_acc}" \
+        || cat "${enc_acc}" | hm_rclone_rcat "${remote_base}/${remote_acc}"; then
+        db_acc_ok=1
+        hm_ok "Wysłano ${remote_acc} (${#full_db_users[@]} kont MySQL)."
+      else
+        hm_warn "Upload ${remote_acc} nieudany."
+      fi
+      rm -f "${db_acc_sql}" "${db_acc_sql}.enc" 2>/dev/null || true
+    fi
+  else
+    hm_info "Brak kont MySQL do eksportu (lub brak hm_archive_export_mysql_accounts)."
+  fi
+  rm -f "${db_acc_sql}" 2>/dev/null || true
 
   hm_discover_sites
   local domain
@@ -509,6 +680,7 @@ hm_backup_full() {
     local backup_root
     backup_root="$(hm_backup_resolve_files_root "${HM_SITE_ROOT:-${HM_SITE_DOCROOT}}" "${HM_SITE_USER}")"
     [[ -z "${backup_root}" || ! -d "${backup_root}" ]] && backup_root="${HM_SITE_ROOT:-${HM_SITE_DOCROOT}}"
+    backup_root="$(hm_backup_prefer_docroot_if_shared_home "${domain}" "${backup_root}" "${HM_SITE_DOCROOT}")"
     if [[ -n "${backup_root}" && -d "${backup_root}" ]]; then
       if ! hm_upload_files_smart "${backup_root}" "${site_remote}"; then
         hm_warn "Błąd wysyłania plików dla ${domain} — kontynuuję kolejne strony."
@@ -537,20 +709,26 @@ hm_backup_full() {
 
   local manifest="${TMP_DIR}/manifest-full-${stamp}.json"
   mkdir -p "${TMP_DIR}"
+  local _j_host _j_panel _j_ws _j_remote
+  _j_host="$(hm_json_escape_str "${BACKUP_HOST_LABEL}")"
+  _j_panel="$(hm_json_escape_str "${PANEL}")"
+  _j_ws="$(hm_json_escape_str "${WEBSERVER}")"
+  _j_remote="$(hm_json_escape_str "${remote_base}")"
   cat > "${manifest}" <<EOF
 {
   "type": "full",
   "status": "${status}",
-  "host": "${BACKUP_HOST_LABEL}",
+  "host": "${_j_host}",
   "stamp": "${stamp}",
-  "panel": "${PANEL}",
-  "webserver": "${WEBSERVER}",
+  "panel": "${_j_panel}",
+  "webserver": "${_j_ws}",
   "sites": $(printf '%s\n' "${HM_SITES_LIST[@]}" | awk 'BEGIN{printf "["} {printf sep "\"" $0 "\""; sep=","} END{printf "]"}'),
   "failed_sites": ${fail_json},
   "failed_databases": ${fail_db_json},
+  "db_accounts": ${db_acc_ok},
   "config_ok": ${cfg_ok},
   "databases_ok": ${db_ok},
-  "remote": "${remote_base}",
+  "remote": "${_j_remote}",
   "created_at": "$(date -Iseconds)"
 }
 EOF
@@ -569,4 +747,5 @@ EOF
     return 1
   fi
   hm_ok "Pełny backup zakończony → ${remote_base}"
+  hm_info "Przywrócenie: backup restore-full ${stamp}"
 }
