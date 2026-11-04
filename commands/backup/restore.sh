@@ -230,6 +230,32 @@ hm_backup_ols_reload() {
   return 0
 }
 
+# Czy snapshot ma artefakty .enc (wymaga BACKUP_ENCRYPT_PASSPHRASE przy restore).
+hm_backup_snapshot_has_enc() {
+  local remote_base="$1"
+  local f
+  for f in unix-account.meta.enc db-accounts.sql.enc system-configs.tar.gz.enc; do
+    if rclone cat "${remote_base}/${f}" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+  if rclone lsf "${remote_base}" 2>/dev/null | grep -qE '\.enc$'; then
+    return 0
+  fi
+  return 1
+}
+
+# Twardy stop PRZED jakąkolwiek zmianą — snapshot .enc bez passphrase.
+hm_backup_abort_if_enc_without_passphrase() {
+  local remote_base="$1"
+  [[ -n "${BACKUP_ENCRYPT_PASSPHRASE:-}" ]] && return 0
+  if hm_backup_snapshot_has_enc "${remote_base}"; then
+    hm_err "Snapshot zaszyfrowany (.enc) — ustaw BACKUP_ENCRYPT_PASSPHRASE przed restore. Żadnych zmian nie wykonano."
+    return 1
+  fi
+  return 0
+}
+
 # Pobierz plik z Drive; jeśli .enc — deszyfruj (BACKUP_ENCRYPT_PASSPHRASE).
 hm_backup_fetch_maybe_decrypt() {
   local remote_base="$1"
@@ -318,6 +344,10 @@ hm_backup_restore_unix_account() {
   chmod 600 "${meta_tmp}"
   if ! hm_backup_fetch_maybe_decrypt "${remote_base}" "unix-account.meta" "${meta_tmp}"; then
     rm -f "${meta_tmp}"
+    if rclone cat "${remote_base}/unix-account.meta.enc" >/dev/null 2>&1; then
+      hm_err "unix-account.meta.enc obecny, ale deszyfracja nieudana — odmowa (nie pomijam konta Unix)."
+      return 1
+    fi
     hm_info "Brak unix-account.meta(.enc) w snapshocie — pomijam odtworzenie konta Unix."
     return 0
   fi
@@ -501,6 +531,10 @@ hm_backup_restore_db_accounts() {
   chmod 600 "${sqlf}" "${outf}"
   if ! hm_backup_fetch_maybe_decrypt "${remote_base}" "db-accounts.sql" "${sqlf}"; then
     rm -f "${sqlf}" "${outf}"
+    if rclone cat "${remote_base}/db-accounts.sql.enc" >/dev/null 2>&1; then
+      hm_err "db-accounts.sql.enc obecny, ale deszyfracja nieudana — odmowa (nie pomijam kont MySQL)."
+      return 1
+    fi
     hm_info "Brak db-accounts.sql(.enc) w snapshocie — pomijam odtworzenie kont MySQL."
     return 0
   fi
@@ -1146,6 +1180,9 @@ _hm_backup_restore_body() {
     return 1
   fi
 
+  # .enc bez passphrase → stop PRZED planem/confirm (żadnych zmian)
+  hm_backup_abort_if_enc_without_passphrase "${remote_base}" || return 1
+
   target_dir="${HM_SITE_ROOT:-}"
   if [[ -z "${target_dir}" || ! -d "${target_dir}" ]]; then
     target_dir="${HM_SITE_DOCROOT:-}"
@@ -1515,6 +1552,8 @@ EOF
     hm_err "Snapshot full ${stamp} niepełny — odmowa restore."
     return 1
   fi
+
+  hm_backup_abort_if_enc_without_passphrase "${remote_base}" || return 1
 
   local -a plan=(
     "Opcjonalnie: system-configs.tar.gz(.enc) → / (OSTROŻNIE — nadpisze /etc bez shadow; tylko z --system)"

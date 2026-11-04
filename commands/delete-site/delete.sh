@@ -848,8 +848,8 @@ hm_site_execute_delete() {
           if declare -F hm_ols_remove_domain_from_conf >/dev/null 2>&1; then
             hm_ols_remove_domain_from_conf "${child}" || true
           fi
-          if [[ -n "${OLS_VHOSTS:-}" && -d "${OLS_VHOSTS}/${child}" ]]; then
-            rm -rf -- "${OLS_VHOSTS}/${child}"
+          if [[ -n "${OLS_VHOSTS:-}" && -n "${child}" && -d "${OLS_VHOSTS}/${child}" ]]; then
+            rm -rf -- "${OLS_VHOSTS:?}/${child:?}"
             hm_ok "Usunięto vhost child ${OLS_VHOSTS}/${child}"
           fi
           cdq="$(hm_sql_quote "${child}")"

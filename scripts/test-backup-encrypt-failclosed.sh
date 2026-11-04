@@ -112,6 +112,34 @@ printf '%s\n' "${list}" | grep -q 'sshd_config' || { echo "FAIL keep-sshd"; ok_e
 printf '%s\n' "${list}" | grep -q 'ssh_host_rsa_key.pub' || { echo "FAIL keep-host-pub"; ok_ex=0; fail=1; }
 [[ "${ok_ex}" -eq 1 ]] && echo "OK   tar-excludes-privkey-sshhost"
 
+# restore: .enc bez passphrase → twardy stop (rc≠0), zanim cokolwiek się zmieni
+# shellcheck disable=SC1091
+source commands/backup/restore.sh
+unset BACKUP_ENCRYPT_PASSPHRASE || true
+rclone() {
+  case "$*" in
+    *"unix-account.meta.enc"*) return 0 ;;
+    *lsf*) printf 'unix-account.meta.enc\n'; return 0 ;;
+    *) return 1 ;;
+  esac
+}
+hm_err() { printf 'ERR:%s\n' "$*" >&2; }
+if hm_backup_abort_if_enc_without_passphrase "remote/sites/x/stamp" 2>/dev/null; then
+  echo "FAIL enc-without-passphrase-should-abort"
+  fail=1
+else
+  echo "OK   enc-without-passphrase-abort"
+fi
+BACKUP_ENCRYPT_PASSPHRASE="x"
+export BACKUP_ENCRYPT_PASSPHRASE
+if hm_backup_abort_if_enc_without_passphrase "remote/sites/x/stamp" 2>/dev/null; then
+  echo "OK   enc-with-passphrase-ok"
+else
+  echo "FAIL enc-with-passphrase-should-pass"
+  fail=1
+fi
+unset BACKUP_ENCRYPT_PASSPHRASE || true
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"
   exit 1

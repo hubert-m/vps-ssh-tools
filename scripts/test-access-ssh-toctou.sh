@@ -3,6 +3,12 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# Jako root runuser -u root / path_ok omijają asercje TOCTOU (harness, nie produkcja).
+if [[ "$(id -u)" -eq 0 ]]; then
+  echo "SKIP test-access-ssh-toctou.sh — wymaga non-root (root omija uprawnienia TOCTOU)"
+  exit 0
+fi
+
 hm_err() { echo "ERR: $*" >&2; }
 hm_ok() { echo "OK: $*"; }
 hm_info() { :; }
