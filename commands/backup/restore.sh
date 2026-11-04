@@ -195,10 +195,11 @@ hm_backup_fetch_maybe_decrypt() {
       rm -f "${enc_tmp}"
       return 1
     fi
+    export BACKUP_ENCRYPT_PASSPHRASE
     if ! openssl enc -d -aes-256-cbc -pbkdf2 -pass env:BACKUP_ENCRYPT_PASSPHRASE \
       -in "${enc_tmp}" -out "${out_file}" 2>/dev/null; then
       rm -f "${enc_tmp}"
-      hm_err "Deszyfracja ${base_name}.enc nieudana."
+      hm_err "Deszyfracja ${base_name}.enc nieudana (sprawdź BACKUP_ENCRYPT_PASSPHRASE / openssl)."
       return 1
     fi
     rm -f "${enc_tmp}"
@@ -414,14 +415,32 @@ hm_backup_mysql_user_exists() {
   [[ "${n}" =~ ^[0-9]+$ && "${n}" -gt 0 ]]
 }
 
+# Usuń klauzule IDENTIFIED … z GRANT (nie zmieniaj hasła istniejącego konta).
+# stdout = oczyszczony GRANT; rc=1 gdy po stripie został sam no-op GRANT USAGE ON *.*.
+hm_backup_grant_without_identified() {
+  local g="${1:-}"
+  # IDENTIFIED BY [PASSWORD] '…'
+  g="$(sed -E "s/[[:space:]]+IDENTIFIED[[:space:]]+BY[[:space:]]+(PASSWORD[[:space:]]+)?'[^']*'//gi" <<<"${g}")"
+  # IDENTIFIED WITH plugin [AS 'hash']
+  g="$(sed -E "s/[[:space:]]+IDENTIFIED[[:space:]]+WITH[[:space:]]+[^[:space:];]+([[:space:]]+AS[[:space:]]+'[^']*')?//gi" <<<"${g}")"
+  g="$(sed -E 's/[[:space:]]+;/;/; s/[[:space:]]+$//' <<<"${g}")"
+  if [[ "${g}" =~ ^[[:space:]]*GRANT[[:space:]]+USAGE[[:space:]]+ON[[:space:]]+\*\.\*[[:space:]]+TO[[:space:]] ]]; then
+    printf '%s\n' "${g}"
+    return 1
+  fi
+  printf '%s\n' "${g}"
+  return 0
+}
+
 # Odtwórz konta MySQL z db-accounts.sql.
 # Istniejący user@host → pomiń DROP/CREATE (nie nadpisuj hasła ani cudzych grantów);
-# tylko GRANT-y z pliku (archive już filtruje do baz snapshotu).
+# GRANT-y z pliku bez IDENTIFIED BY PASSWORD (archive filtruje do baz snapshotu).
 hm_backup_restore_db_accounts() {
   local remote_base="$1"
   local cli sock_args=() sqlf outf
   local line skip_ddl=0 cur_user="" cur_host=""
   local created=0 skipped_ddl=0 grants_applied=0
+  local safe_grant=""
 
   sqlf="$(mktemp "${TMP_DIR:-/tmp}/hmtools-db-accounts.XXXXXX.sql")"
   outf="$(mktemp "${TMP_DIR:-/tmp}/hmtools-db-accounts-safe.XXXXXX.sql")"
@@ -441,7 +460,7 @@ hm_backup_restore_db_accounts() {
   [[ -n "${MYSQL_SOCKET:-}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
 
   {
-    echo "-- hmtools restore: db-accounts (safe — no DROP/CREATE for existing users)"
+    echo "-- hmtools restore: db-accounts (safe — no DROP/CREATE for existing users; no IDENTIFIED on existing)"
     echo "-- generated: $(date -Iseconds)"
   } > "${outf}"
 
@@ -489,6 +508,16 @@ hm_backup_restore_db_accounts() {
     fi
 
     if [[ "${line}" =~ ^[[:space:]]*GRANT[[:space:]] ]]; then
+      if [[ "${skip_ddl}" -eq 1 ]]; then
+        safe_grant="$(hm_backup_grant_without_identified "${line}")" || {
+          printf '-- skipped GRANT USAGE (exists, bez zmiany hasła): %s\n' "${line}" >> "${outf}"
+          continue
+        }
+        if [[ "${safe_grant}" != "${line}" ]]; then
+          printf '-- stripped IDENTIFIED (exists): %s\n' "${line}" >> "${outf}"
+          line="${safe_grant}"
+        fi
+      fi
       grants_applied=$((grants_applied + 1))
     fi
     printf '%s\n' "${line}" >> "${outf}"

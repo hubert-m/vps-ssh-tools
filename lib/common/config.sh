@@ -43,6 +43,11 @@ hm_load_config() {
     LOG_DIR="${HMTOOLS_ROOT}/${LOG_DIR}"
   fi
 
+  # openssl -pass env:… wymaga zmiennej w środowisku (nie tylko shell) — bez export → fail-open plaintext
+  if [[ -n "${BACKUP_ENCRYPT_PASSPHRASE:-}" ]]; then
+    export BACKUP_ENCRYPT_PASSPHRASE
+  fi
+
   hm_ensure_secure_tmpdir
   mkdir -m 0700 -p "${LOG_DIR}" 2>/dev/null || true
   chmod 0700 "${LOG_DIR}" 2>/dev/null || true

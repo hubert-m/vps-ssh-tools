@@ -32,6 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Feat: `backup` / `archive` — pliki z pełnego `$HOME` użytkownika strony (gdy obejmuje site root): `.ssh`, `.pm2`, `.config`, historia itd.; `site_root` w manifeście = faktycznie spakowany katalog
 - Fix: `backup restore` — `chown` nie gubi grupy `public_html` (nogroup/lsadm); tar `--no-same-owner`; odrzucenie `--files-only`+`--db-only`; check miejsca na FS docelowym; escapowanie JSON w manifestach
 - Feat/Sec: `backup full` — `db-accounts.sql`, `restore-full`; system-configs bez shadow/privkey; opcjonalne `BACKUP_ENCRYPT_PASSPHRASE`; flock; prune grace orphan; sha256 wrażliwych plików archive; child ze współdzielonym home → tylko docroot; umask w subshellu
+- Fix/Sec: `BACKUP_ENCRYPT_PASSPHRASE` — `export` + fail-closed (bez plaintext przy błędzie openssl); `system-configs` wyklucza `privkey*.pem` i `ssh_host_*_key`; test `test-backup-encrypt-failclosed.sh`
 - Fix: `hm_find_site_by_arg` — brak cichego partial match; `backup restore`/`archive` używają dokładnej nazwy (`hm_find_site_by_arg_exact`)
 - Fix: `backup archive` — przed exact-match zachowuje `domain_arg` (nieudane `domain="$(…)"` zerowało arg → partial na pustym stringu = Ambiguous wszystkich stron)
 - Fix: `backup archive` db-accounts — `hm_mysql_exec_raw` (`-N -B -r`) dla SHOW CREATE USER/GRANTS (bez podwójnego `\\_` przy bazach z `_`)
@@ -39,6 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: `backup archive`/`restore` — SSL bez `-h` (symlinki certbota); restore ssl/crontab/cyberpanel-site.sql; PM2 tylko hint; eksport `cyberpanel-site.sql`
 - Fix: `backup archive` db-accounts — tylko exclusive (`HM_DEL_DB_USERS`); GRANT-y filtrowane do baz snapshotu; tag `HM_DROP_IF_MISSING`
 - Fix: `backup restore` db-accounts — istniejący MySQL user → bez DROP/CREATE (zachowane hasło/obce GRANT-y); tylko GRANT-y z pliku
+- Fix/Sec: `backup restore` db-accounts — dla istniejących kont usuwa `IDENTIFIED BY PASSWORD` / `IDENTIFIED WITH … AS` z GRANT (nie nadpisuje hasła); sam GRANT USAGE → skip; test `test-restore-db-accounts-identified.sh`
 - Fix: `backup restore` — niepusta baza o tej samej nazwie → KOLIZJA / odmowa; świadome nadpisanie: `--overwrite-db`
 - Fix/Sec: `backup restore` — istniejące konto Unix → odmowa (bez nadpisania hasła/kluczy/home); `--adopt-existing-user`; shared/protected → skip Unix + pliki do docroot; niepusty target → odmowa bez `--overwrite-files`
 - Fix/Sec: `backup restore` child/shared — nie nadpisuje crontab współdzielonego usera (detekcja live bez unix-account.meta); archive nie eksportuje crona shared/protected; test `test-restore-shared-cron.sh`

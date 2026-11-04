@@ -523,7 +523,11 @@ _hm_backup_archive_site_body() {
   if [[ "${#archive_db_users[@]}" -gt 0 ]]; then
     if hm_archive_export_mysql_accounts "${db_acc_sql}" --dbs "$(IFS=','; echo "${archive_dbs[*]}")" "${archive_db_users[@]}"; then
       local enc_db remote_db
-      enc_db="$(hm_backup_maybe_encrypt_file "${db_acc_sql}")"
+      if ! enc_db="$(hm_backup_maybe_encrypt_file "${db_acc_sql}")"; then
+        rm -f "${db_acc_sql}" "${db_acc_sql}.enc"
+        hm_archive_abort "Szyfrowanie db-accounts nieudane — bez plaintext. Nic nie usunięto z VPS." "${remote_base}"
+        return 1
+      fi
       remote_db="db-accounts.sql"
       [[ "${enc_db}" == *.enc ]] && remote_db="db-accounts.sql.enc"
       db_acc_sha="$(hm_backup_sha256_file "${enc_db}" || true)"
@@ -553,7 +557,11 @@ _hm_backup_archive_site_body() {
       && [[ "${HM_DEL_USER_SHARED:-0}" -eq 0 && "${HM_DEL_USER_PROTECTED:-0}" -eq 0 ]]; then
     if hm_archive_export_unix_account "${HM_DEL_USER}" "${unix_meta}" "${unix_keys}"; then
       local enc_ux remote_ux
-      enc_ux="$(hm_backup_maybe_encrypt_file "${unix_meta}")"
+      if ! enc_ux="$(hm_backup_maybe_encrypt_file "${unix_meta}")"; then
+        rm -f "${unix_meta}" "${unix_keys}" "${unix_meta}.enc"
+        hm_archive_abort "Szyfrowanie unix-account.meta nieudane — bez plaintext. Nic nie usunięto z VPS." "${remote_base}"
+        return 1
+      fi
       remote_ux="unix-account.meta"
       [[ "${enc_ux}" == *.enc ]] && remote_ux="unix-account.meta.enc"
       unix_meta_sha="$(hm_backup_sha256_file "${enc_ux}" || true)"

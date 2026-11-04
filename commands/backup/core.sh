@@ -52,7 +52,8 @@ hm_backup_release_lock() {
 }
 
 # Szyfrowanie opcjonalne (BACKUP_ENCRYPT_PASSPHRASE) — AES-256-CBC + pbkdf2.
-# stdout: ścieżka pliku do uploadu (src lub src.enc)
+# stdout: ścieżka pliku do uploadu (src lub src.enc).
+# Gdy passphrase ustawione: BEZ fallbacku do plaintext (openssl fail → rc=1).
 hm_backup_maybe_encrypt_file() {
   local src="$1"
   local out="${src}.enc"
@@ -61,10 +62,11 @@ hm_backup_maybe_encrypt_file() {
     printf '%s\n' "${src}"
     return 0
   fi
+  # -pass env: wymaga exportu (hm_load_config też eksportuje; tu na wszelki wypadek)
+  export BACKUP_ENCRYPT_PASSPHRASE
   if ! hm_have_cmd openssl; then
-    hm_warn "BACKUP_ENCRYPT_PASSPHRASE ustawione, ale brak openssl — wysyłam plaintext."
-    printf '%s\n' "${src}"
-    return 0
+    hm_err "BACKUP_ENCRYPT_PASSPHRASE ustawione, ale brak openssl — odmawiam plaintext."
+    return 1
   fi
   if openssl enc -aes-256-cbc -pbkdf2 -salt \
     -pass env:BACKUP_ENCRYPT_PASSPHRASE \
@@ -73,8 +75,9 @@ hm_backup_maybe_encrypt_file() {
     printf '%s\n' "${out}"
     return 0
   fi
-  hm_warn "openssl enc nieudany — plaintext."
-  printf '%s\n' "${src}"
+  rm -f "${out}" 2>/dev/null || true
+  hm_err "openssl enc nieudany (BACKUP_ENCRYPT_PASSPHRASE) — odmawiam plaintext."
+  return 1
 }
 
 hm_backup_sha256_file() {
@@ -592,7 +595,8 @@ hm_backup_system_configs() {
     return 0
   fi
 
-  # BEZ /etc/shadow|gshadow oraz kluczy prywatnych SSL (privkey / *.key) — nie na plaintext Drive
+  # BEZ /etc/shadow|gshadow oraz kluczy prywatnych SSL/SSH — nie na plaintext Drive
+  # privkey*.pem łapie archive/.../privkey1.pem; ssh_host_*_key — host keye bez rozszerzenia .key
   local tar_err tar_rc gzip_rc rcat_rc local_gz enc_path remote_name
   tar_err="$(mktemp "${TMP_DIR:-/tmp}/hmtools-syscfg.XXXXXX.err")"
   local_gz="$(mktemp "${TMP_DIR:-/tmp}/hmtools-syscfg.XXXXXX.tar.gz")"
@@ -601,7 +605,9 @@ hm_backup_system_configs() {
   tar --warning=no-file-changed --ignore-failed-read -cf - \
     --exclude='*.log' --exclude='cache' --exclude='tmp' \
     --exclude='shadow' --exclude='shadow-' --exclude='gshadow' --exclude='gshadow-' \
-    --exclude='privkey.pem' --exclude='privkey.*.pem' --exclude='*.key' \
+    --exclude='privkey.pem' --exclude='privkey.*.pem' --exclude='privkey*.pem' \
+    --exclude='*/privkey*.pem' --exclude='*.key' \
+    --exclude='ssh_host_*_key' --exclude='*/ssh_host_*_key' \
     "${paths[@]}" 2>"${tar_err}" | gzip -c > "${local_gz}"
   tar_rc=$?
   set -o pipefail
@@ -616,11 +622,14 @@ hm_backup_system_configs() {
     return 1
   fi
 
-  enc_path="$(hm_backup_maybe_encrypt_file "${local_gz}")"
+  if ! enc_path="$(hm_backup_maybe_encrypt_file "${local_gz}")"; then
+    rm -f "${local_gz}" "${local_gz}.enc" 2>/dev/null || true
+    return 1
+  fi
   remote_name="system-configs.tar.gz"
   [[ "${enc_path}" == *.enc ]] && remote_name="system-configs.tar.gz.enc"
   if hm_rclone_copyto "${enc_path}" "${remote_base}/${remote_name}"; then
-    hm_ok "Konfiguracje systemowe OK (${remote_name}; bez shadow/privkey)."
+    hm_ok "Konfiguracje systemowe OK (${remote_name}; bez shadow/privkey/ssh_host_*_key)."
     rm -f "${local_gz}" "${local_gz}.enc" 2>/dev/null || true
     return 0
   fi
@@ -703,7 +712,11 @@ hm_backup_full() {
   if [[ "${#full_db_users[@]}" -gt 0 ]] && declare -F hm_archive_export_mysql_accounts >/dev/null 2>&1; then
     if hm_archive_export_mysql_accounts "${db_acc_sql}" "${full_db_users[@]}"; then
       local enc_acc remote_acc
-      enc_acc="$(hm_backup_maybe_encrypt_file "${db_acc_sql}")"
+      if ! enc_acc="$(hm_backup_maybe_encrypt_file "${db_acc_sql}")"; then
+        rm -f "${db_acc_sql}" "${db_acc_sql}.enc" 2>/dev/null || true
+        hm_err "Szyfrowanie db-accounts nieudane — przerywam full (bez plaintext)."
+        return 1
+      fi
       remote_acc="db-accounts.sql"
       [[ "${enc_acc}" == *.enc ]] && remote_acc="db-accounts.sql.enc"
       if hm_rclone_copyto "${enc_acc}" "${remote_base}/${remote_acc}" \
