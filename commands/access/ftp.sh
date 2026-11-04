@@ -279,6 +279,10 @@ hm_access_ftp_add() {
         hm_err "Nie udało się utworzyć konta FTP."
         return 1
       }
+      # CP często prefixuje login (blog_up1) — pokaż faktyczną nazwę z DB
+      if declare -F hm_access_cp_ftp_actual_user >/dev/null 2>&1; then
+        ftp_user="$(hm_access_cp_ftp_actual_user "${domain}" "${ftp_user}")"
+      fi
       ;;
     pure-ftpd)
       if ! hm_have_cmd pure-pw; then

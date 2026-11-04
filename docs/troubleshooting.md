@@ -17,7 +17,7 @@
 - Narzędzia: `/hm-tools`
 - Conf: `/hm-tools/config/hmtools.conf`
 - Logi pracy: `/hm-tools/logs/hmtools-YYYY-MM-DD.log`
-- Tmp chunków: `/tmp/hmtools-backup` (domyślnie)
+- Tmp: `/var/lib/hmtools/tmp` (0700, właściciel euid; walidacja symlink/owner w `hm_ensure_secure_tmpdir`)
 
 Zobacz też: [logging.md](logging.md), [configuration.md](configuration.md), [backup.md](backup.md).
 

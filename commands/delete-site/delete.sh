@@ -15,6 +15,8 @@ HM_DEL_KEEP_SSL=0
 HM_DEL_KEEP_USER=0
 HM_DEL_USER_SHARED=0
 HM_DEL_USER_PROTECTED=0
+HM_DEL_CHILD_OF_SHARED=0
+HM_DEL_FORCE_NESTED=0
 HM_DEL_CRON_COUNT=0
 declare -a HM_DEL_DBS=()
 declare -a HM_DEL_DB_USERS=()
@@ -22,6 +24,7 @@ declare -a HM_DEL_PM2=()
 declare -a HM_DEL_SSL_PATHS=()
 declare -a HM_DEL_CRON_NOTES=()
 declare -a HM_DEL_NESTED_WARN=()
+declare -a HM_DEL_NESTED_BLOCK=()
 declare -a HM_DEL_SKIP_DBS=()
 declare -a HM_DEL_PLAN_STEPS=()
 declare -a HM_DEL_PLAN_KEYS=()
@@ -40,6 +43,8 @@ hm_del_reset_inventory() {
   HM_DEL_KEEP_USER=0
   HM_DEL_USER_SHARED=0
   HM_DEL_USER_PROTECTED=0
+  HM_DEL_CHILD_OF_SHARED=0
+  # HM_DEL_FORCE_NESTED zachowujemy z CLI (nie kasujemy tu)
   HM_DEL_CRON_COUNT=0
   HM_DEL_DBS=()
   HM_DEL_DB_USERS=()
@@ -47,6 +52,7 @@ hm_del_reset_inventory() {
   HM_DEL_SSL_PATHS=()
   HM_DEL_CRON_NOTES=()
   HM_DEL_NESTED_WARN=()
+  HM_DEL_NESTED_BLOCK=()
   HM_DEL_SKIP_DBS=()
   HM_DEL_PLAN_STEPS=()
   HM_DEL_PLAN_KEYS=()
@@ -117,17 +123,33 @@ hm_is_safe_site_root_to_delete() {
   return 1
 }
 
+# UID_MIN z /etc/login.defs (domyślnie 1000) — konta systemowe poniżej są chronione.
+hm_unix_uid_min() {
+  local m
+  m="$(awk '/^UID_MIN/{print $2; exit}' /etc/login.defs 2>/dev/null || true)"
+  [[ "${m}" =~ ^[0-9]+$ ]] || m=1000
+  printf '%s' "${m}"
+}
+
 hm_del_user_is_protected() {
   local u="${1:-}"
-  local cur
+  local cur uid umin
   [[ -n "${u}" ]] || return 0
   case "${u}" in
-    root|nobody|nogroup|www-data|lsadm|cyberpanel|mysql|mariadb|postfix|dovecot|sshd|ubuntu|debian|centos|almalinux|rocky|apache|nginx)
+    root|nobody|nogroup|www-data|lsadm|cyberpanel|mysql|mariadb|postfix|dovecot|sshd|ubuntu|debian|centos|almalinux|rocky|apache|nginx|daemon|messagebus|bin|sys|sync|games|man|lp|mail|news|uucp|proxy|backup|list|irc|gnats|systemd-*)
       return 0
       ;;
   esac
   cur="${SUDO_USER:-${USER:-}}"
   [[ -n "${cur}" && "${u}" == "${cur}" ]] && return 0
+  # UID < UID_MIN (np. daemon=1, messagebus) — zawsze chronione, niezależnie od nazwy
+  if id "${u}" >/dev/null 2>&1; then
+    uid="$(id -u "${u}" 2>/dev/null || echo "")"
+    umin="$(hm_unix_uid_min)"
+    if [[ "${uid}" =~ ^[0-9]+$ && "${uid}" -lt "${umin}" ]]; then
+      return 0
+    fi
+  fi
   return 1
 }
 
@@ -255,16 +277,19 @@ SELECT COUNT(*) FROM websites_website WHERE domainName = ${q};
 hm_site_collect_delete_inventory() {
   local domain="$1"
   local keep_db="${2:-0}" keep_ssl="${3:-0}" keep_user="${4:-0}"
+  local force_nested="${5:-${HM_DEL_FORCE_NESTED:-0}}"
   hm_del_reset_inventory
   HM_DEL_KEEP_DB="${keep_db}"
   HM_DEL_KEEP_SSL="${keep_ssl}"
   HM_DEL_KEEP_USER="${keep_user}"
+  HM_DEL_FORCE_NESTED="${force_nested}"
   HM_DEL_DOMAIN="${domain}"
 
   hm_detect_all
   hm_discover_sites
 
   local row root docroot logs vhost php rest user status
+  local vh_root=""
   row="$(hm_resolve_site_paths "${domain}")"
   IFS=$'\t' read -r domain root docroot logs vhost php rest <<<"${row}"
   root="$(hm_tsv_unfield "${root}")"
@@ -277,6 +302,7 @@ hm_site_collect_delete_inventory() {
   HM_DEL_ROOT="$(realpath -m "${root}" 2>/dev/null || echo "${root}")"
   HM_DEL_DOCROOT="$(realpath -m "${docroot}" 2>/dev/null || echo "${docroot}")"
   HM_DEL_USER="${user}"
+  vh_root="${HM_DEL_ROOT}"
 
   if [[ -z "${HM_DEL_ROOT}" ]]; then
     hm_err "Nie ustalono katalogu strony dla ${domain}."
@@ -287,12 +313,10 @@ hm_site_collect_delete_inventory() {
     return 1
   fi
 
-  if [[ -d "${HM_DEL_ROOT}" ]]; then
-    HM_DEL_SIZE="$(hm_dir_size_bytes "${HM_DEL_ROOT}" 2>/dev/null || echo 0)"
-  fi
-
-  # nested / shared path warnings
-  local other oroot odoc orest
+  # nested / shared — najpierw wykryj współdzielony vhRoot / user, potem ewentualnie zawęź do docroot (child)
+  local other oroot odoc orest ou
+  local share_vhroot=0
+  local looks_like_master_doc=0
   for other in "${HM_SITES_LIST[@]}"; do
     [[ -n "${other}" ]] || continue
     [[ "${other}" == "${domain}" ]] && continue
@@ -303,17 +327,73 @@ hm_site_collect_delete_inventory() {
     odoc="$(hm_tsv_unfield "${odoc}")"
     oroot="$(realpath -m "${oroot}" 2>/dev/null || echo "${oroot}")"
     odoc="$(realpath -m "${odoc}" 2>/dev/null || echo "${odoc}")"
-    if [[ -n "${oroot}" && "${oroot}" != "${HM_DEL_ROOT}" && ( "${oroot}" == "${HM_DEL_ROOT}"/* || "${HM_DEL_ROOT}" == "${oroot}"/* ) ]]; then
-      HM_DEL_NESTED_WARN+=("ścieżka ${other} (${oroot}) nachodzi na ${HM_DEL_ROOT}")
-    elif [[ -n "${odoc}" && "${odoc}" == "${HM_DEL_ROOT}"/* ]]; then
-      HM_DEL_NESTED_WARN+=("docroot ${other} (${odoc}) leży wewnątrz ${HM_DEL_ROOT}")
-    fi
-    local ou
     ou="$(hm_tsv_unfield "${orest%%|*}")"
     if [[ -n "${HM_DEL_USER}" && -n "${ou}" && "${ou}" == "${HM_DEL_USER}" ]]; then
       HM_DEL_USER_SHARED=1
     fi
+    if [[ -n "${oroot}" && -n "${vh_root}" && "${oroot}" == "${vh_root}" ]]; then
+      share_vhroot=1
+    fi
   done
+
+  if [[ -n "${HM_DEL_DOCROOT}" && ( "${HM_DEL_DOCROOT}" == "${vh_root}/public_html" || "${HM_DEL_DOCROOT}" == "${vh_root}/html" ) ]]; then
+    looks_like_master_doc=1
+  fi
+
+  # Child / nested docroot (CyberPanel: ten sam vhRoot, docroot głębiej niż public_html)
+  if [[ "${share_vhroot}" -eq 1 \
+        && -n "${HM_DEL_DOCROOT}" \
+        && "${HM_DEL_DOCROOT}" == "${vh_root}"/* \
+        && "${HM_DEL_DOCROOT}" != "${vh_root}" \
+        && "${looks_like_master_doc}" -eq 0 ]]; then
+    if ! hm_is_safe_site_root_to_delete "${HM_DEL_DOCROOT}"; then
+      hm_err "Docroot child nie przeszedł kontroli bezpieczeństwa: ${HM_DEL_DOCROOT}"
+      return 1
+    fi
+    hm_info "Domena podrzędna (współdzielony vhRoot) — operacje na docroot: ${HM_DEL_DOCROOT} (nie cały ${vh_root})"
+    HM_DEL_ROOT="${HM_DEL_DOCROOT}"
+    HM_DEL_CHILD_OF_SHARED=1
+  fi
+
+  # Ostrzeżenia / twarde bloki nachodzenia (po ewentualnym zawężeniu ROOT)
+  for other in "${HM_SITES_LIST[@]}"; do
+    [[ -n "${other}" ]] || continue
+    [[ "${other}" == "${domain}" ]] && continue
+    row="$(hm_resolve_site_paths "${other}" 2>/dev/null || true)"
+    [[ -n "${row}" ]] || continue
+    IFS=$'\t' read -r _ oroot odoc _ _ _ orest <<<"${row}"
+    oroot="$(hm_tsv_unfield "${oroot}")"
+    odoc="$(hm_tsv_unfield "${odoc}")"
+    oroot="$(realpath -m "${oroot}" 2>/dev/null || echo "${oroot}")"
+    odoc="$(realpath -m "${odoc}" 2>/dev/null || echo "${odoc}")"
+    # Usunięcie HM_DEL_ROOT skasowałoby cudzy root/docroot
+    if [[ -n "${oroot}" && "${oroot}" != "${HM_DEL_ROOT}" && "${oroot}" == "${HM_DEL_ROOT}"/* ]]; then
+      HM_DEL_NESTED_BLOCK+=("ścieżka ${other} (${oroot}) leży wewnątrz ${HM_DEL_ROOT} — zostałaby skasowana")
+    elif [[ -n "${odoc}" && "${odoc}" != "${HM_DEL_ROOT}" && "${odoc}" == "${HM_DEL_ROOT}"/* ]]; then
+      HM_DEL_NESTED_BLOCK+=("docroot ${other} (${odoc}) leży wewnątrz ${HM_DEL_ROOT} — zostałby skasowany (zarchiwizuj child najpierw)")
+    elif [[ -n "${oroot}" && "${HM_DEL_ROOT}" == "${oroot}"/* ]]; then
+      HM_DEL_NESTED_WARN+=("katalog ${HM_DEL_ROOT} leży wewnątrz ${other} (${oroot})")
+    fi
+  done
+
+  if [[ "${#HM_DEL_NESTED_BLOCK[@]}" -gt 0 && "${HM_DEL_FORCE_NESTED}" -ne 1 ]]; then
+    local nb
+    hm_err "ODMOWA: archive/delete usunąłby dane innych domen (nested). Zarchiwizuj najpierw domeny podrzędne albo użyj --force-nested."
+    for nb in "${HM_DEL_NESTED_BLOCK[@]}"; do
+      hm_err "  • ${nb}"
+    done
+    return 1
+  fi
+  if [[ "${#HM_DEL_NESTED_BLOCK[@]}" -gt 0 && "${HM_DEL_FORCE_NESTED}" -eq 1 ]]; then
+    local nb
+    for nb in "${HM_DEL_NESTED_BLOCK[@]}"; do
+      HM_DEL_NESTED_WARN+=("FORCE-NESTED: ${nb}")
+    done
+  fi
+
+  if [[ -d "${HM_DEL_ROOT}" ]]; then
+    HM_DEL_SIZE="$(hm_dir_size_bytes "${HM_DEL_ROOT}" 2>/dev/null || echo 0)"
+  fi
 
   if hm_del_user_is_protected "${HM_DEL_USER}"; then
     HM_DEL_USER_PROTECTED=1
@@ -393,7 +473,7 @@ hm_site_collect_delete_inventory() {
     HM_DEL_HAS_CP=1
   fi
 
-  # Cron
+  # Cron — nie kasujemy crontab przy współdzielonym/chronionym userze
   if [[ -n "${HM_DEL_USER}" ]]; then
     local cron_out
     cron_out="$(crontab -u "${HM_DEL_USER}" -l 2>/dev/null || true)"
@@ -401,7 +481,12 @@ hm_site_collect_delete_inventory() {
       HM_DEL_CRON_COUNT="$(printf '%s\n' "${cron_out}" | grep -cvE '^[[:space:]]*(#|$)' || echo 0)"
       [[ "${HM_DEL_CRON_COUNT}" =~ ^[0-9]+$ ]] || HM_DEL_CRON_COUNT=0
       if [[ "${HM_DEL_CRON_COUNT}" -gt 0 ]]; then
-        HM_DEL_CRON_NOTES+=("crontab użytkownika ${HM_DEL_USER} (${HM_DEL_CRON_COUNT} wpisów)")
+        if [[ "${HM_DEL_USER_SHARED}" -eq 1 || "${HM_DEL_USER_PROTECTED}" -eq 1 ]]; then
+          HM_DEL_CRON_NOTES+=("crontab ${HM_DEL_USER}: ${HM_DEL_CRON_COUNT} wpisów — POMIJAM (user współdzielony/chroniony)")
+          HM_DEL_CRON_COUNT=0
+        else
+          HM_DEL_CRON_NOTES+=("crontab użytkownika ${HM_DEL_USER} (${HM_DEL_CRON_COUNT} wpisów)")
+        fi
       fi
     fi
   fi
@@ -452,7 +537,8 @@ hm_site_build_delete_plan() {
     HM_DEL_PLAN_KEYS+=("lsphp")
   fi
 
-  if [[ "${HM_DEL_CRON_COUNT}" -gt 0 && -n "${HM_DEL_USER}" ]]; then
+  if [[ "${HM_DEL_CRON_COUNT}" -gt 0 && -n "${HM_DEL_USER}" \
+        && "${HM_DEL_USER_SHARED}" -eq 0 && "${HM_DEL_USER_PROTECTED}" -eq 0 ]]; then
     HM_DEL_PLAN_STEPS+=("Usunięcie crontaba użytkownika ${HM_DEL_USER} (crontab -r — ${HM_DEL_CRON_COUNT} aktywnych wpisów)")
     HM_DEL_PLAN_KEYS+=("cron")
   fi
@@ -501,7 +587,7 @@ hm_site_build_delete_plan() {
 hm_site_print_delete_inventory() {
   local domain="${HM_DEL_DOMAIN}"
   echo "${C_BOLD}Inwentaryzacja — ${domain}${C_RESET}"
-  echo "  Katalog   : ${HM_DEL_ROOT} ($(hm_human_size "${HM_DEL_SIZE}"))"
+  echo "  Katalog   : ${HM_DEL_ROOT} ($(hm_human_size "${HM_DEL_SIZE}"))$([[ "${HM_DEL_CHILD_OF_SHARED}" -eq 1 ]] && echo ' [CHILD→docroot]' || true)"
   echo "  Docroot   : ${HM_DEL_DOCROOT:--}"
   echo "  User Unix : ${HM_DEL_USER:--}$([[ "${HM_DEL_USER_SHARED}" -eq 1 ]] && echo ' [WSPÓŁDZIELONY]' || true)$([[ "${HM_DEL_USER_PROTECTED}" -eq 1 ]] && echo ' [CHRONIONY]' || true)"
   echo "  Vhost OLS : ${HM_DEL_VHOST_DIR:--}"
@@ -639,8 +725,12 @@ hm_site_execute_delete() {
         ;;
       cron)
         hm_progress_bar "${i}" "${total}" "crontab -r…"
-        crontab -u "${HM_DEL_USER}" -r 2>/dev/null || true
-        hm_ok "Crontab użytkownika ${HM_DEL_USER} usunięty."
+        if [[ "${HM_DEL_USER_SHARED}" -eq 1 || "${HM_DEL_USER_PROTECTED}" -eq 1 ]]; then
+          hm_warn "Pominięto crontab -r — użytkownik ${HM_DEL_USER} współdzielony/chroniony."
+        else
+          crontab -u "${HM_DEL_USER}" -r 2>/dev/null || true
+          hm_ok "Crontab użytkownika ${HM_DEL_USER} usunięty."
+        fi
         ;;
       db)
         hm_progress_bar "${i}" "${total}" "DROP DATABASE…"
@@ -730,22 +820,24 @@ DELETE FROM websites_website WHERE domainName = ${dq};
 hm_site_delete() {
   local domain="${1:-}"
   shift || true
-  local keep_db=0 keep_ssl=0 keep_user=0
+  local keep_db=0 keep_ssl=0 keep_user=0 force_nested=0
   local a
   for a in "$@"; do
     case "${a}" in
       --keep-db) keep_db=1 ;;
       --keep-ssl) keep_ssl=1 ;;
       --keep-user) keep_user=1 ;;
+      --force-nested) force_nested=1 ;;
       --help|-h)
         cat <<'EOF'
-Użycie: webs delete <numer|domena> [--keep-db] [--keep-ssl] [--keep-user]
+Użycie: webs delete <numer|domena> [--keep-db] [--keep-ssl] [--keep-user] [--force-nested]
         delete-site <numer|domena> [...]
-        (w kontekście) delete-site [--keep-db] [--keep-ssl] [--keep-user]
+        (w kontekście) delete-site [--keep-db] [--keep-ssl] [--keep-user] [--force-nested]
 
 Aliasy: webs remove|destroy|rm
 
 Operacja NIEODWRACALNA — wymaga wpisania yes oraz dokładnej nazwy domeny.
+--force-nested: świadomie usuń mimo że pod katalogiem są docrooty innych domen.
 EOF
         return 0
         ;;
@@ -775,7 +867,7 @@ EOF
   domain="$(hm_find_site_by_arg "${domain}")" || return 1
 
   hm_status_line "Inwentaryzacja zasobów ${domain}…"
-  if ! hm_site_collect_delete_inventory "${domain}" "${keep_db}" "${keep_ssl}" "${keep_user}"; then
+  if ! hm_site_collect_delete_inventory "${domain}" "${keep_db}" "${keep_ssl}" "${keep_user}" "${force_nested}"; then
     hm_status_clear
     return 1
   fi
@@ -790,8 +882,11 @@ EOF
   fi
 
   local warn_extra="" warn_data
-  if [[ "${#HM_DEL_NESTED_WARN[@]}" -gt 0 ]]; then
+  if [[ "${#HM_DEL_NESTED_WARN[@]}" -gt 0 || "${#HM_DEL_NESTED_BLOCK[@]}" -gt 0 ]]; then
     warn_extra=" Wykryto nachodzące ścieżki innych domen — sprawdź ostrzeżenia powyżej!"
+  fi
+  if [[ "${force_nested}" -eq 1 ]]; then
+    warn_extra="${warn_extra} FORCE-NESTED włączone."
   fi
   if [[ "${keep_db}" -eq 1 ]]; then
     warn_data="pliki strony zostaną bezpowrotnie skasowane z VPS (bazy MySQL zachowane: --keep-db)"

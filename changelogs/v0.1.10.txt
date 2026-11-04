@@ -24,3 +24,6 @@
 - Fix: `backup restore` db-accounts — istniejący MySQL user → bez DROP/CREATE (zachowane hasło/obce GRANT-y); tylko GRANT-y z pliku
 - Fix: `backup restore` — niepusta baza o tej samej nazwie → KOLIZJA / odmowa; świadome nadpisanie: `--overwrite-db`
 - Fix/Sec: `backup restore` — istniejące konto Unix → odmowa (bez nadpisania hasła/kluczy/home); `--adopt-existing-user`; shared/protected → skip Unix + pliki do docroot; niepusty target → odmowa bez `--overwrite-files`
+- Fix: `backup archive` / `delete-site` — child/shared vhRoot → operacje na docroot (nie cały HOME mastera); cron/Unix pomijane przy shared; master z childami → odmowa / `--force-nested`; test `scripts/test-delete-child-nested.sh`
+- Fix/Sec: `TMP_DIR` — domyślnie `/var/lib/hmtools/tmp`; `hm_ensure_secure_tmpdir` odrzuca symlink/cudzy owner/≠0700; archive/full temp przez `hm_mktemp` (bez przewidywalnych nazw); test `scripts/test-secure-tmpdir.sh`
+- Fix/Sec: `access` / `hm_del_user_is_protected` — UID < `UID_MIN` (login.defs, domyślnie 1000) chronione (daemon/messagebus); `ftp add` pokazuje faktyczny login CP (`blog_up1`); test `scripts/test-access-system-uid.sh`

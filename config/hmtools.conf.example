@@ -40,8 +40,9 @@ CHUNK_SIZE_MB=512
 # Próg rozmiaru (MB), powyżej którego używany jest tryb chunk zamiast pojedynczego rcat
 CHUNK_THRESHOLD_MB=2048
 
-# Katalog tymczasowy na bieżący chunk (usuwany po uploadzie)
-TMP_DIR="/tmp/hmtools-backup"
+# Katalog tymczasowy (musi być 0700, właściciel = root/euid, NIE symlink).
+# Domyślnie /var/lib/hmtools/tmp (poza world-writable /tmp). Unikaj /tmp/hmtools-backup.
+TMP_DIR="/var/lib/hmtools/tmp"
 
 # Wykluczenia tar dla backup site/full (kotwiczone ./ — nie kasują głębokich tmp/.git)
 BACKUP_EXCLUDES="./node_modules ./.git ./tmp ./temp ./cache ./public_html/wp-content/cache ./public_html/wp-content/uploads/cache *.log"

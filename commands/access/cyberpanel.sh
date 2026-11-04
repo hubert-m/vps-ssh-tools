@@ -41,8 +41,31 @@ hm_access_cp_ftp_exists() {
   local n q
   q="$(hm_sql_quote "${ftp_user}")"
   n="$(hm_mysql_exec cyberpanel -N -e \
-    "SELECT COUNT(*) FROM ftp_ftp WHERE user=${q};" 2>/dev/null | tr -d '[:space:]')"
+    "SELECT COUNT(*) FROM ftp_ftp WHERE user=${q} OR user LIKE CONCAT('%\\_', ${q});" 2>/dev/null | tr -d '[:space:]')"
   [[ "${n}" =~ ^[1-9] ]]
+}
+
+# CyberPanel często tworzy login `{owner}_{user}` — zwróć faktyczną nazwę z DB.
+hm_access_cp_ftp_actual_user() {
+  local domain="$1" want="$2"
+  local wid q found
+  wid="$(hm_access_cp_website_id "${domain}" 2>/dev/null || true)"
+  q="$(hm_sql_quote "${want}")"
+  if [[ -n "${wid}" ]]; then
+    found="$(hm_mysql_exec cyberpanel -N -e "
+SELECT user FROM ftp_ftp
+WHERE owner_id=${wid} AND (user=${q} OR user LIKE CONCAT('%\\_', ${q}))
+ORDER BY (user=${q}) DESC, CHAR_LENGTH(user) DESC
+LIMIT 1;" 2>/dev/null | head -1 | tr -d '[:space:]')"
+  fi
+  if [[ -z "${found}" ]]; then
+    found="$(hm_mysql_exec cyberpanel -N -e "
+SELECT user FROM ftp_ftp
+WHERE user=${q} OR user LIKE CONCAT('%\\_', ${q})
+ORDER BY (user=${q}) DESC, CHAR_LENGTH(user) DESC
+LIMIT 1;" 2>/dev/null | head -1 | tr -d '[:space:]')"
+  fi
+  printf '%s' "${found:-${want}}"
 }
 
 # Utwórz konto FTP — wyłącznie CLI CyberPanel (bez SQL INSERT hasła plaintext)

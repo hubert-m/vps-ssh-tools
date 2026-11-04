@@ -226,7 +226,7 @@ hm_stream_mysqldump() {
   local sock_args=()
   [[ -n "${MYSQL_SOCKET}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
 
-  mkdir -m 0700 -p "${TMP_DIR}" 2>/dev/null || mkdir -p "${TMP_DIR}"
+  hm_ensure_secure_tmpdir
   tmp="$(mktemp "${TMP_DIR}/mysqldump-XXXXXX.sql.gz")"
   errf="$(mktemp "${TMP_DIR}/mysqldump-XXXXXX.err")"
 
@@ -438,8 +438,9 @@ hm_backup_site() {
   hm_rclone_mkdir "$(hm_rclone_dest "${domain}")"
   hm_rclone_mkdir "${remote_base}"
 
-  mkdir -p "${TMP_DIR}"
-  local manifest="${TMP_DIR}/manifest-${domain}-${stamp}.json"
+  hm_ensure_secure_tmpdir
+  local manifest
+  manifest="$(hm_mktemp .json)"
   local db_list="" db_names=()
   local db_fail=0
   local -a failed_dbs=()
@@ -660,8 +661,9 @@ hm_backup_full() {
   fi
 
   # Konta MySQL wszystkich nie-systemowych użytkowników (CREATE USER + GRANTS)
-  mkdir -p "${TMP_DIR}"
-  local db_acc_sql="${TMP_DIR}/db-accounts-full-${stamp}.sql"
+  hm_ensure_secure_tmpdir
+  local db_acc_sql
+  db_acc_sql="$(hm_mktemp .sql)"
   local -a full_db_users=()
   local _u
   while IFS= read -r _u; do
@@ -734,8 +736,8 @@ hm_backup_full() {
     fail_db_json="$(printf '%s\n' "${HM_BACKUP_DB_FAILED[@]}" | awk 'BEGIN{printf "["} {printf sep "\"" $0 "\""; sep=","} END{printf "]"}')"
   fi
 
-  local manifest="${TMP_DIR}/manifest-full-${stamp}.json"
-  mkdir -p "${TMP_DIR}"
+  local manifest
+  manifest="$(hm_mktemp .json)"
   local _j_host _j_panel _j_ws _j_remote
   _j_host="$(hm_json_escape_str "${BACKUP_HOST_LABEL}")"
   _j_panel="$(hm_json_escape_str "${PANEL}")"

@@ -7,7 +7,8 @@ hm_load_config() {
   MIN_FREE_PERCENT="${MIN_FREE_PERCENT:-5}"
   CHUNK_SIZE_MB="${CHUNK_SIZE_MB:-512}"
   CHUNK_THRESHOLD_MB="${CHUNK_THRESHOLD_MB:-2048}"
-  TMP_DIR="${TMP_DIR:-/tmp/hmtools-backup}"
+  # Domyślnie poza world-writable /tmp (unikamy symlink/TOCTOU eskalacji)
+  TMP_DIR="${TMP_DIR:-/var/lib/hmtools/tmp}"
   # Site/full backup — wzorce kotwiczone do korzenia archiwum (./…); bez „tmp” na dowolnej głębokości
   BACKUP_EXCLUDES="${BACKUP_EXCLUDES:-./node_modules ./.git ./tmp ./temp ./cache ./public_html/wp-content/cache ./public_html/wp-content/uploads/cache *.log}"
   # Archive (destrukcyjne) — domyślnie PEŁNY dump bez excludes; ewentualnie jawne ARCHIVE_EXCLUDES
@@ -42,9 +43,103 @@ hm_load_config() {
     LOG_DIR="${HMTOOLS_ROOT}/${LOG_DIR}"
   fi
 
-  # katalogi robocze — tylko root (0700)
-  mkdir -m 0700 -p "${TMP_DIR}" 2>/dev/null || mkdir -p "${TMP_DIR}" 2>/dev/null || true
-  chmod 0700 "${TMP_DIR}" 2>/dev/null || true
+  hm_ensure_secure_tmpdir
   mkdir -m 0700 -p "${LOG_DIR}" 2>/dev/null || true
   chmod 0700 "${LOG_DIR}" 2>/dev/null || true
+}
+
+# Izolowany katalog gdy skonfigurowany TMP_DIR jest niebezpieczny.
+hm_secure_tmpdir_fallback() {
+  local euid d=""
+  euid="$(id -u 2>/dev/null || echo 0)"
+  if [[ "${euid}" -eq 0 ]]; then
+    mkdir -m 0700 -p /var/lib/hmtools 2>/dev/null || true
+    d="$(mktemp -d /var/lib/hmtools/tmp.XXXXXX 2>/dev/null || true)"
+  fi
+  if [[ -z "${d}" ]]; then
+    d="$(mktemp -d "${TMPDIR:-/tmp}/hmtools-safe.XXXXXX" 2>/dev/null || mktemp -d)"
+  fi
+  chmod 0700 "${d}" 2>/dev/null || true
+  printf '%s\n' "${d}"
+}
+
+# Bezpieczny TMP_DIR: nie symlink, właściciel = euid, mode 0700.
+# Stary domyślny /tmp/hmtools-backup → migracja na /var/lib/hmtools/tmp (poza world-writable).
+# Przy niespełnionych warunkach: izolowany mktemp -d (nigdy nie ufamy cudzemu katalogowi).
+hm_ensure_secure_tmpdir() {
+  local euid configured base owner mode
+  euid="$(id -u 2>/dev/null || echo 0)"
+  configured="${TMP_DIR:-}"
+
+  # legacy /tmp/hmtools-backup — nie używaj world-writable bez twardej walidacji
+  if [[ -z "${configured}" || "${configured}" == "/tmp/hmtools-backup" ]]; then
+    if [[ "${euid}" -eq 0 ]]; then
+      base="/var/lib/hmtools/tmp"
+    else
+      base="${TMPDIR:-/tmp}/hmtools-${euid}"
+    fi
+  else
+    base="${configured}"
+  fi
+
+  if [[ -L "${base}" ]]; then
+    if declare -F hm_warn >/dev/null 2>&1; then
+      hm_warn "TMP_DIR jest symlinkiem (${base}) — używam izolowanego katalogu."
+    fi
+    TMP_DIR="$(hm_secure_tmpdir_fallback)"
+    return 0
+  fi
+
+  if [[ ! -e "${base}" ]]; then
+    if ! mkdir -m 0700 -p "${base}" 2>/dev/null; then
+      TMP_DIR="$(hm_secure_tmpdir_fallback)"
+      return 0
+    fi
+  fi
+
+  if [[ -L "${base}" || ! -d "${base}" ]]; then
+    TMP_DIR="$(hm_secure_tmpdir_fallback)"
+    return 0
+  fi
+
+  owner="$(stat -c '%u' "${base}" 2>/dev/null || echo x)"
+  mode="$(stat -c '%a' "${base}" 2>/dev/null || echo 0)"
+  if [[ "${owner}" != "${euid}" ]]; then
+    if declare -F hm_warn >/dev/null 2>&1; then
+      hm_warn "TMP_DIR ${base} należy do uid=${owner} (oczekiwano ${euid}) — izolowany katalog."
+    fi
+    TMP_DIR="$(hm_secure_tmpdir_fallback)"
+    return 0
+  fi
+
+  chmod 0700 "${base}" 2>/dev/null || true
+  mode="$(stat -c '%a' "${base}" 2>/dev/null || echo 0)"
+  # Odrzuć world-writable (…7 / 777). 0700 idealne; 755 u właściciela euid OK (NTFS/Git Bash).
+  if [[ "${mode}" == *7 || "${mode}" == "777" || "${mode}" == "0777" ]]; then
+    if declare -F hm_warn >/dev/null 2>&1; then
+      hm_warn "TMP_DIR ${base} jest world-writable (${mode}) — izolowany katalog."
+    fi
+    TMP_DIR="$(hm_secure_tmpdir_fallback)"
+    return 0
+  fi
+
+  # ponowny check symlink (TOCTOU)
+  if [[ -L "${base}" ]]; then
+    TMP_DIR="$(hm_secure_tmpdir_fallback)"
+    return 0
+  fi
+
+  TMP_DIR="${base}"
+}
+
+# Plik tymczasowy w bezpiecznym TMP_DIR (mktemp — nigdy stała nazwa).
+# Użycie: path="$(hm_mktemp [.suffix])"
+hm_mktemp() {
+  local suffix="${1:-}"
+  local dir="${TMP_DIR:-}"
+  if [[ -z "${dir}" || -L "${dir}" || ! -d "${dir}" ]]; then
+    hm_ensure_secure_tmpdir
+    dir="${TMP_DIR}"
+  fi
+  mktemp "${dir}/hm.XXXXXX${suffix}"
 }

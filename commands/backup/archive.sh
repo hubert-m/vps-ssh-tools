@@ -372,8 +372,27 @@ hm_archive_export_unix_account() {
 # Właściwa logika archiwum — wywoływana z hm_backup_archive_site (push/pop kontekstu REPL).
 _hm_backup_archive_site_body() {
   local domain="${1:-}"
+  shift || true
+  local force_nested=0 a
+  for a in "$@"; do
+    case "${a}" in
+      --force-nested) force_nested=1 ;;
+      -*)
+        hm_err "Nieznana flaga: ${a}"
+        return 1
+        ;;
+      *)
+        if [[ -z "${domain}" ]]; then
+          domain="${a}"
+        else
+          hm_err "Za dużo argumentów: ${a}"
+          return 1
+        fi
+        ;;
+    esac
+  done
   [[ -n "${domain}" ]] || {
-    hm_err "Użycie: webs archive <domena>  /  backup archive <domena>  /  archive (w kontekście)"
+    hm_err "Użycie: webs archive <domena> [--force-nested]  /  backup archive <domena>  /  archive (w kontekście)"
     return 1
   }
 
@@ -390,7 +409,7 @@ _hm_backup_archive_site_body() {
   }
 
   hm_status_line "Inwentaryzacja ${domain}…"
-  if ! hm_site_collect_delete_inventory "${domain}" 0 0 0; then
+  if ! hm_site_collect_delete_inventory "${domain}" 0 0 0 "${force_nested}"; then
     hm_status_clear
     return 1
   fi
@@ -427,13 +446,25 @@ _hm_backup_archive_site_body() {
     dbu_desc="$(IFS=', '; echo "${archive_db_users[*]}")"
   fi
   local unix_desc="brak"
-  if [[ -n "${HM_DEL_USER}" ]] && id "${HM_DEL_USER}" >/dev/null 2>&1; then
+  # Współdzielony/chroniony Unix — NIE eksportujemy (restore nadpisałby cudze konto)
+  if [[ -n "${HM_DEL_USER}" ]] && id "${HM_DEL_USER}" >/dev/null 2>&1 \
+      && [[ "${HM_DEL_USER_SHARED:-0}" -eq 0 && "${HM_DEL_USER_PROTECTED:-0}" -eq 0 ]]; then
     unix_desc="${HM_DEL_USER} (uid/gid/shadow/SSH keys)"
+  elif [[ -n "${HM_DEL_USER}" && ( "${HM_DEL_USER_SHARED:-0}" -eq 1 || "${HM_DEL_USER_PROTECTED:-0}" -eq 1 ) ]]; then
+    unix_desc="pominięty (${HM_DEL_USER} współdzielony/chroniony)"
   fi
 
-  # Pełny katalog domowy (.ssh, .pm2, .config, historia…), gdy HOME obejmuje site root
+  # Child/shared: TYLKO docroot (nie cały HOME mastera). Exclusive: pełny HOME gdy obejmuje site.
   local archive_files_root archive_files_size
-  archive_files_root="$(hm_backup_resolve_files_root "${HM_DEL_ROOT:-${HM_DEL_DOCROOT}}" "${HM_DEL_USER}")"
+  if [[ "${HM_DEL_CHILD_OF_SHARED:-0}" -eq 1 || "${HM_DEL_USER_SHARED:-0}" -eq 1 ]]; then
+    archive_files_root="${HM_DEL_ROOT:-${HM_DEL_DOCROOT}}"
+    hm_info "Archiwum child/shared — pakuję wyłącznie ${archive_files_root} (bez HOME mastera)."
+  else
+    archive_files_root="$(hm_backup_resolve_files_root "${HM_DEL_ROOT:-${HM_DEL_DOCROOT}}" "${HM_DEL_USER}")"
+    if [[ -n "${archive_files_root}" && -n "${HM_DEL_DOCROOT}" ]]; then
+      archive_files_root="$(hm_backup_prefer_docroot_if_shared_home "${domain}" "${archive_files_root}" "${HM_DEL_DOCROOT}")"
+    fi
+  fi
   if [[ -z "${archive_files_root}" || ! -d "${archive_files_root}" ]]; then
     archive_files_root="${HM_DEL_ROOT}"
   fi
@@ -472,7 +503,7 @@ _hm_backup_archive_site_body() {
   hm_rclone_mkdir "${remote_base}"
   hm_rclone_mkdir "${remote_base}/db"
 
-  mkdir -p "${TMP_DIR}"
+  hm_ensure_secure_tmpdir
   local name
   for name in "${archive_dbs[@]}"; do
     [[ -n "${name}" ]] || continue
@@ -485,7 +516,8 @@ _hm_backup_archive_site_body() {
   # Konta MySQL (hasła jako hash + GRANTS) — wymagane do restore 1:1
   local has_db_accounts=0
   local db_acc_sha="" unix_meta_sha=""
-  local db_acc_sql="${TMP_DIR}/db-accounts-${domain}-${stamp}.sql"
+  local db_acc_sql
+  db_acc_sql="$(hm_mktemp .sql)"
   if [[ "${#archive_db_users[@]}" -gt 0 ]]; then
     if hm_archive_export_mysql_accounts "${db_acc_sql}" --dbs "$(IFS=','; echo "${archive_dbs[*]}")" "${archive_db_users[@]}"; then
       local enc_db remote_db
@@ -510,11 +542,13 @@ _hm_backup_archive_site_body() {
   fi
   rm -f "${db_acc_sql}" "${db_acc_sql}.enc" 2>/dev/null || true
 
-  # Konto Unix + authorized_keys (hash z shadow)
+  # Konto Unix + authorized_keys — tylko exclusive (nie shared/protected)
   local has_unix_account=0
-  local unix_meta="${TMP_DIR}/unix-account-${domain}-${stamp}.meta"
-  local unix_keys="${TMP_DIR}/unix-keys-${domain}-${stamp}.txt"
-  if [[ -n "${HM_DEL_USER}" ]] && id "${HM_DEL_USER}" >/dev/null 2>&1; then
+  local unix_meta unix_keys
+  unix_meta="$(hm_mktemp .meta)"
+  unix_keys="$(hm_mktemp .keys)"
+  if [[ -n "${HM_DEL_USER}" ]] && id "${HM_DEL_USER}" >/dev/null 2>&1 \
+      && [[ "${HM_DEL_USER_SHARED:-0}" -eq 0 && "${HM_DEL_USER_PROTECTED:-0}" -eq 0 ]]; then
     if hm_archive_export_unix_account "${HM_DEL_USER}" "${unix_meta}" "${unix_keys}"; then
       local enc_ux remote_ux
       enc_ux="$(hm_backup_maybe_encrypt_file "${unix_meta}")"
@@ -538,6 +572,8 @@ _hm_backup_archive_site_body() {
     else
       hm_warn "Nie udało się zbudować snapshota konta Unix ${HM_DEL_USER}."
     fi
+  elif [[ "${HM_DEL_USER_SHARED:-0}" -eq 1 || "${HM_DEL_USER_PROTECTED:-0}" -eq 1 ]]; then
+    hm_info "Pomijam eksport konta Unix ${HM_DEL_USER:-?} (współdzielony/chroniony)."
   else
     hm_info "Brak konta Unix strony do eksportu."
   fi
@@ -545,7 +581,11 @@ _hm_backup_archive_site_body() {
 
   local backup_root="${archive_files_root}"
   if [[ -z "${backup_root}" || ! -d "${backup_root}" ]]; then
-    backup_root="$(hm_backup_resolve_files_root "${HM_DEL_ROOT:-${HM_DEL_DOCROOT}}" "${HM_DEL_USER}")"
+    if [[ "${HM_DEL_CHILD_OF_SHARED:-0}" -eq 1 || "${HM_DEL_USER_SHARED:-0}" -eq 1 ]]; then
+      backup_root="${HM_DEL_ROOT:-${HM_DEL_DOCROOT}}"
+    else
+      backup_root="$(hm_backup_resolve_files_root "${HM_DEL_ROOT:-${HM_DEL_DOCROOT}}" "${HM_DEL_USER}")"
+    fi
   fi
   if [[ -z "${backup_root}" || ! -d "${backup_root}" ]]; then
     backup_root="${HM_DEL_ROOT:-${HM_DEL_DOCROOT}}"
@@ -554,7 +594,7 @@ _hm_backup_archive_site_body() {
     hm_archive_abort "Brak katalogu strony do archiwizacji. Nic nie usunięto z VPS." "${remote_base}"
     return 1
   fi
-  hm_info "Archiwizacja plików z pełnego katalogu: ${backup_root} (ukryte .ssh/.pm2/.config/… włącznie)"
+  hm_info "Archiwizacja plików z katalogu: ${backup_root}"
 
   local files_mode="none" chunks_count=0 report
   report="$(hm_archive_upload_site_files "${backup_root}" "${remote_base}")" || {
@@ -579,7 +619,8 @@ _hm_backup_archive_site_body() {
       || { hm_archive_abort "Nie udało się wysłać vhost.conf. Nic nie usunięto z VPS." "${remote_base}"; return 1; }
   fi
   if [[ -n "${HM_DEL_VHOST_DIR}" && -d "${HM_DEL_VHOST_DIR}" ]]; then
-    local vtar="${TMP_DIR}/ols-vhost-${domain}-${stamp}.tar.gz"
+    local vtar
+    vtar="$(hm_mktemp .tar.gz)"
     if tar -C "$(dirname "${HM_DEL_VHOST_DIR}")" -czf "${vtar}" "$(basename "${HM_DEL_VHOST_DIR}")" 2>/dev/null; then
       hm_rclone_copyto "${vtar}" "${remote_base}/ols-vhost-dir.tar.gz" || {
         rm -f "${vtar}"
@@ -588,10 +629,12 @@ _hm_backup_archive_site_body() {
       }
       rm -f "${vtar}"
     else
+      rm -f "${vtar}"
       hm_warn "Nie spakowano katalogu vhost OLS (kontynuuję)."
     fi
   fi
-  local snip="${TMP_DIR}/ols-httpd-snippet-${domain}.conf"
+  local snip
+  snip="$(hm_mktemp .conf)"
   hm_archive_write_ols_snippet "${domain}" "${snip}"
   if [[ -s "${snip}" ]]; then
     hm_rclone_copyto "${snip}" "${remote_base}/ols-httpd-snippet.conf" \
@@ -601,7 +644,8 @@ _hm_backup_archive_site_body() {
   rm -f "${snip}"
 
   # SSL (symlinki live/ zachowane)
-  local ssl_tar="${TMP_DIR}/ssl-${domain}-${stamp}.tar.gz"
+  local ssl_tar
+  ssl_tar="$(hm_mktemp .tar.gz)"
   if hm_archive_pack_ssl "${domain}" "${ssl_tar}"; then
     hm_rclone_copyto "${ssl_tar}" "${remote_base}/ssl.tar.gz" || {
       rm -f "${ssl_tar}"
@@ -614,9 +658,10 @@ _hm_backup_archive_site_body() {
     hm_info "Brak lokalnych certyfikatów SSL do spakowania."
   fi
 
-  # crontab + pm2
+  # crontab + pm2 (ścieżki wyłącznie z mktemp — bez przewidywalnych nazw)
   if [[ -n "${HM_DEL_USER}" ]]; then
-    local cron_txt="${TMP_DIR}/crontab-${domain}.txt"
+    local cron_txt
+    cron_txt="$(hm_mktemp .cron)"
     crontab -u "${HM_DEL_USER}" -l > "${cron_txt}" 2>/dev/null || true
     if [[ -s "${cron_txt}" ]]; then
       hm_rclone_copyto "${cron_txt}" "${remote_base}/crontab.txt" \
@@ -625,7 +670,8 @@ _hm_backup_archive_site_body() {
     rm -f "${cron_txt}"
   fi
 
-  local pm2_json="${TMP_DIR}/pm2-${domain}.json"
+  local pm2_json
+  pm2_json="$(hm_mktemp .json)"
   echo '[]' > "${pm2_json}"
   if [[ "${#HM_DEL_PM2[@]}" -gt 0 ]]; then
     hm_site_context_push
@@ -645,7 +691,8 @@ _hm_backup_archive_site_body() {
 
   # CyberPanel DB rows (website / childdomains / databases)
   local has_cp=0
-  local cp_sql="${TMP_DIR}/cyberpanel-${domain}-${stamp}.sql"
+  local cp_sql
+  cp_sql="$(hm_mktemp .sql)"
   if hm_archive_export_cyberpanel_sql "${domain}" "${cp_sql}"; then
     if hm_rclone_copyto "${cp_sql}" "${remote_base}/cyberpanel-site.sql" \
       || cat "${cp_sql}" | hm_rclone_rcat "${remote_base}/cyberpanel-site.sql"; then
@@ -673,7 +720,8 @@ _hm_backup_archive_site_body() {
   done
   dbu_json="${dbu_json%,}"
 
-  local manifest="${TMP_DIR}/manifest-archive-${domain}-${stamp}.json"
+  local manifest
+  manifest="$(hm_mktemp .json)"
   local _j_domain _j_host _j_root _j_doc _j_user _j_php _j_remote _j_uhome
   _j_domain="$(hm_json_escape_str "${domain}")"
   _j_host="$(hm_json_escape_str "${BACKUP_HOST_LABEL:-}")"

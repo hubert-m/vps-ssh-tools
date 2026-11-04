@@ -3,15 +3,27 @@
 
 hm_access_user_is_protected() {
   local u="${1:-}"
+  local uid umin
   if declare -F hm_del_user_is_protected >/dev/null 2>&1; then
     hm_del_user_is_protected "${u}"
     return $?
   fi
   case "${u}" in
-    root|nobody|nogroup|www-data|lsadm|cyberpanel|mysql|mariadb|postfix|dovecot|sshd|ubuntu|debian|centos|almalinux|rocky|apache|nginx)
+    root|nobody|nogroup|www-data|lsadm|cyberpanel|mysql|mariadb|postfix|dovecot|sshd|ubuntu|debian|centos|almalinux|rocky|apache|nginx|daemon|messagebus|bin|sys)
       return 0
       ;;
   esac
+  if id "${u}" >/dev/null 2>&1; then
+    uid="$(id -u "${u}" 2>/dev/null || echo "")"
+    if declare -F hm_unix_uid_min >/dev/null 2>&1; then
+      umin="$(hm_unix_uid_min)"
+    else
+      umin=1000
+    fi
+    if [[ "${uid}" =~ ^[0-9]+$ && "${uid}" -lt "${umin}" ]]; then
+      return 0
+    fi
+  fi
   return 1
 }
 
@@ -36,16 +48,28 @@ hm_access_resolve_site() {
 hm_access_require_site_user() {
   local domain="$1"
   local user="${HM_SITE_USER:-}"
+  local uid umin
   [[ -n "${user}" ]] || {
     hm_err "Brak użytkownika Unix dla ${domain} (HM_SITE_USER puste)."
     return 1
   }
-  if hm_access_user_is_protected "${user}"; then
-    hm_err "Użytkownik chroniony — odmowa: ${user}"
-    return 1
-  fi
   if ! id "${user}" >/dev/null 2>&1; then
     hm_err "Użytkownik nie istnieje w systemie: ${user}"
+    return 1
+  fi
+  # System UID < UID_MIN — jawny komunikat (daemon/messagebus itd.)
+  uid="$(id -u "${user}" 2>/dev/null || echo "")"
+  if declare -F hm_unix_uid_min >/dev/null 2>&1; then
+    umin="$(hm_unix_uid_min)"
+  else
+    umin=1000
+  fi
+  if [[ "${uid}" =~ ^[0-9]+$ && "${uid}" -lt "${umin}" ]]; then
+    hm_err "Użytkownik systemowy (UID ${uid} < ${umin}) — odmowa: ${user}"
+    return 1
+  fi
+  if hm_access_user_is_protected "${user}"; then
+    hm_err "Użytkownik chroniony — odmowa: ${user}"
     return 1
   fi
   printf '%s' "${user}"

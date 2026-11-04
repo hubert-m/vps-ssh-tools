@@ -9,7 +9,9 @@ Użycie:
   backup show               Pokaż aktualny root i strukturę
   backup full [--yes]       Pełna kopia serwera → Drive/full/<stamp>/ (--yes = cron)
   backup site <domena>      Kopia strony → Drive/<domena>/<stamp>/
-  backup archive <domena>   Archiwum (type=archive) → weryfikacja Drive → usunięcie z VPS
+  backup archive <domena> [--force-nested]
+                            Archiwum (type=archive) → weryfikacja Drive → usunięcie z VPS
+                            (child→docroot; master z childami → odmowa bez --force-nested)
   backup list [domena|full] Snapshoty + manifest (w kontekście: bieżąca domena)
   backup restore <domena> [stamp] [--files-only|--db-only]
                             [--overwrite-db] [--overwrite-files] [--adopt-existing-user]
@@ -37,42 +39,40 @@ EOF
 
 _hm_cmd_help archive-site <<'EOF'
 Użycie:
-  webs archive <numer|domena>
-  backup archive <numer|domena>
-  archive-site <numer|domena>
-  (w kontekście) archive
+  webs archive <numer|domena> [--force-nested]
+  backup archive <numer|domena> [--force-nested]
+  archive-site <numer|domena> [--force-nested]
+  (w kontekście) archive [--force-nested]
 
 1) Pełna kopia archiwalna na Google Drive:
    - bazy MySQL (db/*.sql.gz)
    - konta MySQL exclusive (db-accounts.sql — CREATE + GRANT tylko na bazy snapshotu; bez shared)
-   - konto Unix SSH 1:1 (unix-account.meta — uid/gid/shadow + unix-authorized_keys)
-   - pliki, OLS, SSL, cron, PM2, manifest.json
+   - konto Unix SSH 1:1 (tylko exclusive; shared/protected pomijane)
+   - pliki (child/shared → wyłącznie docroot; nie cały HOME mastera), OLS, SSL, cron, PM2, manifest.json
 2) Twarda weryfikacja plików na Drive (Atomic Guard)
-3) Dopiero potem całkowite usunięcie serwisu z VPS (jak delete-site)
+3) Dopiero potem usunięcie z VPS (child→docroot; cron nie przy shared user; master z childami → odmowa / --force-nested)
 
 Snapshot ma type=archive (chroniony przed backup prune).
 Przywrócenie: backup restore <domena> [stamp] [--overwrite-db|--overwrite-files|--adopt-existing-user]
-  (kolizje Unix/DB/plików → odmowa; shared Unix → bez mutacji konta, pliki → docroot)
 EOF
 
 _hm_cmd_help archive <<'EOF'
 Użycie:
-  webs archive <numer|domena>
-  backup archive <numer|domena>
-  archive-site <numer|domena>
-  (w kontekście) archive
+  webs archive <numer|domena> [--force-nested]
+  backup archive <numer|domena> [--force-nested]
+  archive-site <numer|domena> [--force-nested]
+  (w kontekście) archive [--force-nested]
 
 1) Pełna kopia archiwalna na Google Drive:
    - bazy MySQL (db/*.sql.gz)
    - konta MySQL exclusive (db-accounts.sql — CREATE + GRANT tylko na bazy snapshotu; bez shared)
-   - konto Unix SSH 1:1 (unix-account.meta — uid/gid/shadow + unix-authorized_keys)
-   - pliki, OLS, SSL, cron, PM2, manifest.json
+   - konto Unix SSH 1:1 (tylko exclusive; shared/protected pomijane)
+   - pliki (child/shared → wyłącznie docroot; nie cały HOME mastera), OLS, SSL, cron, PM2, manifest.json
 2) Twarda weryfikacja plików na Drive (Atomic Guard)
-3) Dopiero potem całkowite usunięcie serwisu z VPS (jak delete-site)
+3) Dopiero potem usunięcie z VPS (child→docroot; cron nie przy shared user; master z childami → odmowa / --force-nested)
 
 Snapshot ma type=archive (chroniony przed backup prune).
 Przywrócenie: backup restore <domena> [stamp] [--overwrite-db|--overwrite-files|--adopt-existing-user]
-  (kolizje Unix/DB/plików → odmowa; shared Unix → bez mutacji konta, pliki → docroot)
 EOF
 
 _HM_BACKUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -194,10 +194,11 @@ EOF
     archive)
       local domain="${1:-${HM_SITE_DOMAIN}}"
       if [[ -z "${domain}" ]]; then
-        hm_err "Użycie: backup archive <domena>  (lub wejdź w kontekst: archive)"
+        hm_err "Użycie: backup archive <domena> [--force-nested]  (lub wejdź w kontekst: archive)"
         return 1
       fi
-      hm_backup_archive_site "${domain}"
+      shift || true
+      hm_backup_archive_site "${domain}" "$@"
       ;;
     test)
       hm_load_config
