@@ -1,5 +1,6 @@
 # hmtools v0.1.11
 
+- Feat: `docker` — lista (+ domena OLS proxy), logs/start/stop/restart, compose ls/pull/up, prune (dry-run; volumes tylko z critical); detect `DOCKER`; test `test-docker-map.sh`
 - Feat: `update check|security|packages|ols|cyberpanel|auto-security` — przegląd i bezpieczne aktualizacje stosu (pkg API security, snapshot pre-CP, verify); test `test-update-check.sh`
 - Feat: `ssl issue` (HTTP-01 + pre-check DNS/HTTP, `--with-www`/`--aliases`), `--wildcard --dns pdns|cloudflare`, `ssl hostname` / `mail` / `self-signed` / `diagnose`; test `test-ssl-issue.sh`
 - Fix: `backup restore` / `restore-full` — snapshot z `.enc` bez `BACKUP_ENCRYPT_PASSPHRASE` → twardy stop przed zmianami (rc≠0); bez mylącego „Brak unix-account.meta”

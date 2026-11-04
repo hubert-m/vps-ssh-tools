@@ -11,6 +11,7 @@
 | **WWW** | OLS (`/usr/local/lsws`), Nginx (`/etc/nginx`), Apache (`/etc/apache2`\|`/etc/httpd`), potem proces/systemd | `WEBSERVER`, `WEBSERVER_SOURCE`; dodatkowe w `STACK_EXTRA` |
 | **DB** | socket MySQL + `mariadb`/`mysql` / unit systemd | `DB_ENGINE`, `MYSQL_SOCKET` |
 | **Supervisor** | `SUPERVISOR=yes` tylko przy `supervisorctl`; conf/unit bez ctl → `no` + `conf-only:` / `systemd-only:` | `SUPERVISOR`, `SUPERVISOR_CTL`, `SUPERVISOR_CONF`, `SUPERVISOR_SOURCE` |
+| **Docker** | `docker` CLI (+ opcjonalnie compose plugin / `docker-compose`); daemon sprawdzany przy komendzie | `DOCKER`, `DOCKER_BIN`, `DOCKER_COMPOSE`, `DOCKER_SOURCE` |
 | **Chrome** | PATH → ścieżki systemowe → **systemd** (`chrome-headless` / MainPID) → **Puppeteer** `/home/*/.cache/puppeteer/chrome/…/chrome` → **CDP** `:9222` (wersja leniwie / z CDP) | `CHROME`, `CHROME_BIN`, `CHROME_VERSION`, `CHROME_SOURCE`, `CHROME_SERVICE`, `CHROME_CDP_*` |
 
 cPanel / Plesk: preferowany sygnał to obecność narzędzi API/CLI (UAPI, `plesk`), nie samo zgadywanie po layoutcie plików.
@@ -37,6 +38,7 @@ FORCE_PANEL="cyberpanel"
 FORCE_WEBSERVER="openlitespeed"
 FORCE_DB_ENGINE="mariadb"
 FORCE_SUPERVISOR="yes"                          # yes|no
+FORCE_DOCKER="yes"                              # yes|no
 FORCE_CHROME_BIN="/usr/bin/google-chrome-stable"
 FORCE_CHROME_CDP="http://127.0.0.1:9222"        # lub samo 9222
 ALLOW_UNSUPPORTED_OS=1   # tylko gdy świadomie obchodzisz blokadę OS

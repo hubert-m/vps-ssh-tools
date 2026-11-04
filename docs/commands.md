@@ -39,6 +39,7 @@
 | `security …` | Audyt: `ports`, `ssh`, Fail2Ban `ban`/`unban`, `scan` docroot |
 | `access …` | SSH/FTP strony: `ssh` (passwd/shell/keys), `ftp` (list/add/passwd/delete) |
 | `redis …` | Redis: status/memory/dbs/clients/slowlog/sites; `config`/`flush*`/`restart`/`client kill` |
+| `docker …` | Kontenery: lista (+ domena OLS proxy), logs, start/stop/restart, compose ls/pull/up, prune (domyślnie dry-run) |
 | `detect` | Wypisz wykryty panel / webserver / DB |
 | `help [polecenie]` | Lista komend lub pomoc do wybranej (np. `help use`) |
 | `exit` | Na głównej: wyjście z hmtools; w `[domena]>`: powrót do `hmtools>` |
@@ -66,7 +67,18 @@
 | `archive` | Archiwum Drive → verify → usunięcie tej strony |
 | `access …` | SSH/FTP bieżącej strony (`status` / `ssh` / `ftp`) |
 | `redis …` | Status/memory/sites (filtr domeny); mutacje jak globalnie |
+| `docker …` | Kontenery powiązane z portami proxy tej strony |
 | `exit` | Wyjście z kontekstu |
+
+## Docker
+
+```text
+hmtools> docker                 # lista + OLS proxy domain
+hmtools> docker logs n8n 100
+hmtools> docker compose ls
+hmtools> docker prune --dry-run # nigdy volume bez --volumes + critical
+[app.example.pl]> docker        # filtr pod proxy strony
+```
 
 ## PM2 / Node / Next
 

@@ -32,12 +32,19 @@ hm_health_cwd() {
   readlink -f "/proc/${pid}/cwd" 2>/dev/null || true
 }
 
-# Jednostka systemd z cgroup (np. php8.2-fpm.service, redis.service).
+# Jednostka systemd z cgroup (np. php8.2-fpm.service, redis.service, docker-<id>.scope).
 hm_health_systemd_unit() {
   local pid="$1" cg unit=""
   [[ -r "/proc/${pid}/cgroup" ]] || return 0
   cg="$(tr '\n' ' ' < "/proc/${pid}/cgroup" 2>/dev/null || true)"
-  unit="$(printf '%s\n' "${cg}" | grep -oE '[A-Za-z0-9_@.-]+\.service' | tail -1 || true)"
+  # Docker / containerd scope przed zwykłym .service
+  unit="$(printf '%s\n' "${cg}" | grep -oE 'docker-[0-9a-f]+\.scope' | tail -1 || true)"
+  if [[ -z "${unit}" ]]; then
+    unit="$(printf '%s\n' "${cg}" | grep -oE 'containerd-[0-9a-f]+\.scope' | tail -1 || true)"
+  fi
+  if [[ -z "${unit}" ]]; then
+    unit="$(printf '%s\n' "${cg}" | grep -oE '[A-Za-z0-9_@.-]+\.service' | tail -1 || true)"
+  fi
   printf '%s' "${unit}"
 }
 

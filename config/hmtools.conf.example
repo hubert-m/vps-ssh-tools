@@ -13,6 +13,7 @@
 # FORCE_DB_ENGINE="mariadb"         # mariadb|mysql|unknown
 # FORCE_PKG_MANAGER="dnf"           # apt|dnf|yum — wymuszenie adaptera pakietów (testy)
 # FORCE_SUPERVISOR="yes"            # yes|no — wymuszenie wyniku detekcji Supervisor
+# FORCE_DOCKER="yes"                # yes|no — wymuszenie wyniku detekcji Docker
 # FORCE_CHROME_BIN="/usr/bin/google-chrome-stable"  # wymusza CHROME=yes + ścieżkę binarki
 # FORCE_CHROME_CDP="http://127.0.0.1:9222"          # lub samo 9222 — DevTools headless daemona
 # Gdy OS nie jest na liście wsparcia (Ubuntu/Debian/Alma/Rocky/CentOS/RHEL),

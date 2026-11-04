@@ -28,7 +28,7 @@ OLS_CONF=""
 OLS_VHOSTS=""
 CYBERPANEL_ROOT=""
 MYSQL_SOCKET=""
-# Supervisor / Chrome (headless)
+# Supervisor / Chrome (headless) / Docker
 SUPERVISOR="no"
 SUPERVISOR_SOURCE=""
 SUPERVISOR_CTL=""
@@ -37,6 +37,10 @@ CHROME="no"
 CHROME_BIN=""
 CHROME_SOURCE=""
 CHROME_VERSION=""
+DOCKER="no"
+DOCKER_SOURCE=""
+DOCKER_BIN=""
+DOCKER_COMPOSE=""
 # dodatkowe sygnały (spacja): np. "nginx apache webmin"
 STACK_EXTRA=""
 # 1 = REPL/dispatch tylko uninstall-hmtools (+ help/exit/detect/version)
@@ -258,6 +262,52 @@ hm_detect_db() {
   elif hm_have_cmd mysql || systemctl is-active --quiet mysql 2>/dev/null || systemctl is-active --quiet mysqld 2>/dev/null; then
     DB_ENGINE="mysql"
   fi
+}
+
+hm_detect_docker() {
+  # DOCKER=yes tylko gdy docker CLI działa (daemon dostępny opcjonalnie sprawdzany przy komendzie).
+  DOCKER="no"
+  DOCKER_SOURCE=""
+  DOCKER_BIN=""
+  DOCKER_COMPOSE=""
+
+  if hm_have_cmd docker; then
+    DOCKER_BIN="$(command -v docker)"
+  elif [[ -x /usr/bin/docker ]]; then
+    DOCKER_BIN="/usr/bin/docker"
+  fi
+
+  if [[ -n "${DOCKER_BIN}" && -x "${DOCKER_BIN}" ]]; then
+    DOCKER="yes"
+    DOCKER_SOURCE="bin:docker"
+    if "${DOCKER_BIN}" compose version >/dev/null 2>&1; then
+      DOCKER_COMPOSE="plugin"
+      DOCKER_SOURCE="bin:docker+compose-plugin"
+    elif hm_have_cmd docker-compose; then
+      DOCKER_COMPOSE="standalone"
+      DOCKER_SOURCE="bin:docker+docker-compose"
+    fi
+  fi
+
+  if [[ -n "${FORCE_DOCKER:-}" ]]; then
+    case "${FORCE_DOCKER}" in
+      yes)
+        DOCKER="yes"
+        DOCKER_SOURCE="override:FORCE_DOCKER"
+        if [[ -z "${DOCKER_BIN}" ]]; then
+          hm_have_cmd docker && DOCKER_BIN="$(command -v docker)"
+        fi
+        ;;
+      no)
+        DOCKER="no"
+        DOCKER_SOURCE="override:FORCE_DOCKER"
+        DOCKER_BIN=""
+        DOCKER_COMPOSE=""
+        ;;
+    esac
+  fi
+
+  printf '%s' "${DOCKER}"
 }
 
 hm_detect_supervisor() {
@@ -657,6 +707,7 @@ hm_detect_all() {
   hm_detect_pkg_manager
   hm_detect_supervisor
   hm_detect_chrome
+  hm_detect_docker
   hm_detect_apply_overrides
   if ! hm_os_is_supported; then
     HMTOOLS_RESTRICTED=1
@@ -769,6 +820,7 @@ hm_detect_tool_hints() {
   esac
   [[ "${SUPERVISOR:-no}" == "yes" ]] && extra="${extra}, supervisor"
   [[ "${CHROME:-no}" == "yes" ]] && extra="${extra}, chrome"
+  [[ "${DOCKER:-no}" == "yes" ]] && extra="${extra}, docker"
   echo "${base}${extra}"
 }
 
@@ -809,6 +861,9 @@ hm_detect_print() {
     fi
     [[ -n "${CHROME_VERSION}" ]] && echo "  CHROME_VER  : ${CHROME_VERSION}"
   fi
+  echo "  DOCKER      : ${DOCKER}${DOCKER_SOURCE:+  [${DOCKER_SOURCE}]}"
+  [[ -n "${DOCKER_BIN}" ]] && echo "  DOCKER_BIN  : ${DOCKER_BIN}"
+  [[ -n "${DOCKER_COMPOSE}" ]] && echo "  COMPOSE     : ${DOCKER_COMPOSE}"
   echo
   if [[ "${HMTOOLS_RESTRICTED}" -eq 1 ]]; then
     hm_warn "  System nieobsługiwany — dozwolone: uninstall-hmtools, help, version, detect, exit"
@@ -820,7 +875,7 @@ hm_detect_print() {
   echo
   echo "  ${C_DIM}Nadpisanie (gdy auto się myli) w ${HMTOOLS_CONF:-hmtools.conf}:${C_RESET}"
   echo "    FORCE_PANEL=…   FORCE_WEBSERVER=…   FORCE_DB_ENGINE=…   FORCE_PKG_MANAGER=…"
-  echo "    FORCE_SUPERVISOR=yes|no   FORCE_CHROME_BIN=/ścieżka   ALLOW_UNSUPPORTED_OS=1"
+  echo "    FORCE_SUPERVISOR=yes|no   FORCE_DOCKER=yes|no   FORCE_CHROME_BIN=/ścieżka   ALLOW_UNSUPPORTED_OS=1"
   echo
 }
 
@@ -828,7 +883,7 @@ hm_detect_banner() {
   # krótka karta na start REPL
   local hints
   hints="$(hm_detect_tool_hints)"
-  hm_ok "Wykryty stos — OS: ${OS_PRETTY:-?} [${OS_FAMILY}/${PKG_MANAGER}] · panel=${PANEL} · www=${WEBSERVER} · db=${DB_ENGINE} · supervisor=${SUPERVISOR:-no} · chrome=${CHROME:-no}"
+  hm_ok "Wykryty stos — OS: ${OS_PRETTY:-?} [${OS_FAMILY}/${PKG_MANAGER}] · panel=${PANEL} · www=${WEBSERVER} · db=${DB_ENGINE} · supervisor=${SUPERVISOR:-no} · docker=${DOCKER:-no} · chrome=${CHROME:-no}"
   if [[ "${HMTOOLS_RESTRICTED:-0}" -eq 1 ]]; then
     hm_err "Niewspierany lub nierozpoznany system (${OS_ID:-unknown})."
     hm_warn "Dozwolone komendy: uninstall-hmtools | help | version | detect | exit"

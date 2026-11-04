@@ -461,6 +461,23 @@ hm_tab_complete() {
           done
         fi
         ;;
+      docker)
+        if [[ "${prefix}" =~ docker[[:space:]]+compose[[:space:]] ]]; then
+          for m in ls list pull up; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ docker[[:space:]]+prune[[:space:]] ]]; then
+          for m in --images --volumes --dry-run --execute; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ docker[[:space:]]+(logs|restart|stop|start)[[:space:]] ]]; then
+          :
+        else
+          for m in status all logs restart stop start compose prune help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
     esac
   fi
 

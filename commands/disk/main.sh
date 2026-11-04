@@ -121,6 +121,15 @@ hm_disk_section_heavy() {
   echo "${C_BOLD}Najcięższe w /${C_RESET}  (top ${count}, głębokość ${deep})"
   hm_status_line "Skanowanie najcięższych ścieżek od / (może chwilę potrwać)..."
   hm_disk_heavy_walk "/" "${count}" "${deep}" 1
+  hm_status_clear
+  if [[ -d /var/lib/docker ]]; then
+    local dsz
+    dsz="$(du -sb /var/lib/docker 2>/dev/null | awk '{print $1}')"
+    if [[ "${dsz}" =~ ^[0-9]+$ && "${dsz}" -gt 0 ]]; then
+      echo
+      hm_info "Docker data (/var/lib/docker): $(hm_human_size "${dsz}") — czyszczenie: docker prune [--images] [--dry-run]"
+    fi
+  fi
 }
 
 cmd_disk() {
