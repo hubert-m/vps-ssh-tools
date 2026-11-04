@@ -4,7 +4,7 @@
 
 _hm_cmd_help ols <<'EOF'
 Użycie:
-  ols [status|reload|restart|log|stats|top|htaccess|cache|proxy|admin]
+  ols [status|reload|restart|log|stats|top|htaccess|cache|proxy|admin|vhost]
   ols cache flush [domena|all]   (all = też globalne cachedata)
 
 Zarządzanie OpenLiteSpeed:
@@ -14,11 +14,12 @@ Zarządzanie OpenLiteSpeed:
   log [N]             Ostatnie N linii error.log (domyślnie 50)
   stats | top         Live /tmp/lshttpd/.rtreport* (RPS, vhosty, WAITQUE LSAPI)
   htaccess [enable]   .htaccess / autoLoadHtaccess (+ reload)
-  cache status|flush  LSCache (vhost / global all)
+  cache status|flush|settings  LSCache (+ TTL/exclude w vhconf)
   proxy [set-port N]  Zdrowie backendów reverse proxy (503)
   admin [status|pass] WebAdmin (port, tunel SSH, admpass.sh)
+  vhost show|edit|rollback  Edycja vhconf z walidacją/rollback
 
-W kontekście strony: htaccess, proxy, clean --lscache
+W kontekście strony: vhost, rewrite, headers, cache settings, htaccess, proxy, clean --lscache
 EOF
 
 _hm_cmd_help htaccess <<'EOF'
@@ -38,11 +39,16 @@ Weryfikuje extprocessor type proxy (ss + curl). Martwy port → ryzyko 503.
 EOF
 
 _hm_cmd_help cache <<'EOF'
-Użycie: ols cache [status|flush [domena|all]]
+Użycie: ols cache [status|flush [domena|all]|settings …]
+        cache settings [--ttl N] [--exclude PATH]   (kontekst strony)
         clean --lscache   (w kontekście strony)
 
 Status module cache + katalogi lscache; flush czyści zawartość (z potwierdzeniem).
+settings — expireInSeconds / noCacheUrl w vhconf (z bak + rollback).
 EOF
+
+# shellcheck source=vhost.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/vhost.sh"
 
 cmd_ols() {
   hm_detect_all
@@ -116,9 +122,12 @@ cmd_ols() {
     admin|webadmin)
       cmd_ols_admin "$@"
       ;;
+    vhost|vhconf)
+      cmd_vhost "$@"
+      ;;
     help|-h|--help)
       cat <<'EOF'
-Użycie: ols [status|reload|restart|log|stats|top|htaccess|cache|proxy|admin]
+Użycie: ols [status|reload|restart|log|stats|top|htaccess|cache|proxy|admin|vhost]
 
   status              Stan / wersja / proces
   reload              Przeładowanie konfiguracji
@@ -126,9 +135,10 @@ Użycie: ols [status|reload|restart|log|stats|top|htaccess|cache|proxy|admin]
   log [N]             Ostatnie N linii error.log (domyślnie 50)
   stats | top         Live .rtreport (RPS, vhosty, WAITQUE LSAPI); top = odświeżanie
   htaccess [enable]   Diagnostyka .htaccess / autoLoadHtaccess (kontekst lub domena)
-  cache [status|flush [domena|all]]
+  cache [status|flush [domena|all]|settings]
   proxy [set-port PORT [nazwa]]
   admin [status|pass] WebAdmin (port, tunel SSH, admpass.sh)
+  vhost show|edit|rollback  vhconf z walidacją / rollback
 EOF
       ;;
     *)
@@ -170,8 +180,25 @@ cmd_ols_cache() {
     flush|clear|purge)
       hm_ols_cache_flush "${1:-}"
       ;;
+    settings|set|config)
+      if [[ -n "${HM_SITE_DOMAIN:-}" ]]; then
+        cmd_site_cache settings "$@"
+      else
+        local domain=""
+        if [[ -n "${1:-}" ]] && hm_is_valid_domain "${1}" 2>/dev/null; then
+          domain="${1}"; shift
+        fi
+        [[ -n "${domain}" ]] || { hm_err "Użycie: ols cache settings <domena> … lub use <domena>"; return 1; }
+        local _save="${HM_SITE_DOMAIN:-}"
+        HM_SITE_DOMAIN="${domain}"
+        cmd_site_cache settings "$@"
+        local rc=$?
+        HM_SITE_DOMAIN="${_save}"
+        return "${rc}"
+      fi
+      ;;
     help|-h|--help)
-      echo "Użycie: ols cache [status|flush [domena|all]]"
+      echo "Użycie: ols cache [status|flush [domena|all]|settings …]"
       ;;
     *)
       # status dla podanej domeny

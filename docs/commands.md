@@ -25,7 +25,7 @@
 | `uninstall-hmtools [--yes]` | Usuwa `/hm-tools` i symlink (z potwierdzeniem) |
 | `applog [N]` | Ostatnie N linii logu hmtools (domyślnie 50) |
 | `disk` [`--drive`] [`--inodes`] [`--home`] [`--heavy` [`--count N`] [`--deep N`]] | `df` / inody / top `/home`; `--heavy` — rekurencyjnie najcięższe pliki/katalogi od `/` (domyślnie count=3, deep=5) |
-| `ols …` | OLS: `status`/`reload`/`restart`/`log`, `stats`/`top`, `htaccess`, `cache`, `proxy`, `admin` |
+| `ols …` | OLS: `status`/`reload`/`restart`/`log`, `stats`/`top`, `htaccess`, `cache`, `proxy`, `admin`, `vhost` |
 | `ssl` | Certyfikaty SSL (status / dni; wygasły na czerwono) |
 | `ssl issue [domena]` | Wydaj LE (HTTP-01) z pre-check DNS/HTTP; `--with-www` / `--aliases`; `--wildcard --dns pdns\|cloudflare` |
 | `ssl hostname` / `ssl mail` / `ssl self-signed` / `ssl diagnose` | Hostname panelu, poczta, awaryjny self-signed, diagnoza ACME |
@@ -60,6 +60,10 @@
 | `pm2` | Procesy strony; `restart`/`reload`/`logs` jako user strony |
 | `backup` | Pełna kopia środowiska (pliki + DB) → Drive |
 | `clean [--lscache]` | Podgląd cache/tmp (+ LSCache) → potwierdzenie |
+| `vhost show\|edit\|rollback` | Podgląd/edycja vhconf (diff, bak.hmtools.\<stamp\>, reload, rollback) |
+| `rewrite preset …` | Presety HTTPS / www / non-www / SPA (`# hmtools:…`) |
+| `headers preset security [--hsts]` | Nagłówki bezpieczeństwa (XFO, XCTO, RP, opcjonalnie HSTS) |
+| `cache settings [--ttl N] [--exclude PATH]` | LSCache w vhconf (TTL / exclude) |
 | `htaccess [enable]` | Diagnostyka `.htaccess` / `autoLoadHtaccess` |
 | `proxy [set-port N]` | Zdrowie reverse proxy OLS / zmiana portu |
 | `perms [check\|fix]` | Uprawnienia pod OLS/CyberPanel (`nogroup` 750) |

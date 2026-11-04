@@ -94,6 +94,50 @@ hm_tab_complete() {
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
         done
         ;;
+      vhost|vhconf)
+        if [[ "${prefix}" =~ vhost[[:space:]]+show[[:space:]] ]]; then
+          for m in --section rewrite context extprocessor module; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in show edit rollback help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
+      rewrite)
+        if [[ "${prefix}" =~ rewrite[[:space:]]+preset[[:space:]] ]]; then
+          for m in https www non-www spa list remove help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in preset help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
+      headers)
+        if [[ "${prefix}" =~ headers[[:space:]]+preset[[:space:]] ]]; then
+          for m in security remove help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in show preset help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
+      cache)
+        if [[ "${prefix}" =~ cache[[:space:]]+settings[[:space:]] ]]; then
+          for m in --ttl --exclude help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in status flush settings help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
       proxy)
         for m in status set-port help; do
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
@@ -181,7 +225,7 @@ hm_tab_complete() {
         fi
         ;;
       ols|lsws)
-        local re_ols_sub='(ols|lsws)[[:space:]]+(htaccess|hta|cache|lscache|proxy|admin|webadmin)[[:space:]]'
+        local re_ols_sub='(ols|lsws)[[:space:]]+(htaccess|hta|cache|lscache|proxy|admin|webadmin|vhost|vhconf)[[:space:]]'
         if [[ "${prefix}" =~ $re_ols_dom ]]; then
           # ols cache flush <domena|all>
           hm_complete_push_sites "${partial}"
@@ -198,7 +242,7 @@ hm_tab_complete() {
               hm_complete_push_sites "${partial}"
               ;;
             cache|lscache)
-              for m in status flush all help; do
+              for m in status flush settings all help; do
                 [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
               done
               hm_complete_push_sites "${partial}"
@@ -214,9 +258,14 @@ hm_tab_complete() {
                 [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
               done
               ;;
+            vhost|vhconf)
+              for m in show edit rollback help; do
+                [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+              done
+              ;;
           esac
         else
-          for m in status reload restart log logs error stats top htaccess cache proxy admin help; do
+          for m in status reload restart log logs error stats top htaccess cache proxy admin vhost help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi

@@ -533,6 +533,10 @@ Komendy w kontekście strony:
   pm2       Procesy PM2/Node + restart/reload/logs (jako user strony)
   backup    Pełna kopia (pliki + DB) → Google Drive
   clean [--lscache]  Podgląd cache/tmp (+ LSCache) → potwierdzenie
+  vhost show|edit|rollback  Edycja vhconf (walidacja + rollback)
+  rewrite preset …  Presety HTTPS/www/SPA (bloki hmtools)
+  headers preset security [--hsts]
+  cache settings [--ttl N] [--exclude PATH]
   htaccess [enable]  Diagnostyka .htaccess / autoLoadHtaccess
   proxy [set-port N] Reverse proxy OLS — zdrowie portów / zmiana portu
   perms [check|fix] Uprawnienia plików pod OLS / CyberPanel
