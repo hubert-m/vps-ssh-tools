@@ -24,6 +24,52 @@ hm_backup_tar_excludes() {
   done
 }
 
+# Katalog plików do tar: pełny $HOME użytkownika strony, gdy jest bezpieczny
+# i obejmuje (lub jest) site root — wtedy wchodzą .ssh, .pm2, .config, .bash_history itd.
+# tar -C … -cf - . i tak pakuje ukryte pliki; tu upewniamy się, że root = home, nie np. sam public_html.
+hm_backup_resolve_files_root() {
+  local site_root="${1:-}"
+  local site_user="${2:-}"
+  local root="" home=""
+
+  if [[ -n "${site_root}" && -d "${site_root}" ]]; then
+    root="$(realpath -m "${site_root}" 2>/dev/null || echo "${site_root}")"
+    root="${root%/}"
+  fi
+
+  if [[ -n "${site_user}" ]] && hm_is_valid_unix_user "${site_user}" && id "${site_user}" >/dev/null 2>&1; then
+    home="$(getent passwd "${site_user}" 2>/dev/null | cut -d: -f6 || true)"
+    if [[ -n "${home}" && -d "${home}" ]]; then
+      home="$(realpath -m "${home}" 2>/dev/null || echo "${home}")"
+      home="${home%/}"
+      if declare -F hm_is_safe_site_root_to_delete >/dev/null 2>&1 \
+        && hm_is_safe_site_root_to_delete "${home}"; then
+        if [[ -z "${root}" ]]; then
+          printf '%s\n' "${home}"
+          return 0
+        fi
+        # home == root lub home jest przodkiem site root → pakuj cały home
+        if [[ "${root}" == "${home}" || "${root}" == "${home}"/* ]]; then
+          if [[ "${root}" != "${home}" ]]; then
+            hm_info "Backup plików: rozszerzam ${root} → pełny HOME ${home} (.ssh/.pm2/.config/…)" >&2
+          fi
+          printf '%s\n' "${home}"
+          return 0
+        fi
+        # site root obejmuje home → pakuj szerszy root
+        if [[ "${home}" == "${root}"/* ]]; then
+          printf '%s\n' "${root}"
+          return 0
+        fi
+        # rozłączone ścieżki — trzymaj site root (treść WWW), ostrzeż o HOME
+        hm_warn "Unix HOME (${home}) ≠ site root (${root}) — pakuję site root; pliki tylko w HOME mogą nie wejść do archiwum." >&2
+      fi
+    fi
+  fi
+
+  printf '%s\n' "${root}"
+}
+
 hm_backup_stamp() {
   date +%Y%m%d-%H%M%S
 }
@@ -275,10 +321,11 @@ hm_backup_site() {
   done < <(hm_dbs_for_site "${domain}" "${HM_SITE_DOCROOT}" "${HM_SITE_ROOT}" "${HM_SITE_USER}")
   db_list="${db_list%,}"
 
-  # Pliki
-  local backup_root="${HM_SITE_ROOT}"
+  # Pliki — pełny HOME użytkownika strony, gdy obejmuje site root (.ssh/.pm2/…)
+  local backup_root
+  backup_root="$(hm_backup_resolve_files_root "${HM_SITE_ROOT:-${HM_SITE_DOCROOT}}" "${HM_SITE_USER}")"
   if [[ -z "${backup_root}" || ! -d "${backup_root}" ]]; then
-    backup_root="${HM_SITE_DOCROOT}"
+    backup_root="${HM_SITE_ROOT:-${HM_SITE_DOCROOT}}"
   fi
   if [[ -z "${backup_root}" || ! -d "${backup_root}" ]]; then
     hm_err "Brak katalogu strony do backupu."
@@ -320,8 +367,9 @@ hm_backup_site() {
   "domain": "${domain}",
   "host": "${BACKUP_HOST_LABEL}",
   "stamp": "${stamp}",
-  "site_root": "${HM_SITE_ROOT}",
+  "site_root": "${backup_root}",
   "docroot": "${HM_SITE_DOCROOT}",
+  "site_user": "${HM_SITE_USER:-}",
   "php": "${HM_SITE_PHP}",
   "databases": [${db_list}],
   "failed_databases": ${fail_db_json},
@@ -458,8 +506,9 @@ hm_backup_full() {
     hm_set_site_context "${domain}"
     local site_remote="${remote_base}/sites/${domain}"
     hm_rclone_mkdir "${site_remote}"
-    local backup_root="${HM_SITE_ROOT}"
-    [[ -z "${backup_root}" || ! -d "${backup_root}" ]] && backup_root="${HM_SITE_DOCROOT}"
+    local backup_root
+    backup_root="$(hm_backup_resolve_files_root "${HM_SITE_ROOT:-${HM_SITE_DOCROOT}}" "${HM_SITE_USER}")"
+    [[ -z "${backup_root}" || ! -d "${backup_root}" ]] && backup_root="${HM_SITE_ROOT:-${HM_SITE_DOCROOT}}"
     if [[ -n "${backup_root}" && -d "${backup_root}" ]]; then
       if ! hm_upload_files_smart "${backup_root}" "${site_remote}"; then
         hm_warn "Błąd wysyłania plików dla ${domain} — kontynuuję kolejne strony."

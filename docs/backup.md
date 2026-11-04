@@ -109,6 +109,8 @@ Oprócz dumpów baz i plików snapshot typu `archive` zapisuje:
 
 `backup restore` odtwarza konto Unix przed plikami, a konta MySQL po imporcie baz.
 
+**Katalog plików:** pakowany jest pełny katalog domowy użytkownika strony (gdy `$HOME` obejmuje site root / vhRoot) — w archiwum są też ukryte elementy w stylu `.ssh`, `.pm2`, `.config`, `.bash_history`. `tar` bierze zawartość `.` (w tym pliki kropkowe); `BACKUP_EXCLUDES` nie wyklucza tych katalogów.
+
 ## Jak działają backupy (miejsce na dysku)
 
 1. **Sprawdzenie wolnego %** — poniżej `MIN_FREE_PERCENT` → abort.  

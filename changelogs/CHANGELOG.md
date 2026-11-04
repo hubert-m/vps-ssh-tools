@@ -29,6 +29,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: tymczasowy `hm_set_site_context` (redis/cron/security/backup/access/pm2/logs/ols/archive/restore) — `hm_site_context_push`/`pop` wraca do poprzedniego REPL
 - Feat: `backup archive` — eksport kont MySQL 1:1 (`db-accounts.sql`: CREATE USER + GRANTS / hash) oraz konta Unix SSH (`unix-account.meta` + `unix-authorized_keys`)
 - Feat: `backup restore` — odtwarza konto Unix (przed plikami) i konta MySQL (po imporcie baz), gdy są w snapshocie archive
+- Feat: `backup` / `archive` — pliki z pełnego `$HOME` użytkownika strony (gdy obejmuje site root): `.ssh`, `.pm2`, `.config`, historia itd.; `site_root` w manifeście = faktycznie spakowany katalog
 
 ## [v0.1.9]
 

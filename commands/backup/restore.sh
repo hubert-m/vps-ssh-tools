@@ -594,12 +594,15 @@ _hm_backup_restore_body() {
   if [[ -z "${target_dir}" || ! -d "${target_dir}" ]]; then
     local json
     json="$(hm_backup_cat_manifest "${remote_base}")"
+    # site_root w archive = spakowany katalog (zwykle pełny HOME)
     target_dir="$(hm_backup_json_str "${json}" "site_root")"
+    [[ -z "${target_dir}" ]] && target_dir="$(hm_backup_json_str "${json}" "unix_home")"
     [[ -z "${target_dir}" ]] && target_dir="$(hm_backup_json_str "${json}" "docroot")"
     [[ -z "${HM_SITE_USER:-}" ]] && HM_SITE_USER="$(hm_backup_json_str "${json}" "site_user")"
     [[ -z "${HM_SITE_PHP:-}" ]] && HM_SITE_PHP="$(hm_backup_json_str "${json}" "php")"
     [[ -z "${HM_SITE_DOCROOT:-}" ]] && HM_SITE_DOCROOT="$(hm_backup_json_str "${json}" "docroot")"
     [[ -z "${HM_SITE_ROOT:-}" ]] && HM_SITE_ROOT="$(hm_backup_json_str "${json}" "site_root")"
+    [[ -z "${HM_SITE_ROOT:-}" ]] && HM_SITE_ROOT="${target_dir}"
     HM_SITE_DOMAIN="${domain}"
   fi
   [[ -n "${target_dir}" ]] || { hm_err "Brak katalogu docelowego strony (manifest bez site_root/docroot)."; return 1; }

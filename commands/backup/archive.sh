@@ -368,12 +368,20 @@ _hm_backup_archive_site_body() {
     unix_desc="${HM_DEL_USER} (uid/gid/shadow/SSH keys)"
   fi
 
+  # Pełny katalog domowy (.ssh, .pm2, .config, historia…), gdy HOME obejmuje site root
+  local archive_files_root archive_files_size
+  archive_files_root="$(hm_backup_resolve_files_root "${HM_DEL_ROOT:-${HM_DEL_DOCROOT}}" "${HM_DEL_USER}")"
+  if [[ -z "${archive_files_root}" || ! -d "${archive_files_root}" ]]; then
+    archive_files_root="${HM_DEL_ROOT}"
+  fi
+  archive_files_size="$(hm_dir_size_bytes "${archive_files_root}" 2>/dev/null || echo "${HM_DEL_SIZE:-0}")"
+
   local -a plan_steps=(
     "[BACKUP] Utworzenie katalogu archiwum na Google Drive: ${remote_base}"
     "[BACKUP] Zrzut i wysyłka baz danych MySQL (${db_desc}) → db/*.sql.gz"
     "[BACKUP] Eksport kont MySQL (CREATE USER + GRANTS / hash): ${dbu_desc} → db-accounts.sql"
     "[BACKUP] Snapshot konta Unix SSH: ${unix_desc} → unix-account.meta + unix-authorized_keys"
-    "[BACKUP] Spakowanie i wysyłka plików środowiska ${HM_DEL_ROOT} ($(hm_human_size "${HM_DEL_SIZE}")) → files.tar.gz / files.chunks/"
+    "[BACKUP] Spakowanie całego katalogu domowego/serwisu ${archive_files_root} ($(hm_human_size "${archive_files_size}")) włącznie z ukrytymi (.ssh, .pm2, .config, …) → files.tar.gz / files.chunks/"
     "[BACKUP] Zapis konfiguracji vhosta OLS, certyfikatów SSL, crontaba i metadanych PM2 + manifest.json"
     "[WERYFIKACJA] Twarda kontrola integralności wszystkich plików kopii na Google Drive (rozmiar > 0 B)"
   )
@@ -461,14 +469,18 @@ _hm_backup_archive_site_body() {
   fi
   rm -f "${unix_meta}" "${unix_keys}"
 
-  local backup_root="${HM_DEL_ROOT}"
+  local backup_root="${archive_files_root}"
   if [[ -z "${backup_root}" || ! -d "${backup_root}" ]]; then
-    backup_root="${HM_DEL_DOCROOT}"
+    backup_root="$(hm_backup_resolve_files_root "${HM_DEL_ROOT:-${HM_DEL_DOCROOT}}" "${HM_DEL_USER}")"
+  fi
+  if [[ -z "${backup_root}" || ! -d "${backup_root}" ]]; then
+    backup_root="${HM_DEL_ROOT:-${HM_DEL_DOCROOT}}"
   fi
   if [[ -z "${backup_root}" || ! -d "${backup_root}" ]]; then
     hm_archive_abort "Brak katalogu strony do archiwizacji. Nic nie usunięto z VPS." "${remote_base}"
     return 1
   fi
+  hm_info "Archiwizacja plików z pełnego katalogu: ${backup_root} (ukryte .ssh/.pm2/.config/… włącznie)"
 
   local files_mode="none" chunks_count=0 report
   report="$(hm_archive_upload_site_files "${backup_root}" "${remote_base}")" || {
@@ -579,9 +591,10 @@ _hm_backup_archive_site_body() {
   "domain": "${domain}",
   "host": "${BACKUP_HOST_LABEL:-}",
   "stamp": "${stamp}",
-  "site_root": "${HM_DEL_ROOT}",
+  "site_root": "${backup_root}",
   "docroot": "${HM_DEL_DOCROOT}",
   "site_user": "${HM_DEL_USER}",
+  "unix_home": "$(getent passwd "${HM_DEL_USER}" 2>/dev/null | cut -d: -f6 || true)",
   "php": "${HM_SITE_PHP:-}",
   "databases": [${db_json}],
   "db_users": [${dbu_json}],
