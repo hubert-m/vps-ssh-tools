@@ -190,7 +190,7 @@ hm_complete_commands() {
     cmds=(
       webs sites list use enter cd delete-site archive-site
       backup disk df ols lsws ssl renew-ssl ssl-renew mysql dbs db cron crons pm2 node apps php
-      update update-php php-update chrome chromium headless supervisor docker
+      update update-php php-update chrome chromium headless supervisor docker git deploy
       health status security sec applog selflog hmlog detect env
       update-hmtools version ver uninstall-hmtools
       help h
@@ -204,7 +204,7 @@ hm_complete_commands() {
         cmds+=("${k}")
       done
     fi
-    cmds+=(info size logs clean htaccess proxy perms back dbs renew-ssl delete-site archive supervisor docker vhost rewrite headers cache)
+    cmds+=(info size logs clean htaccess proxy perms back dbs renew-ssl delete-site archive supervisor docker vhost rewrite headers cache git deploy)
   fi
   # unikalne + filtr partial
   local seen="|"

@@ -527,6 +527,36 @@ hm_tab_complete() {
           done
         fi
         ;;
+      git)
+        if [[ "${prefix}" =~ git[[:space:]]+attach[[:space:]] ]]; then
+          for m in --branch --path --yes; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ git[[:space:]]+key[[:space:]] ]]; then
+          for m in --force help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in status key attach path help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
+      deploy)
+        if [[ "${prefix}" =~ deploy[[:space:]]+rollback[[:space:]] ]]; then
+          for m in --yes; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ deploy[[:space:]]+config[[:space:]] ]]; then
+          for m in --init help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in rollback config log --branch --no-build --force --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
     esac
   fi
 

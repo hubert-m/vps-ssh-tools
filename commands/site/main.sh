@@ -537,6 +537,7 @@ Komendy w kontekście strony:
   rewrite preset …  Presety HTTPS/www/SPA (bloki hmtools)
   headers preset security [--hsts]
   cache settings [--ttl N] [--exclude PATH]
+  git / deploy   Repo, klucz deploy, pull+build+reload, rollback
   htaccess [enable]  Diagnostyka .htaccess / autoLoadHtaccess
   proxy [set-port N] Reverse proxy OLS — zdrowie portów / zmiana portu
   perms [check|fix] Uprawnienia plików pod OLS / CyberPanel

@@ -40,6 +40,7 @@
 | `access …` | SSH/FTP strony: `ssh` (passwd/shell/keys), `ftp` (list/add/passwd/delete) |
 | `redis …` | Redis: status/memory/dbs/clients/slowlog/sites; `config`/`flush*`/`restart`/`client kill` |
 | `docker …` | Kontenery: lista (+ domena OLS proxy), logs, start/stop/restart, compose ls/pull/up, prune (domyślnie dry-run) |
+| `git` / `deploy` | (w `use`) status/attach/klucz deploy; deploy pull+build+reload / rollback |
 | `detect` | Wypisz wykryty panel / webserver / DB |
 | `help [polecenie]` | Lista komend lub pomoc do wybranej (np. `help use`) |
 | `exit` | Na głównej: wyjście z hmtools; w `[domena]>`: powrót do `hmtools>` |
@@ -58,6 +59,7 @@
 | `logs [N\|errors\|stats\|follow]` | Logi vhosta + OLS `stderr.log`; analityka / live |
 | `cron` | Crony użytkownika strony (+ heurystyka w `/etc`) |
 | `pm2` | Procesy strony; `restart`/`reload`/`logs` jako user strony |
+| `git` / `deploy` | Status repo, klucz deploy, attach, pull+build+reload, rollback |
 | `backup` | Pełna kopia środowiska (pliki + DB) → Drive |
 | `clean [--lscache]` | Podgląd cache/tmp (+ LSCache) → potwierdzenie |
 | `vhost show\|edit\|rollback` | Podgląd/edycja vhconf (diff, bak.hmtools.\<stamp\>, reload, rollback) |
