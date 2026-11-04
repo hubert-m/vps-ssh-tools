@@ -403,9 +403,11 @@ _hm_backup_archive_site_body() {
   hm_backup_acquire_lock || return 1
   trap 'hm_backup_release_lock' RETURN
 
-  domain="$(hm_find_site_by_arg_exact "${domain}" 2>/dev/null)" || {
+  # zachowaj oryginalny arg — nieudane `domain="$(…exact…)"` zeruje zmienną (bash)
+  local domain_arg="${domain}"
+  domain="$(hm_find_site_by_arg_exact "${domain_arg}" 2>/dev/null)" || {
     # exact fail — spróbuj z potwierdzeniem partial (TTY) albo jasny błąd
-    domain="$(hm_find_site_by_arg "${domain}")" || return 1
+    domain="$(hm_find_site_by_arg "${domain_arg}")" || return 1
   }
 
   hm_status_line "Inwentaryzacja ${domain}…"

@@ -17,6 +17,7 @@
 - Fix: `backup restore` — `chown` nie gubi grupy `public_html` (nogroup/lsadm); tar `--no-same-owner`; odrzucenie `--files-only`+`--db-only`; check miejsca na FS docelowym; escapowanie JSON w manifestach
 - Feat/Sec: `backup full` — `db-accounts.sql`, `restore-full`; system-configs bez shadow/privkey; opcjonalne `BACKUP_ENCRYPT_PASSPHRASE`; flock; prune grace orphan; sha256 wrażliwych plików archive; child ze współdzielonym home → tylko docroot; umask w subshellu
 - Fix: `hm_find_site_by_arg` — brak cichego partial match; `backup restore`/`archive` używają dokładnej nazwy (`hm_find_site_by_arg_exact`)
+- Fix: `backup archive` — przed exact-match zachowuje `domain_arg` (nieudane `domain="$(…)"` zerowało arg → partial na pustym stringu = Ambiguous wszystkich stron)
 - Fix: `backup archive` db-accounts — `hm_mysql_exec_raw` (`-N -B -r`) dla SHOW CREATE USER/GRANTS (bez podwójnego `\\_` przy bazach z `_`)
 - Fix: `backup archive` — nie stosuje `BACKUP_EXCLUDES` (pełny dump; opcjonalne `ARCHIVE_EXCLUDES`); site backup: kotwiczone `./tmp`/`./.git`/… + `excludes` w manifeście
 - Fix: `backup archive`/`restore` — SSL bez `-h` (symlinki certbota); restore ssl/crontab/cyberpanel-site.sql; PM2 tylko hint; eksport `cyberpanel-site.sql`
