@@ -552,6 +552,8 @@ Komendy w kontekście strony:
   limits …       Limity CPU/RAM/IO/dysk (cgroup + quota)
   suspend / unsuspend  Zawieszenie 503 (+ strona serwisowa, --allow-ip)
   openbasedir status|on|off  php_admin_value open_basedir w vhconf
+  alias list|add|remove  Aliasy (parked) w mapie OLS / CyberPanel
+  child list  Domeny podrzędne (tworzenie: site create … --child-of)
   htaccess [enable]  Diagnostyka .htaccess / autoLoadHtaccess
   proxy [set-port N] Reverse proxy OLS — zdrowie portów / zmiana portu
   perms [check|fix] Uprawnienia plików pod OLS / CyberPanel

@@ -230,6 +230,39 @@ hm_tab_complete() {
           [[ -n "${m}" ]] && matches+=("${m}")
         done < <(hm_complete_filter_sites "${partial}")
         ;;
+      site|site-create|create-site)
+        local re_site_child='--child-of[[:space:]]+'
+        if [[ "${prefix}" =~ $re_site_child ]]; then
+          hm_ensure_sites_cached
+          while IFS= read -r m; do
+            [[ -n "${m}" ]] && matches+=("${m}")
+          done < <(hm_complete_filter_sites "${partial}")
+        elif [[ "${cmd}" == "site" && ! "${prefix}" =~ site[[:space:]]+create ]]; then
+          for m in create help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in --php --owner --package --email --child-of --path --ssl --dkim --no-open-basedir --yes; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
+      alias)
+        if [[ "${prefix}" =~ alias[[:space:]]+(add|remove|rm|del|delete)[[:space:]] ]]; then
+          for m in --ssl --yes; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in list ls add remove rm help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
+      child)
+        for m in list ls help; do
+          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+        done
+        ;;
       delete-site|deletesite|destroy-site)
         local re_del_flags='delete-site[[:space:]]+[^[:space:]]+[[:space:]]'
         if [[ "${prefix}" =~ $re_del_flags || "${partial}" == --* ]]; then

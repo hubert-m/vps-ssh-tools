@@ -7,6 +7,8 @@
 | `webs [--quick] [--suspended]` | Lista usług webowych (STATUS; filtr suspended) |
 | `webs delete <d>` / `delete-site` | Całkowite usunięcie serwisu (`yes` + nazwa domeny) |
 | `webs archive <d>` / `backup archive` | Archiwum Drive → verify → usunięcie z VPS |
+| `site create <d> --php <ver> […]` / `site-create` / `create-site` | Nowa strona (CyberPanel CLI lub OLS); `--ssl`/`--dkim`/`--no-open-basedir` |
+| `site create <child> --child-of <master> --php <ver>` | Child domain (`--path`, `--ssl`) |
 | `use <n\|domena>` | Wejście w kontekst (Tab uzupełnia domenę z listy) |
 | `backup setup` | Instalacja/konfiguracja rclone + Google Drive |
 | `backup config` | Ustaw katalog root backupów na Drive (jednorazowo) |
@@ -71,6 +73,8 @@
 | `limits …` | Limity CPU/RAM/IO (slice) / dysk (quota); `set`/`clear`/`check` |
 | `suspend` / `unsuspend` | Zawieszenie 503 (+ maintenance/`--allow-ip`); odwieszenie |
 | `openbasedir status\|on\|off` | `php_admin_value open_basedir` w vhconf (blok hmtools) |
+| `alias list\|add\|remove` | Aliasy (parked) — mapa OLS / CyberPanel `createAlias` |
+| `child list` | Domeny podrzędne mastera |
 | `git` / `deploy` | Status repo, klucz deploy, attach, pull+build+reload, rollback |
 | `backup` | Pełna kopia środowiska (pliki + DB) → Drive |
 | `clean [--lscache]` | Podgląd cache/tmp (+ LSCache) → potwierdzenie |
