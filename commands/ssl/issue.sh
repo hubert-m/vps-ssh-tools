@@ -56,6 +56,7 @@ hm_ssl_precheck_dns() {
 
   if [[ "${#resolved[@]}" -eq 0 ]]; then
     hm_err "DNS: brak rekordu A/AAAA dla ${domain} (NXDOMAIN / pusty)."
+    hm_info "Sprawdź: dns check ${domain}"
     return 1
   fi
 
@@ -71,6 +72,7 @@ hm_ssl_precheck_dns() {
 
   if [[ "${hit}" -eq 0 ]]; then
     hm_err "DNS: ${domain} → $(IFS=', '; echo "${resolved[*]}") nie wskazuje na ten VPS ($(IFS=', '; echo "${vps[*]}"))."
+    hm_info "Sprawdź: dns check ${domain}"
     return 1
   fi
   hm_ok "DNS: ${domain} wskazuje na ten VPS."
@@ -538,6 +540,7 @@ cmd_ssl_issue() {
   for d in "${plan_names[@]}"; do
     hm_ssl_precheck_dns "${d}" || {
       hm_err "Pre-check DNS nieudany — przerywam przed ACME (oszczędność limitów LE)."
+      hm_info "Sprawdź: dns check ${d}"
       return 1
     }
   done

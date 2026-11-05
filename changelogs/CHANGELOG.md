@@ -16,6 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [v0.1.11]
 
+- Feat: `dns` — strefy PowerDNS (list/add/edit/delete/export), `dns check`; ssl → `dns check`; test `test-dns-zones.sh`
 - Feat: `mail add|passwd|delete|forward|catchall` — skrzynki CyberPanel CLI + przekierowania/catch-all; test `test-mail-accounts.sh`
 - Feat: `mail` — kolejka Postfix, logi, check SPF/DKIM/DMARC/PTR/TLS, dkim generate, DNSBL; test `test-mail-diag.sh`
 

@@ -1,5 +1,6 @@
 # hmtools v0.1.11
 
+- Feat: `dns` — strefy PowerDNS (list/add/edit/delete/export), `dns check` (A/AAAA vs VPS, MX/SPF/DKIM/DMARC/CAA, propagacja); ssl podpowiada `dns check`; test `test-dns-zones.sh`
 - Feat: `mail add|passwd|delete|forward|catchall` — skrzynki CyberPanel CLI (hasła redagowane), przekierowania/catch-all w DB; test `test-mail-accounts.sh`
 - Feat: `mail` — kolejka Postfix (flush/delete), logi, check SPF/DKIM/DMARC/PTR/TLS, dkim generate, DNSBL; test `test-mail-diag.sh`
 

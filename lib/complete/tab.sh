@@ -95,6 +95,37 @@ hm_tab_complete() {
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
         done
         ;;
+      dns)
+        if [[ "${prefix}" =~ dns[[:space:]]+check[[:space:]] ]]; then
+          hm_complete_push_sites "${partial}"
+        elif [[ "${prefix}" =~ dns[[:space:]]+list[[:space:]] ]]; then
+          for m in --type help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ dns[[:space:]]+add[[:space:]] ]]; then
+          if [[ "${partial}" == --* ]]; then
+            for m in --ttl --prio --yes help; do
+              [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+            done
+          else
+            for m in A AAAA CNAME MX TXT SRV CAA NS; do
+              [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+            done
+          fi
+        elif [[ "${prefix}" =~ dns[[:space:]]+edit[[:space:]] ]]; then
+          for m in --value --ttl --prio --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ dns[[:space:]]+delete[[:space:]] ]]; then
+          for m in --force --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in check list add edit delete export help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
       mail)
         if [[ "${prefix}" =~ mail[[:space:]]+queue[[:space:]]+delete[[:space:]] ]]; then
           for m in --from --yes help; do

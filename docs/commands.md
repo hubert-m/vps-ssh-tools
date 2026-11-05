@@ -11,6 +11,7 @@
 | `site create <child> --child-of <master> --php <ver>` | Child domain (`--path`, `--ssl`) |
 | `clone <a> <b>` | Kopia strony (pliki+DB); staging.* → noindex; też w kontekście `clone <cel>` |
 | `mail …` | Skrzynki CP (`add`/`passwd`/`delete`/`forward`/`catchall`) + diag (`queue`/`log`/`check`/`dkim`/`blacklist`) |
+| `dns` / `dns check <d>` | Strefy PowerDNS + diagnostyka A/AAAA/MX/SPF/DKIM/DMARC/CAA vs IP VPS |
 | `wp sites` / `wp install <d> …` | Lista instalacji WP; opcjonalnie `cyberpanel installWordPress` |
 | `use <n\|domena>` | Wejście w kontekst (Tab uzupełnia domenę z listy) |
 | `backup setup` | Instalacja/konfiguracja rclone + Google Drive |
@@ -83,6 +84,7 @@
 | `waf` / `waf whitelist <id> [--uri]` | ModSecurity per strona: blokady z audit logu; SecRuleRemoveById (# hmtools:waf) |
 | `clone <cel>` / `staging` / `deploy <prod>` | Klon pliki+DB (staging.*), noindex/basic-auth; deploy ze snapshotem + rollback |
 | `mail` / `mail add\|passwd\|delete\|forward\|catchall` | Skrzynki domeny (CyberPanel CLI); przekierowania/catch-all (DB+reload) |
+| `dns` / `dns list\|add\|edit\|delete\|export` | Rekordy strefy PowerDNS (CyberPanel CLI + SOA); `dns check` też globalnie |
 | `git` / `deploy` | Status repo, klucz deploy, attach, pull+build+reload, rollback |
 | `backup` | Pełna kopia środowiska (pliki + DB) → Drive |
 | `clean [--lscache]` | Podgląd cache/tmp (+ LSCache) → potwierdzenie |
