@@ -4,6 +4,9 @@
 hm_load_config() {
   # Domyślne wartości
   RCLONE_REMOTE="${RCLONE_REMOTE:-gdrive:vps-backups}"
+  BACKUP_TARGETS="${BACKUP_TARGETS:-}"
+  BACKUP_LOCAL_ROOT="${BACKUP_LOCAL_ROOT:-/backup/hmtools}"
+  RESTIC_PASSWORD_FILE="${RESTIC_PASSWORD_FILE:-/root/.config/hmtools/restic.pass}"
   MIN_FREE_PERCENT="${MIN_FREE_PERCENT:-5}"
   CHUNK_SIZE_MB="${CHUNK_SIZE_MB:-512}"
   CHUNK_THRESHOLD_MB="${CHUNK_THRESHOLD_MB:-2048}"

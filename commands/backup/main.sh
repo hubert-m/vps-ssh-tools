@@ -7,29 +7,28 @@ Użycie:
   backup setup              Instalacja/konfiguracja rclone + Google Drive
   backup config             Ustaw katalog root na Drive (jednorazowo)
   backup show               Pokaż aktualny root i strukturę
-  backup full [--yes]       Pełna kopia serwera → Drive/full/<stamp>/ (--yes = cron)
-  backup site <domena>      Kopia strony → Drive/<domena>/<stamp>/
+  backup targets            Lista celów (gdrive / s3 / sftp / local)
+  backup target add …       Dodaj cel (sekrety tylko w rclone.conf 0600)
+  backup full [--yes] [--targets a,b]
+                            Pełna kopia → full/<stamp>/ (multi-cel: 1× backup + replikacja)
+  backup site <domena> [--target n|--targets a,b]
+                            Kopia strony → <domena>/<stamp>/
+  backup local <domena> [--keep N]
+                            Szybka kopia lokalna (/backup/hmtools/…) — ten sam format co Drive
+  backup inc init|site|list|restore|forget
+                            Inkrementalne (restic + rclone backend; hasło w restic.pass 0600)
   backup archive <domena> [--force-nested]
-                            Archiwum (type=archive) → weryfikacja Drive → usunięcie z VPS
-                            (child→docroot; master z childami → odmowa bez --force-nested)
+                            Archiwum (type=archive) → weryfikacja → usunięcie z VPS
   backup list [domena|full] Snapshoty + manifest (w kontekście: bieżąca domena)
   backup restore <domena> [stamp] [--files-only|--db-only]
                             [--overwrite-db] [--overwrite-files] [--adopt-existing-user]
-                            Odtwórz pliki (tar lub chunks) + bazy; bez stamp = najnowszy
-                            (działa też dla domen tylko na Drive po webs archive)
-                            --overwrite-db: świadome nadpisanie niepustej bazy
-                            --overwrite-files: świadome nadpisanie niepustego katalogu docelowego
-                            --adopt-existing-user: świadome przejęcie istniejącego konta Unix (hasło/klucze/home)
+                            [--target n]  Odtwórz z dowolnego celu / lokalnego root
   backup restore-full [stamp] [--system]
-                            Odtwórz snapshot full/ (bazy + db-accounts; --system = system-configs)
   backup prune [--days N] [--dry-run] [--yes]
-                            Usuń stare snapshoty (BACKUP_KEEP_DAYS / BACKUP_KEEP_MIN)
-                            Snapshoty type=archive chronione; świeże orphan < BACKUP_ORPHAN_GRACE_HOURS pomijane
   backup schedule [enable|disable|status]
-                            Cron: /etc/cron.d/hmtools-backup + log backup-cron.log
-  backup test               Test połączenia rclone
+  backup test               Test połączenia rclone / lokalnego root
 
-Struktura na Google Drive (root = RCLONE_REMOTE):
+Struktura (root = RCLONE_REMOTE lub cel):
   <root>/full/<stamp>/           — pełne kopie serwera
   <root>/<domena>/<stamp>/       — kopie poszczególnych stron
   <root>/db-dumps/               — jednorazowe mysql dump
@@ -88,6 +87,12 @@ source "${_HM_BACKUP_DIR}/prune.sh"
 source "${_HM_BACKUP_DIR}/schedule.sh"
 # shellcheck source=archive.sh
 source "${_HM_BACKUP_DIR}/archive.sh"
+# shellcheck source=targets.sh
+source "${_HM_BACKUP_DIR}/targets.sh"
+# shellcheck source=local.sh
+source "${_HM_BACKUP_DIR}/local.sh"
+# shellcheck source=inc.sh
+source "${_HM_BACKUP_DIR}/inc.sh"
 
 cmd_archive_site() {
   hm_backup_archive_site "$@"
@@ -112,23 +117,54 @@ cmd_backup() {
       ;;
     show|status)
       hm_load_config
-      echo "${C_BOLD}Backup — Google Drive${C_RESET}"
+      echo "${C_BOLD}Backup — cele / root${C_RESET}"
       echo "  RCLONE_REMOTE : ${RCLONE_REMOTE:-brak}"
+      echo "  BACKUP_LOCAL_ROOT=${BACKUP_LOCAL_ROOT:-/backup/hmtools}"
       echo "  BACKUP_KEEP_DAYS=${BACKUP_KEEP_DAYS:-14}  BACKUP_KEEP_MIN=${BACKUP_KEEP_MIN:-3}"
       echo "  Struktura:"
       echo "    ${RCLONE_REMOTE}/full/<stamp>/     — pełne kopie"
       echo "    ${RCLONE_REMOTE}/<domena>/<stamp>/ — kopie stron"
       echo "    ${RCLONE_REMOTE}/db-dumps/         — zrzuty mysql dump"
-      if hm_have_cmd rclone && [[ -n "${RCLONE_REMOTE:-}" ]]; then
+      hm_backup_targets_list 2>/dev/null || true
+      if hm_rclone_root_is_local 2>/dev/null; then
+        echo
+        hm_info "Zawartość root (lokalnie):"
+        ls -la "$(hm_rclone_root_fs 2>/dev/null || echo "${RCLONE_REMOTE}")" 2>/dev/null | head -20 | sed 's/^/  /' || true
+      elif hm_have_cmd rclone && [[ -n "${RCLONE_REMOTE:-}" ]]; then
         echo
         hm_info "Zawartość root:"
         rclone lsd "${RCLONE_REMOTE}" 2>/dev/null | sed 's/^/  /' || hm_warn "Brak listingu (sprawdź połączenie)."
       fi
       ;;
+    targets)
+      cmd_backup_targets "$@"
+      ;;
+    target)
+      if [[ "${1:-}" == "add" ]]; then
+        shift || true
+        hm_backup_target_add "$@"
+      else
+        cmd_backup_targets "$@"
+      fi
+      ;;
+    local)
+      hm_backup_local_site "$@"
+      ;;
+    inc|incremental|restic)
+      cmd_backup_inc "$@"
+      ;;
     list|ls)
       hm_backup_list "${1:-}"
       ;;
     restore)
+      # opcjonalnie --target przed domeną
+      HM_BACKUP_ARGS_REST=()
+      hm_backup_parse_target_args "$@"
+      set -- "${HM_BACKUP_ARGS_REST[@]}"
+      if [[ -n "${HM_BACKUP_TARGETS_SELECTED:-}" && "${HM_BACKUP_TARGETS_SELECTED}" != "$(hm_backup_default_target_name)" ]]; then
+        local _t0="${HM_BACKUP_TARGETS_SELECTED%%,*}"
+        hm_backup_use_target "${_t0}" || return 1
+      fi
       hm_backup_restore "$@"
       ;;
     restore-full|restore_full)
@@ -141,28 +177,32 @@ cmd_backup() {
       hm_backup_schedule "${1:-status}"
       ;;
     full|server)
-      local full_yes=0 a
+      local full_yes=0
+      HM_BACKUP_ARGS_REST=()
+      hm_backup_parse_target_args "$@"
+      set -- "${HM_BACKUP_ARGS_REST[@]}"
+      local a
       for a in "$@"; do
         case "${a}" in
           --yes|-y) full_yes=1 ;;
           --help|-h)
             cat <<'EOF'
-Użycie: backup full [--yes|-y]
+Użycie: backup full [--yes|-y] [--targets a,b]
 
-Pełna kopia serwera → Drive/full/<stamp>/.
+Pełna kopia serwera → <root>/full/<stamp>/.
+--targets: pierwszy cel = pełny backup, kolejne = replikacja + weryfikacja.
 --yes pomija potwierdzenie (wymagane w cronie: backup schedule).
 EOF
             return 0
             ;;
           -*)
-            hm_err "Nieznana flaga: ${a} (backup full [--yes])"
+            hm_err "Nieznana flaga: ${a} (backup full [--yes] [--targets …])"
             return 1
             ;;
         esac
       done
       hm_load_config
-      echo "Root Drive: ${RCLONE_REMOTE}"
-      echo "Cel:       ${RCLONE_REMOTE}/full/<stamp>/"
+      echo "Cele: ${HM_BACKUP_TARGETS_SELECTED:-$(hm_backup_default_target_name)}"
       if [[ "${full_yes}" -eq 1 ]]; then
         hm_info "(--yes: pomijam potwierdzenie backup full)"
       else
@@ -170,13 +210,13 @@ EOF
           hm_err "Brak TTY — odmowa backup full bez --yes (cron: użyj „backup full --yes”)."
           return 1
         fi
-        if ! hm_confirm "Uruchomić pełny backup serwera na Google Drive"; then
+        if ! hm_confirm "Uruchomić pełny backup serwera"; then
           hm_info "Anulowano."
           return 1
         fi
       fi
       local _bk_rc=0
-      hm_backup_full || _bk_rc=$?
+      hm_backup_run_on_targets full || _bk_rc=$?
       if declare -F hm_notify >/dev/null 2>&1; then
         local _logf="${LOG_DIR:-/hm-tools/logs}/backup-cron.log"
         local _tail=""
@@ -198,18 +238,20 @@ Pełny backup zakończony pomyślnie." \
       return "${_bk_rc}"
       ;;
     site)
+      HM_BACKUP_ARGS_REST=()
+      hm_backup_parse_target_args "$@"
+      set -- "${HM_BACKUP_ARGS_REST[@]}"
       local domain="${1:-${HM_SITE_DOMAIN}}"
       if [[ -z "${domain}" ]]; then
-        hm_err "Użycie: backup site <domena>  (lub wejdź w kontekst)"
+        hm_err "Użycie: backup site <domena> [--target n]  (lub wejdź w kontekst)"
         return 1
       fi
       if [[ -z "${HM_SITE_DOMAIN}" || "${HM_SITE_DOMAIN}" != "${domain}" ]]; then
         domain="$(hm_find_site_by_arg "${domain}")" || return 1
       fi
       hm_load_config
-      echo "Root Drive: ${RCLONE_REMOTE}"
-      echo "Cel:       ${RCLONE_REMOTE}/${domain}/<stamp>/"
-      hm_backup_site "${domain}"
+      echo "Cele: ${HM_BACKUP_TARGETS_SELECTED:-$(hm_backup_default_target_name)}"
+      hm_backup_run_on_targets site "${domain}"
       ;;
     archive)
       local domain="${1:-${HM_SITE_DOMAIN}}"

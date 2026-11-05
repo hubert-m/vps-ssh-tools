@@ -15,6 +15,15 @@ hm_backup_json_arr() {
 
 hm_rclone_lsd_names() {
   local path="$1"
+  if [[ "${path}" == /* ]]; then
+    [[ -d "${path}" ]] || return 0
+    local d
+    for d in "${path}"/*; do
+      [[ -d "${d}" ]] || continue
+      basename "${d}"
+    done
+    return 0
+  fi
   rclone lsd "${path}" 2>/dev/null | awk '{print $NF}' || true
 }
 
@@ -32,12 +41,26 @@ hm_rclone_remote_size_bytes() {
 
 hm_backup_cat_manifest() {
   local remote_base="$1"
+  if [[ "${remote_base}" == /* ]]; then
+    [[ -f "${remote_base}/manifest.json" ]] && cat "${remote_base}/manifest.json" 2>/dev/null || true
+    return 0
+  fi
   rclone cat "${remote_base}/manifest.json" 2>/dev/null || true
 }
 
 hm_backup_detect_files_mode() {
   # echo: tar | chunks | none
   local remote_base="$1"
+  if [[ "${remote_base}" == /* ]]; then
+    [[ -f "${remote_base}/files.tar.gz" ]] && { echo "tar"; return 0; }
+    if [[ -d "${remote_base}/files.chunks" ]] \
+      && find "${remote_base}/files.chunks" -name 'files.tar.gz.part_*' 2>/dev/null | grep -q .; then
+      echo "chunks"
+      return 0
+    fi
+    echo "none"
+    return 0
+  fi
   if rclone ls "${remote_base}/files.tar.gz" >/dev/null 2>&1; then
     echo "tar"
     return 0

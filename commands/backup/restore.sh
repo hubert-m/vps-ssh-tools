@@ -1,6 +1,26 @@
 #!/usr/bin/env bash
 # Backup: restore plików i baz
 
+# cat z rclone LUB lokalnego FS (remote_base zaczyna się od /)
+hm_backup_r_cat() {
+  local path="$1"
+  if [[ "${path}" == /* ]]; then
+    [[ -f "${path}" ]] || return 1
+    cat "${path}"
+    return $?
+  fi
+  rclone cat "${path}"
+}
+
+hm_backup_r_exists() {
+  local path="$1"
+  if [[ "${path}" == /* ]]; then
+    [[ -e "${path}" ]]
+    return $?
+  fi
+  rclone cat "${path}" >/dev/null 2>&1
+}
+
 hm_backup_restore_files() {
   local remote_base="$1" target_dir="$2"
   local mode
@@ -12,7 +32,7 @@ hm_backup_restore_files() {
   case "${mode}" in
     tar)
       hm_info "Odtwarzanie plików (stream files.tar.gz) → ${target_dir}"
-      if ! rclone cat "${remote_base}/files.tar.gz" | tar --no-same-owner -xzf - -C "${target_dir}"; then
+      if ! hm_backup_r_cat "${remote_base}/files.tar.gz" | tar --no-same-owner -xzf - -C "${target_dir}"; then
         hm_err "Rozpakowanie files.tar.gz nieudane."
         return 1
       fi
@@ -21,16 +41,21 @@ hm_backup_restore_files() {
       hm_info "Odtwarzanie plików (chunks → stream) → ${target_dir}"
       local part
       local -a chunk_parts=()
-      while IFS= read -r part; do
-        [[ -n "${part}" ]] && chunk_parts+=("${part}")
-      done < <(rclone lsf "${remote_base}/files.chunks/" 2>/dev/null | grep 'files\.tar\.gz\.part_' | sort)
+      if [[ "${remote_base}" == /* ]]; then
+        while IFS= read -r part; do
+          [[ -n "${part}" ]] && chunk_parts+=("$(basename "${part}")")
+        done < <(find "${remote_base}/files.chunks" -name 'files.tar.gz.part_*' 2>/dev/null | sort)
+      else
+        while IFS= read -r part; do
+          [[ -n "${part}" ]] && chunk_parts+=("${part}")
+        done < <(rclone lsf "${remote_base}/files.chunks/" 2>/dev/null | grep 'files\.tar\.gz\.part_' | sort)
+      fi
       local ctotal="${#chunk_parts[@]}"
       [[ "${ctotal}" -gt 0 ]] || { hm_err "Brak plików part_* w files.chunks."; return 1; }
       hm_status_line "Stream ${ctotal} chunków → tar (może potrwać)..."
-      # łączenie part_* w kolejności bez lokalnego pełnego archiwum
       if ! (
         for part in "${chunk_parts[@]}"; do
-          rclone cat "${remote_base}/files.chunks/${part}" || exit 1
+          hm_backup_r_cat "${remote_base}/files.chunks/${part}" || exit 1
         done
       ) | tar --no-same-owner -xzf - -C "${target_dir}"; then
         hm_status_clear
@@ -263,7 +288,7 @@ hm_backup_fetch_maybe_decrypt() {
   local out_file="$3"
   local remote_path enc_tmp
 
-  if rclone cat "${remote_base}/${base_name}.enc" >/dev/null 2>&1; then
+  if hm_backup_r_exists "${remote_base}/${base_name}.enc"; then
     remote_path="${remote_base}/${base_name}.enc"
     if [[ -z "${BACKUP_ENCRYPT_PASSPHRASE:-}" ]]; then
       hm_err "Snapshot ma ${base_name}.enc — ustaw BACKUP_ENCRYPT_PASSPHRASE."
@@ -271,7 +296,7 @@ hm_backup_fetch_maybe_decrypt() {
     fi
     enc_tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-enc.XXXXXX")"
     chmod 600 "${enc_tmp}" "${out_file}" 2>/dev/null || true
-    if ! rclone cat "${remote_path}" > "${enc_tmp}" || [[ ! -s "${enc_tmp}" ]]; then
+    if ! hm_backup_r_cat "${remote_path}" > "${enc_tmp}" || [[ ! -s "${enc_tmp}" ]]; then
       rm -f "${enc_tmp}"
       return 1
     fi
@@ -285,8 +310,8 @@ hm_backup_fetch_maybe_decrypt() {
     rm -f "${enc_tmp}"
     return 0
   fi
-  if rclone cat "${remote_base}/${base_name}" >/dev/null 2>&1; then
-    rclone cat "${remote_base}/${base_name}" > "${out_file}"
+  if hm_backup_r_exists "${remote_base}/${base_name}"; then
+    hm_backup_r_cat "${remote_base}/${base_name}" > "${out_file}"
     [[ -s "${out_file}" ]]
     return $?
   fi

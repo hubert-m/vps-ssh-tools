@@ -31,6 +31,11 @@
 #
 # Przykład: gdrive:vps-backups
 RCLONE_REMOTE="gdrive:vps-backups"
+# Dodatkowe cele (nazwy → BACKUP_TARGET_<name>="remote:path" lub /local/path)
+# BACKUP_TARGETS="gdrive,b2"
+# BACKUP_TARGET_b2="b2:my-bucket/hmtools"
+# BACKUP_LOCAL_ROOT="/backup/hmtools"
+# RESTIC_PASSWORD_FILE="/root/.config/hmtools/restic.pass"
 
 # Minimalny wolny procent dysku przed backupem (abort jeśli mniej)
 MIN_FREE_PERCENT=5

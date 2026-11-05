@@ -284,7 +284,20 @@ hm_tab_complete() {
             matches+=("full")
           fi
         else
-          for m in setup config path root show status full site archive list restore prune schedule test help; do
+          for m in setup config path root show status targets target full site local inc archive list restore prune schedule test help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        if [[ "${prefix}" =~ backup[[:space:]]+target[[:space:]] ]]; then
+          for m in add help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ backup[[:space:]]+inc[[:space:]] ]]; then
+          for m in init site list restore forget help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ backup[[:space:]]+(site|full|local|inc)[[:space:]] ]]; then
+          for m in --target --targets --keep --yes; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi

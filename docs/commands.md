@@ -10,13 +10,15 @@
 | `use <n\|domena>` | Wejście w kontekst (Tab uzupełnia domenę z listy) |
 | `backup setup` | Instalacja/konfiguracja rclone + Google Drive |
 | `backup config` | Ustaw katalog root backupów na Drive (jednorazowo) |
-| `backup show` | Pokaż aktualny root i strukturę |
-| `backup full` | Pełna kopia → `Drive/full/<stamp>/` |
-| `backup site <domena>` | Kopia strony → `Drive/<domena>/<stamp>/` |
-| `backup list [domena\|full]` | Snapshoty + manifest z Drive |
-| `backup restore …` | Odtwórz pliki/DB (tar lub chunks) |
+| `backup show` / `targets` | Root + lista celów; `target add s3\|b2\|sftp\|local` |
+| `backup full [--targets a,b]` | Pełna kopia (+ replikacja na kolejne cele) |
+| `backup site <d> [--target n]` | Kopia strony (multi-cel) |
+| `backup local <d> [--keep N]` | Szybka kopia lokalna (`BACKUP_LOCAL_ROOT`) |
+| `backup inc …` | restic (init/site/list/restore/forget); hasło w `restic.pass` |
+| `backup list [domena\|full]` | Snapshoty + manifest |
+| `backup restore … [--target n]` | Odtwórz pliki/DB (rclone lub lokalnie) |
 | `backup prune` / `schedule` | Retencja snapshotów / cron `/etc/cron.d/hmtools-backup` |
-| `backup test` | Test połączenia rclone |
+| `backup test` | Test połączenia rclone / lokalnego root |
 | `update check` | Przegląd: pakiety / security / OLS / CyberPanel / reboot-required |
 | `update security\|packages\|ols\|cyberpanel` | Aktualizacje z potwierdzeniem; kopia przed CP; weryfikacja usług |
 | `update auto-security on\|off` | unattended-upgrades / dnf-automatic |

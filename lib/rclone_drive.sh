@@ -19,13 +19,36 @@ hm_rclone_check() {
   return 0
 }
 
+hm_rclone_root_is_local() {
+  # /absolute  lub  local:/absolute
+  local r="${RCLONE_REMOTE:-}"
+  [[ "${r}" == /* ]] || [[ "${r}" == local:/* ]]
+}
+
+hm_rclone_root_fs() {
+  local r="${RCLONE_REMOTE:-}"
+  if [[ "${r}" == local:/* ]]; then
+    printf '%s' "${r#local:}"
+  else
+    printf '%s' "${r}"
+  fi
+}
+
 hm_rclone_remote_name() {
-  # z RCLONE_REMOTE=gdrive:path → gdrive
+  # z RCLONE_REMOTE=gdrive:path → gdrive; lokalnie → local
+  if hm_rclone_root_is_local; then
+    echo "local"
+    return 0
+  fi
   echo "${RCLONE_REMOTE%%:*}"
 }
 
 hm_rclone_remote_path() {
-  # gdrive:vps-backups → vps-backups  (lub pusty)
+  # gdrive:vps-backups → vps-backups  (lub pusty); lokalnie → ścieżka FS
+  if hm_rclone_root_is_local; then
+    hm_rclone_root_fs
+    return 0
+  fi
   local rest="${RCLONE_REMOTE#*:}"
   if [[ "${rest}" == "${RCLONE_REMOTE}" ]]; then
     echo ""
@@ -35,8 +58,18 @@ hm_rclone_remote_path() {
 }
 
 hm_rclone_dest() {
-  # hm_rclone_dest relative/path → full remote:path (względem RCLONE_REMOTE = root backupów)
+  # hm_rclone_dest relative/path → full remote:path LUB /local/root/rel
   local rel="${1#/}"
+  if hm_rclone_root_is_local; then
+    local root
+    root="$(hm_rclone_root_fs)"
+    if [[ -n "${rel}" ]]; then
+      echo "${root%/}/${rel}"
+    else
+      echo "${root%/}"
+    fi
+    return 0
+  fi
   local base
   base="$(hm_rclone_remote_path)"
   if [[ -n "${base}" ]]; then
@@ -97,13 +130,32 @@ hm_rclone_save_remote_conf() {
 }
 
 hm_rclone_ensure_backup_layout() {
-  # utwórz root + full/ na Drive
+  # utwórz root + full/ (Drive lub lokalnie)
+  if hm_rclone_root_is_local; then
+    local root
+    root="$(hm_rclone_root_fs)"
+    mkdir -p "${root}/full" 2>/dev/null || true
+    chmod 700 "${root}" 2>/dev/null || true
+    return 0
+  fi
   hm_rclone_check || return 1
   hm_rclone_mkdir "${RCLONE_REMOTE}"
   hm_rclone_mkdir "$(hm_rclone_dest "full")"
 }
 
 hm_rclone_test() {
+  if hm_rclone_root_is_local; then
+    local root
+    root="$(hm_rclone_root_fs)"
+    mkdir -p "${root}" 2>/dev/null || true
+    if [[ -d "${root}" ]]; then
+      hm_ok "Lokalny root OK: ${root}"
+      ls -la "${root}" 2>/dev/null | head -20 | sed 's/^/  /' || true
+      return 0
+    fi
+    hm_err "Brak katalogu lokalnego: ${root}"
+    return 1
+  fi
   hm_rclone_check || return 1
   local remote
   remote="$(hm_rclone_remote_name)"
@@ -186,8 +238,18 @@ hm_backup_config_root() {
 }
 
 hm_rclone_rcat() {
-  # stdin → remote path (pełny remote:path)
+  # stdin → remote path LUB lokalny plik
   local dest="$1"
+  if [[ "${dest}" == /* ]]; then
+    mkdir -p "$(dirname "${dest}")" 2>/dev/null || true
+    hm_file_log INFO "RUN: rcat(local) ${dest}"
+    set +e
+    cat > "${dest}"
+    local rc=$?
+    set -e
+    hm_file_log INFO "RUN_END: rc=${rc} cmd=rcat(local)"
+    return "${rc}"
+  fi
   hm_rclone_check || return 1
   hm_file_log INFO "RUN: rclone rcat ${dest}"
   set +e
@@ -201,6 +263,16 @@ hm_rclone_rcat() {
 hm_rclone_copyto() {
   local src="$1"
   local dest="$2"
+  if [[ "${dest}" == /* ]]; then
+    mkdir -p "$(dirname "${dest}")" 2>/dev/null || true
+    hm_file_log INFO "RUN: cp → ${dest}"
+    set +e
+    cp -a "${src}" "${dest}"
+    local rc=$?
+    set -e
+    hm_file_log INFO "RUN_END: rc=${rc} cmd=cp"
+    return "${rc}"
+  fi
   hm_rclone_check || return 1
   hm_file_log INFO "RUN: rclone copyto ${src} → ${dest}"
   set +e
@@ -213,7 +285,20 @@ hm_rclone_copyto() {
 
 hm_rclone_mkdir() {
   local dest="$1"
+  if [[ "${dest}" == /* ]]; then
+    mkdir -p "${dest}" 2>/dev/null || true
+    return 0
+  fi
   hm_rclone_check || return 1
   hm_file_log DEBUG "RUN: rclone mkdir ${dest}"
   rclone mkdir "${dest}" >/dev/null 2>&1 || true
+}
+
+hm_rclone_purge() {
+  local dest="$1"
+  if [[ "${dest}" == /* ]]; then
+    rm -rf "${dest}"
+    return $?
+  fi
+  rclone purge "${dest}" 2>/dev/null || rclone delete "${dest}" --rmdirs 2>/dev/null || true
 }

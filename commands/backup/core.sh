@@ -241,6 +241,10 @@ hm_backup_resolve_files_root() {
 }
 
 hm_backup_stamp() {
+  if [[ -n "${HM_BACKUP_FORCE_STAMP:-}" ]]; then
+    printf '%s' "${HM_BACKUP_FORCE_STAMP}"
+    return 0
+  fi
   date +%Y%m%d-%H%M%S
 }
 
@@ -457,7 +461,9 @@ hm_backup_site() {
 
   hm_load_config
   hm_detect_all
-  hm_rclone_check || return 1
+  if ! hm_rclone_root_is_local; then
+    hm_rclone_check || return 1
+  fi
   hm_backup_check_space || return 1
   hm_backup_acquire_lock || return 1
   trap 'hm_backup_release_lock' RETURN
@@ -465,11 +471,11 @@ hm_backup_site() {
   hm_site_context_push "${domain}" || return 1
   local stamp remote_base
   stamp="$(hm_backup_stamp)"
-  # Drive: <root>/<domena>/<stamp>/
+  # Root: <root>/<domena>/<stamp>/  (rclone lub lokalnie)
   remote_base="$(hm_backup_dest_site "${domain}" "${stamp}")"
 
   hm_info "Backup strony ${domain}"
-  hm_info "Root Drive: ${RCLONE_REMOTE}"
+  hm_info "Root: ${RCLONE_REMOTE}${HM_BACKUP_TARGET_NAME:+ (cel=${HM_BACKUP_TARGET_NAME})}"
   hm_info "Cel: ${remote_base}"
   hm_rclone_ensure_backup_layout
   hm_rclone_mkdir "$(hm_rclone_dest "${domain}")"
@@ -516,8 +522,8 @@ hm_backup_site() {
   fi
 
   if [[ "${files_ok}" -ne 1 ]]; then
-    hm_err "Backup ${domain} niekompletny — usuwam niepełny snapshot z Drive (${remote_base})."
-    rclone purge "${remote_base}" 2>/dev/null || rclone delete "${remote_base}" --rmdirs 2>/dev/null || true
+    hm_err "Backup ${domain} niekompletny — usuwam niepełny snapshot (${remote_base})."
+    hm_rclone_purge "${remote_base}"
     rm -f "${manifest}"
     hm_site_context_pop
     return 1
@@ -568,7 +574,7 @@ EOF
   if ! hm_write_manifest_and_upload "${remote_base}" "${manifest}"; then
     rm -f "${manifest}"
     hm_err "Upload manifest.json nieudany — usuwam niepełny snapshot ${remote_base}."
-    rclone purge "${remote_base}" 2>/dev/null || true
+    hm_rclone_purge "${remote_base}"
     hm_site_context_pop
     return 1
   fi
@@ -682,18 +688,20 @@ hm_backup_all_databases() {
 hm_backup_full() {
   hm_load_config
   hm_detect_all
-  hm_rclone_check || return 1
+  if ! hm_rclone_root_is_local; then
+    hm_rclone_check || return 1
+  fi
   hm_backup_check_space || return 1
   hm_backup_acquire_lock || return 1
   trap 'hm_backup_release_lock' RETURN
 
   local stamp remote_base
   stamp="$(hm_backup_stamp)"
-  # Drive: <root>/full/<stamp>/
+  # Root: <root>/full/<stamp>/
   remote_base="$(hm_backup_dest_full "${stamp}")"
 
   hm_info "Pełny backup serwera"
-  hm_info "Root Drive: ${RCLONE_REMOTE}"
+  hm_info "Root: ${RCLONE_REMOTE}${HM_BACKUP_TARGET_NAME:+ (cel=${HM_BACKUP_TARGET_NAME})}"
   hm_info "Cel: ${remote_base}"
   if [[ -z "${BACKUP_ENCRYPT_PASSPHRASE:-}" ]]; then
     hm_warn "BACKUP_ENCRYPT_PASSPHRASE nieustawione — wrażliwe artefakty (db-accounts / opcjonalnie system-configs) idą bez szyfrowania klienta. Zalecane: passphrase lub rclone crypt remote."
@@ -819,7 +827,7 @@ EOF
   if ! hm_write_manifest_and_upload "${remote_base}" "${manifest}"; then
     rm -f "${manifest}"
     hm_err "Upload manifest.json nieudany — usuwam niepełny full ${remote_base}."
-    rclone purge "${remote_base}" 2>/dev/null || true
+    hm_rclone_purge "${remote_base}"
     return 1
   fi
   rm -f "${manifest}"
