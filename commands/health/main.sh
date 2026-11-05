@@ -8,6 +8,8 @@ Użycie:
   health --ram [--count N]       Top procesów wg RAM (RSS) + site/service/cwd
   health --cpu [--count N]       Top procesów wg CPU + site/service/cwd
   health --ram --cpu             Obie sekcje
+  health --ram|--cpu --live [--interval N]
+                                 Live (min. interval=2 s); q lub Ctrl+C → hmtools>
   health --check [--disk 90] [--ssl-days 14] [--services] [--notify] [--json]
   health watch install|status|disable   Cron co 15 min (hmtools-watch)
 
@@ -188,6 +190,71 @@ hm_health_section_cpu() {
   if [[ "${n}" -eq 0 ]]; then
     hm_warn "Brak danych z ps (CPU)."
   fi
+}
+
+# Czekaj interval s; q/Q/Esc → rc=1; HM_HEALTH_LIVE_STOP=1 (Ctrl+C) → rc=1.
+hm_health_live_wait() {
+  local interval="${1:-2}"
+  local end key=""
+  end=$((SECONDS + interval))
+  while (( SECONDS < end )); do
+    [[ "${HM_HEALTH_LIVE_STOP:-0}" -eq 1 ]] && return 1
+    key=""
+    if read -r -n 1 -t 0.25 key 2>/dev/null; then
+      case "${key}" in
+        q|Q|$'\033') return 1 ;;
+      esac
+    fi
+  done
+  return 0
+}
+
+# Live top RAM/CPU — clear + odświeżanie; wyjście: q lub Ctrl+C.
+hm_health_live() {
+  local do_ram="${1:-0}" do_cpu="${2:-0}" count="${3:-15}" interval="${4:-2}"
+  local frame=0 need_sep=0
+
+  [[ "${interval}" =~ ^[0-9]+$ ]] || interval=2
+  if [[ "${interval}" -lt 2 ]]; then
+    hm_warn "--interval minimum to 2 s (było ${interval}) — ustawiam 2."
+    interval=2
+  fi
+
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    hm_err "health --live wymaga TTY (interaktywny terminal)."
+    return 1
+  fi
+
+  HM_HEALTH_LIVE_STOP=0
+  hm_info "Live co ${interval}s — q lub Ctrl+C wraca do hmtools"
+  trap 'HM_HEALTH_LIVE_STOP=1' INT
+  while [[ "${HM_HEALTH_LIVE_STOP}" -eq 0 ]]; do
+    if [[ "${frame}" -gt 0 ]]; then
+      clear 2>/dev/null || printf '\033[H\033[2J'
+    fi
+    echo "${C_BOLD}health live${C_RESET} ${C_DIM}$(date '+%Y-%m-%d %H:%M:%S')  interval=${interval}s  q/Ctrl+C = wyjście${C_RESET}"
+    echo
+    need_sep=0
+    if [[ "${do_ram}" -eq 1 ]]; then
+      hm_health_section_ram "${count}"
+      need_sep=1
+    fi
+    [[ "${HM_HEALTH_LIVE_STOP}" -eq 1 ]] && break
+    if [[ "${do_cpu}" -eq 1 ]]; then
+      [[ "${need_sep}" -eq 1 ]] && echo
+      hm_health_section_cpu "${count}"
+    fi
+    [[ "${HM_HEALTH_LIVE_STOP}" -eq 1 ]] && break
+    echo
+    echo "${C_DIM}odświeżenie co ${interval} s — q lub Ctrl+C aby wyjść${C_RESET}"
+    frame=$((frame + 1))
+    hm_health_live_wait "${interval}" || break
+  done
+  trap - INT
+  unset HM_HEALTH_LIVE_STOP
+  echo
+  hm_ok "Live zakończone — powrót do hmtools."
+  return 0
 }
 
 hm_health_overview() {
@@ -493,8 +560,8 @@ hm_health_watch_status() {
 }
 
 cmd_health() {
-  local do_ram=0 do_cpu=0 do_check=0
-  local count="" arg
+  local do_ram=0 do_cpu=0 do_check=0 do_live=0 saw_interval=0
+  local count="" interval=2 arg
   local -a check_args=()
 
   # health watch …
@@ -537,6 +604,29 @@ cmd_health() {
         do_cpu=1
         shift
         ;;
+      --live|-f|live)
+        do_live=1
+        shift
+        ;;
+      --interval)
+        shift
+        [[ -n "${1:-}" && "${1}" =~ ^[0-9]+$ ]] || {
+          hm_err "Użycie: health --live --interval <N>  (N ≥ 2)"
+          return 1
+        }
+        interval="${1}"
+        saw_interval=1
+        shift
+        ;;
+      --interval=*)
+        interval="${arg#--interval=}"
+        [[ "${interval}" =~ ^[0-9]+$ ]] || {
+          hm_err "Użycie: health --live --interval <N>  (N ≥ 2)"
+          return 1
+        }
+        saw_interval=1
+        shift
+        ;;
       --count)
         shift
         [[ -n "${1:-}" && "${1}" =~ ^[1-9][0-9]*$ ]] || {
@@ -574,6 +664,14 @@ cmd_health() {
     hm_err "--count wymaga --ram i/lub --cpu."
     return 1
   fi
+  if [[ "${do_live}" -eq 1 ]] && [[ "${do_ram}" -eq 0 && "${do_cpu}" -eq 0 ]]; then
+    hm_err "--live wymaga --ram i/lub --cpu."
+    return 1
+  fi
+  if [[ "${saw_interval}" -eq 1 && "${do_live}" -eq 0 ]]; then
+    hm_err "--interval wymaga --live."
+    return 1
+  fi
 
   hm_detect_all
 
@@ -585,6 +683,11 @@ cmd_health() {
 
   # mapa domen do kolumny SITE
   hm_discover_sites 2>/dev/null || true
+
+  if [[ "${do_live}" -eq 1 ]]; then
+    hm_health_live "${do_ram}" "${do_cpu}" "${count:-15}" "${interval}"
+    return $?
+  fi
 
   local need_sep=0
   if [[ "${do_ram}" -eq 1 ]]; then

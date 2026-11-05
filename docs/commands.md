@@ -37,7 +37,7 @@
 | `pm2` / `node` / `apps` | PM2: lista, proxy, `restart`/`reload`/`logs`/`save` |
 | `php` | LSPHP: lista vs repo + nowsze gałęzie do instalacji (`--refresh` / `--phpnet`), `set`/`ext`/`ini`/`restart`/`ps` |
 | `update-php <ver>` | Aktualizacja / instalacja LSPHP (np. `8.4`, `8.6`) z potwierdzeniem |
-| `health` [`--ram`] [`--cpu`] [`--count N`] | Przegląd; `--ram`/`--cpu` — top procesów z SITE/SERVICE/cwd (domyślnie 15) |
+| `health` [`--ram`] [`--cpu`] [`--count N`] [`--live`] [`--interval N`] | Przegląd; top RAM/CPU; `--live` (min. 2 s, q/Ctrl+C) |
 | `health --check` / `health watch` | Alert dysk/SSL/usługi (+ `--notify`); cron co 15 min |
 | `notify …` | Powiadomienia e-mail/webhook (`setup`/`test`/`status`); dedup 24h |
 | `services …` | Status/restart/enable usług stosu (lsws, MariaDB, Postfix, …); failed na czerwono |

@@ -85,7 +85,7 @@ hm_tab_complete() {
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         else
-          for m in --ram --cpu --count --check watch help; do
+          for m in --ram --cpu --count --live --interval --check watch help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi
