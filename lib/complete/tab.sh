@@ -115,12 +115,24 @@ hm_tab_complete() {
           hm_complete_push_sites "${partial}"
         elif [[ "${prefix}" =~ mail[[:space:]]+check[[:space:]] ]]; then
           hm_complete_push_sites "${partial}"
+        elif [[ "${prefix}" =~ mail[[:space:]]+forward[[:space:]] ]]; then
+          for m in list add remove --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ mail[[:space:]]+catchall[[:space:]] ]]; then
+          for m in set off --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ mail[[:space:]]+delete[[:space:]] ]]; then
+          for m in --keep-maildir --purge --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
         elif [[ "${prefix}" =~ mail[[:space:]]+blacklist[[:space:]] ]]; then
           for m in help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         else
-          for m in queue log check dkim blacklist help; do
+          for m in queue log check dkim blacklist add passwd delete forward catchall help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi

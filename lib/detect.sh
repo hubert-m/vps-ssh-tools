@@ -821,6 +821,9 @@ hm_detect_tool_hints() {
   [[ "${SUPERVISOR:-no}" == "yes" ]] && extra="${extra}, supervisor"
   [[ "${CHROME:-no}" == "yes" ]] && extra="${extra}, chrome"
   [[ "${DOCKER:-no}" == "yes" ]] && extra="${extra}, docker"
+  if hm_have_cmd postqueue || hm_have_cmd postfix; then
+    extra="${extra}, mail"
+  fi
   echo "${base}${extra}"
 }
 
