@@ -555,6 +555,7 @@ Komendy w kontekście strony:
   alias list|add|remove  Aliasy (parked) w mapie OLS / CyberPanel
   child list  Domeny podrzędne (tworzenie: site create … --child-of)
   wp …       WordPress (WP-CLI): status/update/plugins/maintenance/verify/…
+  malware …  Skan sygnaturowy (ClamAV/Imunify/maldet), kwarantanna, restore
   htaccess [enable]  Diagnostyka .htaccess / autoLoadHtaccess
   proxy [set-port N] Reverse proxy OLS — zdrowie portów / zmiana portu
   perms [check|fix] Uprawnienia plików pod OLS / CyberPanel

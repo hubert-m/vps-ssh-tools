@@ -124,6 +124,14 @@ hm_tab_complete() {
       security|sec)
         if [[ "${prefix}" =~ $re_sec_scan ]]; then
           hm_complete_push_sites "${partial}"
+        elif [[ "${prefix}" =~ (security|sec)[[:space:]]+malware[[:space:]]+schedule[[:space:]] ]]; then
+          for m in weekly daily status disable --all-sites --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ (security|sec)[[:space:]]+malware[[:space:]] ]]; then
+          for m in status install-clamav schedule scan-all help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
         elif [[ "${prefix}" =~ (security|sec)[[:space:]]+ssh[[:space:]]+set[[:space:]] ]]; then
           for m in port password-auth root-login; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
@@ -133,7 +141,22 @@ hm_tab_complete() {
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         else
-          for m in status ports ssh fail2ban ban unban scan help; do
+          for m in status ports ssh fail2ban ban unban scan malware help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
+      malware)
+        if [[ "${prefix}" =~ malware[[:space:]]+scan[[:space:]] ]]; then
+          for m in --engine --path --quick --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ malware[[:space:]]+quarantine[[:space:]] ]]; then
+          for m in --all-found --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in scan report quarantine restore help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi

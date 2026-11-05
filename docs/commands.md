@@ -47,7 +47,7 @@
 | `logs system …` | Logi mail/ftp/auth/cyberpanel/modsec/lsws/mysql (`--grep`/`--follow`/`--since`); `logs clean` |
 | `limits …` | Zużycie/limity per strona (cgroup CPU/RAM/IO, quota dysku); `check`/`set`/`clear` |
 | `firewall …` | Porty/reguły (ufw/firewalld/CSF): `allow`/`deny`/`remove`/`whitelist` |
-| `security …` | Audyt: `ports`, `ssh` (+ `set`/`confirm`), Fail2Ban `ban`/`unban`, `scan` |
+| `security …` | Audyt: `ports`, `ssh` (+ `set`/`confirm`), Fail2Ban `ban`/`unban`, `scan`, `malware` (silniki/schedule) |
 | `access …` | SSH/FTP strony: `ssh` (passwd/shell/keys), `ftp` (list/add/passwd/delete) |
 | `redis …` | Redis: status/memory/dbs/clients/slowlog/sites; `config`/`flush*`/`restart`/`client kill` |
 | `docker …` | Kontenery: lista (+ domena OLS proxy), logs, start/stop/restart, compose ls/pull/up, prune (domyślnie dry-run) |
@@ -77,6 +77,7 @@
 | `alias list\|add\|remove` | Aliasy (parked) — mapa OLS / CyberPanel `createAlias` |
 | `child list` | Domeny podrzędne mastera |
 | `wp` / `wp update` / `wp plugins` / … | WP-CLI jako user strony; snapshot przed update; `search-replace` dry-run; `rollback` |
+| `malware scan\|report\|quarantine\|restore` | Skan sygnaturowy (ClamAV/Imunify/maldet), kwarantanna 0700, restore 1:1 |
 | `git` / `deploy` | Status repo, klucz deploy, attach, pull+build+reload, rollback |
 | `backup` | Pełna kopia środowiska (pliki + DB) → Drive |
 | `clean [--lscache]` | Podgląd cache/tmp (+ LSCache) → potwierdzenie |
