@@ -1,5 +1,6 @@
 # hmtools v0.1.11
 
+- Feat: `services` + `logs system` — status/restart/enable stosu (lsws soft-reload, sshd -t, journal przy fail); logi mail/ftp/auth/… (Debian+RHEL), `--grep`/`--follow`/`--since`, `logs clean`; test `test-services-logs.sh`
 - Feat: `backup targets` / `target add` / `--targets` — S3/B2/SFTP (rclone) + lokalne; multi-cel (backup + replikacja, rc≠0 przy awarii jednego); `backup local`; `backup inc` (restic); sekrety poza applog; test `test-backup-targets.sh`
 - Feat: `suspend` / `unsuspend` / `openbasedir` — 503 + strona serwisowa (`--allow-ip`, `--reason`), blok vhconf hmtools; open_basedir on/off; `webs --suspended`; child/sibling tylko w planie; test `test-suspend-openbasedir.sh`
 - Feat: `notify` + `health --check`/`watch` — e-mail/webhook (dedup 24h + recovery), alert backup full przy rc≠0, watch cron dysk/SSL/services; URL webhook nie w applog; test `test-notify-dedup.sh`

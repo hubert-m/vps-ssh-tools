@@ -16,6 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [v0.1.11]
 
+- Feat: `services` + `logs system` — status/restart stosu; logi mail/ftp/auth/… (Debian+RHEL)
 - Feat: `backup targets`/`local`/`inc` — cele rclone (S3/B2/SFTP), lokalne, restic; multi-cel
 - Feat: `suspend`/`unsuspend`/`openbasedir` — 503 + maintenance, allow-ip, `webs --suspended`
 - Feat: `notify` + `health watch` — e-mail/webhook (dedup/recovery), alert nieudanego backupu, progi dysk/SSL

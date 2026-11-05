@@ -95,6 +95,32 @@ hm_tab_complete() {
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
         done
         ;;
+      services)
+        if [[ "${prefix}" =~ services[[:space:]]+(restart|enable|disable|status)[[:space:]] ]]; then
+          for m in lsws lscpd mariadb mysql postfix dovecot pdns pure-ftpd opendkim redis fail2ban cron docker supervisor sshd; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in restart enable disable status list help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
+      logs|log)
+        if [[ "${prefix}" =~ logs[[:space:]]+system[[:space:]] ]]; then
+          for m in mail ftp auth cyberpanel modsec lsws mysql --grep --follow --since --errors; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ logs[[:space:]]+clean[[:space:]] ]]; then
+          for m in mail ftp auth cyberpanel modsec lsws mysql; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in system clean errors stats follow help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
       security|sec)
         if [[ "${prefix}" =~ $re_sec_scan ]]; then
           hm_complete_push_sites "${partial}"

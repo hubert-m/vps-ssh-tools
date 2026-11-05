@@ -22,6 +22,8 @@ Użycie (kontekst strony):
   logs errors [N]    Tylko błędy PHP/5xx/ERROR + top powtarzających się
   logs stats|top     Kody HTTP, top IP, top URL z access.log
   logs follow|live   tail -F (Ctrl+C wraca do hmtools)
+  logs system …      Logi systemowe (mail/ftp/auth/…) — jak globalnie
+  logs clean …       Przycięcie dużego logu systemowego
 EOF
 
 _hm_cmd_help clean <<'EOF'
@@ -135,6 +137,15 @@ cmd_site_logs() {
   [[ -n "${HM_SITE_DOMAIN}" ]] || { hm_err "Brak kontekstu."; return 1; }
   local sub="${1:-}"
   case "${sub}" in
+    system|sys|clean)
+      # globalne logi systemowe — ten sam handler co poza kontekstem
+      if declare -F cmd_logs >/dev/null 2>&1; then
+        cmd_logs "$@"
+        return $?
+      fi
+      hm_err "Moduł logs niedostępny."
+      return 1
+      ;;
     errors|error|err)
       shift || true
       local n="${1:-80}"
@@ -148,7 +159,7 @@ cmd_site_logs() {
       hm_site_logs_follow "${HM_SITE_DOMAIN}"
       ;;
     help|-h|--help)
-      echo "Użycie: logs [N] | errors [N] | stats|top | follow|live"
+      echo "Użycie: logs [N] | errors [N] | stats|top | follow|live | system … | clean …"
       ;;
     "")
       hm_print_site_logs "${HM_SITE_DOMAIN}" 40

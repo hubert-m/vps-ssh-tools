@@ -40,6 +40,8 @@
 | `health` [`--ram`] [`--cpu`] [`--count N`] | Przegląd; `--ram`/`--cpu` — top procesów z SITE/SERVICE/cwd (domyślnie 15) |
 | `health --check` / `health watch` | Alert dysk/SSL/usługi (+ `--notify`); cron co 15 min |
 | `notify …` | Powiadomienia e-mail/webhook (`setup`/`test`/`status`); dedup 24h |
+| `services …` | Status/restart/enable usług stosu (lsws, MariaDB, Postfix, …); failed na czerwono |
+| `logs system …` | Logi mail/ftp/auth/cyberpanel/modsec/lsws/mysql (`--grep`/`--follow`/`--since`); `logs clean` |
 | `limits …` | Zużycie/limity per strona (cgroup CPU/RAM/IO, quota dysku); `check`/`set`/`clear` |
 | `firewall …` | Porty/reguły (ufw/firewalld/CSF): `allow`/`deny`/`remove`/`whitelist` |
 | `security …` | Audyt: `ports`, `ssh` (+ `set`/`confirm`), Fail2Ban `ban`/`unban`, `scan` |
@@ -63,6 +65,7 @@
 | `renew-ssl` | Odnów Let's Encrypt dla strony |
 | `php` | `set` / `ext` / `ini` / `restart` / `ps` — `php help` |
 | `logs [N\|errors\|stats\|follow]` | Logi vhosta + OLS `stderr.log`; analityka / live |
+| `logs system …` / `logs clean …` | Logi systemowe (jak globalnie) |
 | `cron` | Crony użytkownika strony (+ heurystyka w `/etc`) |
 | `pm2` | Procesy strony; `restart`/`reload`/`logs` jako user strony |
 | `limits …` | Limity CPU/RAM/IO (slice) / dysk (quota); `set`/`clear`/`check` |
