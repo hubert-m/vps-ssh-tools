@@ -16,7 +16,9 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [v0.1.11]
 
+- Feat: `clone` / `staging` / `deploy` — kopia strony (rsync+DB), staging noindex/basic-auth, deploy ze snapshotem+rollback; test `test-clone-staging.sh`
 - Feat: `security waf` / `waf whitelist` — ModSecurity (OWASP/Comodo): status, audit log, mode, rules; whitelist per vhost; test `test-security-waf.sh`
+
 - Feat: `security malware` / `malware` — ClamAV/Imunify/maldet, kwarantanna+restore, schedule; test `test-security-malware.sh`
 
 - Feat: `wp` — WP-CLI (runuser + LSPHP); update ze snapshotem/smoke/rollback; search-replace dry-run; test `test-wp-cli.sh`

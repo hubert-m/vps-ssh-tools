@@ -3,16 +3,19 @@
 
 
 _hm_cmd_help deploy <<'EOF'
-Użycie (kontekst strony):
+Użycie (kontekst strony) — git:
   deploy [--branch main] [--no-build] [--force] [--yes]
   deploy rollback [<sha>]
   deploy config [--init]
   deploy log
 
-Przebieg: sprawdź dirty → fetch → plan commitów → pull --ff-only →
-build z .hmtools-deploy → php restart workers / pm2 reload → log SHA.
-Rollback: git reset --hard <sha> (z potwierdzeniem).
-Lokalne zmiany blokują deploy (bez --force).
+Użycie — staging → produkcja (moduł clone; gdy 1. arg = domena):
+  deploy <produkcja> [--files] [--db] [--exclude PATH] [--yes]
+  deploy rollback <stamp>          (snapshot w /var/lib/hmtools/deploy-snaps/)
+  staging deploy <produkcja> […]   (to samo)
+
+Git: dirty → fetch → pull --ff-only → build whitelist → reload PHP/PM2.
+Staging: obowiązkowy snapshot produkcji przed rsync/DB; confirm_critical.
 EOF
 
 hm_deploy_log_path() {
@@ -178,7 +181,26 @@ hm_deploy_reload_services() {
 
 cmd_deploy() {
   local sub="${1:-}"
-  # jeśli pierwszy arg to flaga lub puste → run deploy
+
+  # Staging/clone: deploy <domena-prod> … albo rollback stamp ze snaps clone
+  if declare -F hm_clone_deploy >/dev/null 2>&1; then
+    if [[ -n "${sub}" ]] && hm_is_valid_domain "${sub}" 2>/dev/null; then
+      hm_clone_deploy "$@"
+      return $?
+    fi
+    if [[ "${sub}" == "rollback" || "${sub}" == "rb" || "${sub}" == "undo" ]]; then
+      local stamp="${2:-}" snap
+      if [[ -n "${stamp}" ]] && declare -F hm_clone_snap_root >/dev/null 2>&1; then
+        snap="$(hm_clone_snap_root "${HM_SITE_DOMAIN:-}")/${stamp}"
+        if [[ -d "${snap}" && -f "${snap}/meta.txt" ]]; then
+          hm_clone_deploy "$@"
+          return $?
+        fi
+      fi
+    fi
+  fi
+
+  # jeśli pierwszy arg to flaga lub puste → run deploy (git)
   case "${sub}" in
     rollback|rb|undo)
       shift || true
@@ -208,9 +230,7 @@ cmd_deploy() {
     ""|--*)
       ;;
     *)
-      # deploy main | deploy --branch …  — jeśli nie flaga, może być branch shorthand? traktuj jako nieznane
       if [[ "${sub}" != --* && "${sub}" != "" ]]; then
-        # pozwól: deploy (bez sub)
         :
       fi
       ;;

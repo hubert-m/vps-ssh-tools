@@ -1,6 +1,8 @@
 # hmtools v0.1.11
 
+- Feat: `clone` / `staging` / `deploy` — kopia strony (rsync+DB), staging noindex/basic-auth, deploy ze snapshotem+rollback; test `test-clone-staging.sh`
 - Feat: `security waf` / `waf whitelist` — ModSecurity (OWASP/Comodo): status, audit log, mode, rules; whitelist per vhost (# hmtools:waf + exclusions); test `test-security-waf.sh`
+
 - Feat: `security malware` / `malware scan` — ImunifyAV/ClamAV/maldet (nice/ionice), kwarantanna+restore, schedule; ścieżki tylko w root strony; test `test-security-malware.sh`
 
 - Feat: `wp` — WP-CLI jako user strony (LSPHP); `sites`/`update`/`plugins`/`maintenance`/`verify`/`search-replace` (dry-run)/`admin-reset`/`rollback`; snapshot `.hmtools-snap`; test `test-wp-cli.sh`

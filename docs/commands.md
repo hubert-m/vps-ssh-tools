@@ -9,6 +9,7 @@
 | `webs archive <d>` / `backup archive` | Archiwum Drive → verify → usunięcie z VPS |
 | `site create <d> --php <ver> […]` / `site-create` / `create-site` | Nowa strona (CyberPanel CLI lub OLS); `--ssl`/`--dkim`/`--no-open-basedir` |
 | `site create <child> --child-of <master> --php <ver>` | Child domain (`--path`, `--ssl`) |
+| `clone <a> <b>` | Kopia strony (pliki+DB); staging.* → noindex; też w kontekście `clone <cel>` |
 | `wp sites` / `wp install <d> …` | Lista instalacji WP; opcjonalnie `cyberpanel installWordPress` |
 | `use <n\|domena>` | Wejście w kontekst (Tab uzupełnia domenę z listy) |
 | `backup setup` | Instalacja/konfiguracja rclone + Google Drive |
@@ -79,6 +80,7 @@
 | `wp` / `wp update` / `wp plugins` / … | WP-CLI jako user strony; snapshot przed update; `search-replace` dry-run; `rollback` |
 | `malware scan\|report\|quarantine\|restore` | Skan sygnaturowy (ClamAV/Imunify/maldet), kwarantanna 0700, restore 1:1 |
 | `waf` / `waf whitelist <id> [--uri]` | ModSecurity per strona: blokady z audit logu; SecRuleRemoveById (# hmtools:waf) |
+| `clone <cel>` / `staging` / `deploy <prod>` | Klon pliki+DB (staging.*), noindex/basic-auth; deploy ze snapshotem + rollback |
 | `git` / `deploy` | Status repo, klucz deploy, attach, pull+build+reload, rollback |
 | `backup` | Pełna kopia środowiska (pliki + DB) → Drive |
 | `clean [--lscache]` | Podgląd cache/tmp (+ LSCache) → potwierdzenie |

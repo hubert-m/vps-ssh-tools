@@ -770,7 +770,26 @@ hm_tab_complete() {
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         else
-          for m in rollback config log --branch --no-build --force --yes help; do
+          for m in rollback config log --branch --no-build --force --files --db --exclude --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+          hm_complete_push_sites "${partial}"
+        fi
+        ;;
+      clone)
+        for m in --db-only --files-only --no-index --basic-auth --yes help; do
+          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+        done
+        hm_complete_push_sites "${partial}"
+        ;;
+      staging)
+        if [[ "${prefix}" =~ staging[[:space:]]+deploy[[:space:]] ]]; then
+          for m in --files --db --exclude --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+          hm_complete_push_sites "${partial}"
+        else
+          for m in deploy list help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi
