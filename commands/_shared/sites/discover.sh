@@ -196,6 +196,12 @@ hm_resolve_site_paths() {
     fi
   fi
 
+  # hmtools suspend (blok vhconf) — nadpisuje STATUS niezależnie od CP
+  if [[ -n "${vhost}" && -f "${vhost}" ]] \
+    && grep -qF '# hmtools:suspend BEGIN' "${vhost}" 2>/dev/null; then
+    status="suspended"
+  fi
+
   # właściciel katalogu strony (CyberPanel externalApp bywa puste dla Node)
   if [[ -z "${user}" && -n "${root}" && -d "${root}" ]]; then
     user="$(stat -c '%U' "${root}" 2>/dev/null || true)"

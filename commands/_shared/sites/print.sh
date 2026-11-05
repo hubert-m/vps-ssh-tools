@@ -3,6 +3,7 @@
 
 hm_list_sites() {
   local quick="${1:-0}"
+  local suspended_only="${2:-0}"
   hm_discover_sites
 
   if [[ "${#HM_SITES_LIST[@]}" -eq 0 ]]; then
@@ -11,7 +12,7 @@ hm_list_sites() {
   fi
 
   local total="${#HM_SITES_LIST[@]}"
-  local i=0 domain row root docroot logs vhost php rest status size ssl
+  local i=0 shown=0 domain row root docroot logs vhost php rest status size ssl
   local size_bytes=0 total_bytes=0
   local -a table_rows=()
 
@@ -32,6 +33,10 @@ hm_list_sites() {
     [[ -n "${php}" ]] || php="?"
     status="${rest##*|}"
     [[ -n "${status}" ]] || status="active"
+    if [[ "${suspended_only}" == "1" && "${status}" != "suspended" ]]; then
+      continue
+    fi
+    shown=$((shown + 1))
     ssl="$(hm_ssl_has "${domain}")"
     size_bytes=0
     if [[ "${quick}" == "1" ]]; then
@@ -54,12 +59,19 @@ hm_list_sites() {
   done
   hm_progress_done
 
+  if [[ "${suspended_only}" == "1" && "${shown}" -eq 0 ]]; then
+    hm_info "Brak stron ze statusem suspended."
+    return 0
+  fi
+
   printf '%-4s %-36s %-8s %-5s %-12s %s\n' "#" "DOMAIN" "PHP" "SSL" "SIZE" "STATUS"
   printf '%-4s %-36s %-8s %-5s %-12s %s\n' "---" "------" "---" "---" "----" "------"
   printf '%s\n' "${table_rows[@]}"
   echo
   if [[ "${quick}" != "1" ]]; then
-    echo "  ${C_BOLD}Suma SIZE:${C_RESET} $(hm_human_size "${total_bytes}")  ${C_DIM}(${total} serwisów)${C_RESET}"
+    local sum_label="${total} serwisów"
+    [[ "${suspended_only}" == "1" ]] && sum_label="${shown} suspended / ${total}"
+    echo "  ${C_BOLD}Suma SIZE:${C_RESET} $(hm_human_size "${total_bytes}")  ${C_DIM}(${sum_label})${C_RESET}"
     echo
   fi
   hm_info "Użyj: use <numer|domena>  aby wejść w kontekst."

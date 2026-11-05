@@ -4,7 +4,7 @@
 
 | Komenda | Opis |
 |---------|------|
-| `webs [--quick]` | Lista usług webowych |
+| `webs [--quick] [--suspended]` | Lista usług webowych (STATUS; filtr suspended) |
 | `webs delete <d>` / `delete-site` | Całkowite usunięcie serwisu (`yes` + nazwa domeny) |
 | `webs archive <d>` / `backup archive` | Archiwum Drive → verify → usunięcie z VPS |
 | `use <n\|domena>` | Wejście w kontekst (Tab uzupełnia domenę z listy) |
@@ -64,6 +64,8 @@
 | `cron` | Crony użytkownika strony (+ heurystyka w `/etc`) |
 | `pm2` | Procesy strony; `restart`/`reload`/`logs` jako user strony |
 | `limits …` | Limity CPU/RAM/IO (slice) / dysk (quota); `set`/`clear`/`check` |
+| `suspend` / `unsuspend` | Zawieszenie 503 (+ maintenance/`--allow-ip`); odwieszenie |
+| `openbasedir status\|on\|off` | `php_admin_value open_basedir` w vhconf (blok hmtools) |
 | `git` / `deploy` | Status repo, klucz deploy, attach, pull+build+reload, rollback |
 | `backup` | Pełna kopia środowiska (pliki + DB) → Drive |
 | `clean [--lscache]` | Podgląd cache/tmp (+ LSCache) → potwierdzenie |

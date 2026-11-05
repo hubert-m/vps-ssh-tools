@@ -237,10 +237,30 @@ hm_tab_complete() {
             [[ -n "${m}" ]] && matches+=("${m}")
           done < <(hm_complete_filter_sites "${partial}")
         else
-          for m in delete remove destroy rm archive --quick -q; do
+          for m in delete remove destroy rm archive --quick -q --suspended; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi
+        ;;
+      suspend)
+        for m in --reason --page --allow-ip help; do
+          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+        done
+        if [[ "${prefix}" =~ --page[[:space:]] ]]; then
+          for m in maintenance 503; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
+      unsuspend)
+        for m in help; do
+          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+        done
+        ;;
+      openbasedir)
+        for m in status on off help; do
+          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+        done
         ;;
       archive-site)
         hm_ensure_sites_cached

@@ -170,6 +170,8 @@ hm_ols_vhost_errorlog_tail_errors() {
 
 hm_ols_vhost_http_probe() {
   local domain="$1"
+  # opcjonalnie: oczekiwany kod (np. 503 po suspend) lub "any" / puste = domyślnie błąd przy 5xx
+  local expect="${2:-${HM_OLS_ACCEPT_HTTP:-}}"
   hm_have_cmd curl || return 0
   # lokalny resolve na 127.0.0.1 — nie wymaga DNS
   local code
@@ -181,6 +183,14 @@ hm_ols_vhost_http_probe() {
         -o /dev/null -w '%{http_code}' "http://${domain}/" 2>/dev/null || echo 000)"
       ;;
   esac
+  if [[ -n "${expect}" && "${expect}" != "any" && "${code}" == "${expect}" ]]; then
+    hm_info "HTTP probe: ${domain} → HTTP ${code} (oczekiwane)"
+    return 0
+  fi
+  if [[ "${expect}" == "any" ]]; then
+    hm_info "HTTP probe: ${domain} → HTTP ${code} (bez walidacji)"
+    return 0
+  fi
   case "${code}" in
     000)
       hm_warn "HTTP probe: brak odpowiedzi (curl) — nie rollback tylko z tego powodu."

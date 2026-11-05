@@ -539,6 +539,8 @@ Komendy w kontekście strony:
   cache settings [--ttl N] [--exclude PATH]
   git / deploy   Repo, klucz deploy, pull+build+reload, rollback
   limits …       Limity CPU/RAM/IO/dysk (cgroup + quota)
+  suspend / unsuspend  Zawieszenie 503 (+ strona serwisowa, --allow-ip)
+  openbasedir status|on|off  php_admin_value open_basedir w vhconf
   htaccess [enable]  Diagnostyka .htaccess / autoLoadHtaccess
   proxy [set-port N] Reverse proxy OLS — zdrowie portów / zmiana portu
   perms [check|fix] Uprawnienia plików pod OLS / CyberPanel

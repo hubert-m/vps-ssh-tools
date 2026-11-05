@@ -4,12 +4,13 @@
 
 _hm_cmd_help webs <<'EOF'
 Użycie:
-  webs [--quick|-q]              Lista usług webowych
-  webs delete <n|domena> […]     Całkowite usunięcie serwisu (aliasy: remove/destroy/rm)
-  webs archive <n|domena>        Archiwum na Drive → weryfikacja → usunięcie z VPS
+  webs [--quick|-q] [--suspended]   Lista usług webowych
+  webs delete <n|domena> […]        Całkowite usunięcie serwisu (aliasy: remove/destroy/rm)
+  webs archive <n|domena>           Archiwum na Drive → weryfikacja → usunięcie z VPS
 
 Opcje listy:
-  --quick, -q   Pomiń liczenie rozmiaru (szybciej)
+  --quick, -q      Pomiń liczenie rozmiaru (szybciej)
+  --suspended      Tylko strony suspended (CyberPanel state=0 lub hmtools:suspend)
 
 Opcje delete:
   --keep-db     Nie usuwaj baz MySQL
@@ -40,18 +41,19 @@ cmd_webs() {
       ;;
   esac
 
-  local quick=0
+  local quick=0 suspended_only=0
   local arg
   for arg in "$@"; do
     case "${arg}" in
       --quick|-q) quick=1 ;;
+      --suspended) suspended_only=1 ;;
       --help|-h)
         hm_help_topic webs
         return 0
         ;;
     esac
   done
-  hm_list_sites "${quick}"
+  hm_list_sites "${quick}" "${suspended_only}"
 }
 
 _hm_cmd_register webs cmd_webs 0 sites list

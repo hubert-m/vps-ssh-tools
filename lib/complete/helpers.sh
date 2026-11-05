@@ -204,7 +204,7 @@ hm_complete_commands() {
         cmds+=("${k}")
       done
     fi
-    cmds+=(info size logs clean htaccess proxy perms back dbs renew-ssl delete-site archive supervisor docker vhost rewrite headers cache git deploy limits)
+    cmds+=(info size logs clean htaccess proxy perms back dbs renew-ssl delete-site archive supervisor docker vhost rewrite headers cache git deploy limits suspend unsuspend openbasedir)
   fi
   # unikalne + filtr partial
   local seen="|"
