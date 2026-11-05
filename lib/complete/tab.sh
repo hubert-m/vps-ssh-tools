@@ -95,6 +95,36 @@ hm_tab_complete() {
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
         done
         ;;
+      mail)
+        if [[ "${prefix}" =~ mail[[:space:]]+queue[[:space:]]+delete[[:space:]] ]]; then
+          for m in --from --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ mail[[:space:]]+queue[[:space:]] ]]; then
+          for m in flush delete --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ mail[[:space:]]+log[[:space:]] ]]; then
+          for m in --domain --bounced --follow help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ mail[[:space:]]+dkim[[:space:]] ]]; then
+          for m in generate --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+          hm_complete_push_sites "${partial}"
+        elif [[ "${prefix}" =~ mail[[:space:]]+check[[:space:]] ]]; then
+          hm_complete_push_sites "${partial}"
+        elif [[ "${prefix}" =~ mail[[:space:]]+blacklist[[:space:]] ]]; then
+          for m in help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in queue log check dkim blacklist help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
       services)
         if [[ "${prefix}" =~ services[[:space:]]+(restart|enable|disable|status)[[:space:]] ]]; then
           for m in lsws lscpd mariadb mysql postfix dovecot pdns pure-ftpd opendkim redis fail2ban cron docker supervisor sshd; do

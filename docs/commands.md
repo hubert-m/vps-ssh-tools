@@ -10,6 +10,7 @@
 | `site create <d> --php <ver> […]` / `site-create` / `create-site` | Nowa strona (CyberPanel CLI lub OLS); `--ssl`/`--dkim`/`--no-open-basedir` |
 | `site create <child> --child-of <master> --php <ver>` | Child domain (`--path`, `--ssl`) |
 | `clone <a> <b>` | Kopia strony (pliki+DB); staging.* → noindex; też w kontekście `clone <cel>` |
+| `mail queue\|log\|check\|dkim\|blacklist` | Diagnostyka poczty: kolejka Postfix, logi, SPF/DKIM/DMARC/PTR, DNSBL |
 | `wp sites` / `wp install <d> …` | Lista instalacji WP; opcjonalnie `cyberpanel installWordPress` |
 | `use <n\|domena>` | Wejście w kontekst (Tab uzupełnia domenę z listy) |
 | `backup setup` | Instalacja/konfiguracja rclone + Google Drive |
