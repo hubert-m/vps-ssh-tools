@@ -14,6 +14,8 @@ Użycie:
   security scan [domena]   Skan heurystyczny docroot (php w uploads, 777, .sql/.env/.git)
   security malware         Silniki ImunifyAV/ClamAV/maldet; schedule / install-clamav
   (w use) malware scan|report|quarantine|restore
+  security waf             ModSecurity: status/log/mode/rules; (w use) waf whitelist
+  (w use) waf | waf whitelist <ruleId> [--uri …]
 
 Zmiana portu SSH: otwarcie w firewall → sshd -t → restart → 120 s na confirm, inaczej rollback.
 password-auth no tylko gdy root (lub bieżący user) ma niepusty authorized_keys.
@@ -22,6 +24,8 @@ EOF
 _HM_SEC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=malware.sh
 source "${_HM_SEC_DIR}/malware.sh"
+# shellcheck source=waf.sh
+source "${_HM_SEC_DIR}/waf.sh"
 
 hm_is_valid_ip() {
   local ip="${1:-}"
@@ -134,6 +138,9 @@ cmd_security() {
     malware|av|clam)
       cmd_security_malware "$@"
       ;;
+    waf|modsec|modsecurity)
+      cmd_security_waf "$@"
+      ;;
     help|-h|--help)
       hm_help_topic security
       ;;
@@ -165,7 +172,7 @@ cmd_security_status() {
 
   cmd_security_ports
   echo
-  echo "${C_DIM}Więcej: security ssh | security scan | security malware (w use: malware scan)${C_RESET}"
+  echo "${C_DIM}Więcej: security ssh | security scan | security malware | security waf (w use: malware / waf)${C_RESET}"
 }
 
 cmd_security_ports() {

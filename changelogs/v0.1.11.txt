@@ -1,6 +1,8 @@
 # hmtools v0.1.11
 
+- Feat: `security waf` / `waf whitelist` — ModSecurity (OWASP/Comodo): status, audit log, mode, rules; whitelist per vhost (# hmtools:waf + exclusions); test `test-security-waf.sh`
 - Feat: `security malware` / `malware scan` — ImunifyAV/ClamAV/maldet (nice/ionice), kwarantanna+restore, schedule; ścieżki tylko w root strony; test `test-security-malware.sh`
+
 - Feat: `wp` — WP-CLI jako user strony (LSPHP); `sites`/`update`/`plugins`/`maintenance`/`verify`/`search-replace` (dry-run)/`admin-reset`/`rollback`; snapshot `.hmtools-snap`; test `test-wp-cli.sh`
 - Feat: `site create` / `site-create` / `create-site` — strona + child (`--child-of`); kontekst `alias`/`child`; CyberPanel CLI + OLS fallback, kolizje, rollback, SSL; test `test-site-create.sh`
 - Feat: `health --ram|--cpu --live [--interval N]` — live top (min. 2 s); q lub Ctrl+C → hmtools>

@@ -124,6 +124,26 @@ hm_tab_complete() {
       security|sec)
         if [[ "${prefix}" =~ $re_sec_scan ]]; then
           hm_complete_push_sites "${partial}"
+        elif [[ "${prefix}" =~ (security|sec)[[:space:]]+waf[[:space:]]+mode[[:space:]] ]]; then
+          for m in on detect off --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ (security|sec)[[:space:]]+waf[[:space:]]+rules[[:space:]] ]]; then
+          for m in owasp comodo help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ (security|sec)[[:space:]]+waf[[:space:]]+rule-file[[:space:]] ]]; then
+          for m in disable enable help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ (security|sec)[[:space:]]+waf[[:space:]]+log[[:space:]] ]]; then
+          for m in --domain --ip help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ (security|sec)[[:space:]]+waf[[:space:]] ]]; then
+          for m in status log mode rules rule-file install help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
         elif [[ "${prefix}" =~ (security|sec)[[:space:]]+malware[[:space:]]+schedule[[:space:]] ]]; then
           for m in weekly daily status disable --all-sites --yes help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
@@ -141,7 +161,7 @@ hm_tab_complete() {
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         else
-          for m in status ports ssh fail2ban ban unban scan malware help; do
+          for m in status ports ssh fail2ban ban unban scan malware waf help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi
@@ -157,6 +177,17 @@ hm_tab_complete() {
           done
         else
           for m in scan report quarantine restore help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
+      waf)
+        if [[ "${prefix}" =~ waf[[:space:]]+whitelist[[:space:]] ]]; then
+          for m in list remove --uri --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in whitelist log help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi
