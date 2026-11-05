@@ -9,6 +9,7 @@
 | `webs archive <d>` / `backup archive` | Archiwum Drive → verify → usunięcie z VPS |
 | `site create <d> --php <ver> […]` / `site-create` / `create-site` | Nowa strona (CyberPanel CLI lub OLS); `--ssl`/`--dkim`/`--no-open-basedir` |
 | `site create <child> --child-of <master> --php <ver>` | Child domain (`--path`, `--ssl`) |
+| `wp sites` / `wp install <d> …` | Lista instalacji WP; opcjonalnie `cyberpanel installWordPress` |
 | `use <n\|domena>` | Wejście w kontekst (Tab uzupełnia domenę z listy) |
 | `backup setup` | Instalacja/konfiguracja rclone + Google Drive |
 | `backup config` | Ustaw katalog root backupów na Drive (jednorazowo) |
@@ -75,6 +76,7 @@
 | `openbasedir status\|on\|off` | `php_admin_value open_basedir` w vhconf (blok hmtools) |
 | `alias list\|add\|remove` | Aliasy (parked) — mapa OLS / CyberPanel `createAlias` |
 | `child list` | Domeny podrzędne mastera |
+| `wp` / `wp update` / `wp plugins` / … | WP-CLI jako user strony; snapshot przed update; `search-replace` dry-run; `rollback` |
 | `git` / `deploy` | Status repo, klucz deploy, attach, pull+build+reload, rollback |
 | `backup` | Pełna kopia środowiska (pliki + DB) → Drive |
 | `clean [--lscache]` | Podgląd cache/tmp (+ LSCache) → potwierdzenie |

@@ -263,6 +263,33 @@ hm_tab_complete() {
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
         done
         ;;
+      wp)
+        if [[ "${prefix}" =~ wp[[:space:]]+update[[:space:]] ]]; then
+          for m in core plugins themes all --exclude --no-snapshot --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ wp[[:space:]]+plugin[[:space:]] ]]; then
+          for m in activate deactivate list help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ wp[[:space:]]+maintenance[[:space:]] ]]; then
+          for m in on off status help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ wp[[:space:]]+search-replace[[:space:]] ]]; then
+          for m in --dry-run --execute --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ wp[[:space:]]+install[[:space:]] ]]; then
+          for m in --title --admin-email --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in sites install plugins plugin update maintenance verify search-replace admin-reset cache cron rollback snaps help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
       delete-site|deletesite|destroy-site)
         local re_del_flags='delete-site[[:space:]]+[^[:space:]]+[[:space:]]'
         if [[ "${prefix}" =~ $re_del_flags || "${partial}" == --* ]]; then

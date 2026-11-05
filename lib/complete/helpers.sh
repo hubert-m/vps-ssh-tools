@@ -191,7 +191,7 @@ hm_complete_commands() {
       webs sites list use enter cd delete-site archive-site
       backup disk df ols lsws ssl renew-ssl ssl-renew mysql dbs db cron crons pm2 node apps php
       update update-php php-update chrome chromium headless supervisor docker git deploy firewall fw limits notify
-      services logs
+      services logs wp
       health status security sec applog selflog hmlog detect env
       update-hmtools version ver uninstall-hmtools
       help h
@@ -205,7 +205,7 @@ hm_complete_commands() {
         cmds+=("${k}")
       done
     fi
-    cmds+=(info size logs clean htaccess proxy perms back dbs renew-ssl delete-site archive supervisor docker vhost rewrite headers cache git deploy limits suspend unsuspend openbasedir alias child)
+    cmds+=(info size logs clean htaccess proxy perms back dbs renew-ssl delete-site archive supervisor docker vhost rewrite headers cache git deploy limits suspend unsuspend openbasedir alias child wp)
   fi
   # unikalne + filtr partial
   local seen="|"

@@ -16,6 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [v0.1.11]
 
+- Feat: `wp` — WP-CLI (runuser + LSPHP); update ze snapshotem/smoke/rollback; search-replace dry-run; test `test-wp-cli.sh`
 - Feat: `site create` / child / `alias` — CyberPanel `createWebsite|createChild` + OLS fallback; kolizje/rollback/SSL; test `test-site-create.sh`
 - Feat: `health --ram|--cpu --live [--interval N]` — live top (min. 2 s; q/Ctrl+C)
 - Feat: `services` + `logs system` — status/restart stosu; logi mail/ftp/auth/… (Debian+RHEL)

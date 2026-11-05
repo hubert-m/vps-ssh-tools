@@ -237,12 +237,12 @@ hm_run_cmd_redacted() {
       prev="${a}"
       continue
     fi
-    if [[ "${a}" =~ ^--(password|pass|passwd)= ]]; then
+    if [[ "${a}" =~ ^--(password|pass|passwd|passWord|adminPassword)= ]]; then
       out+=("${a%%=*}=***")
       prev="${a}"
       continue
     fi
-    if [[ "${a}" =~ ^--(password|pass|passwd)$ || "${a}" == "-p" ]]; then
+    if [[ "${a}" =~ ^--(password|pass|passwd|passWord|adminPassword)$ || "${a}" == "-p" ]]; then
       out+=("${a}")
       redact_next=1
       prev="${a}"
