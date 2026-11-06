@@ -225,10 +225,18 @@ hm_ols_vhost_apply_tmp() {
     )
   fi
 
-  if ! hm_confirm_plan "${title}" \
-    "Błąd składni → automatyczny rollback z kopii." \
-    "${plan_steps[@]}"; then
-    return 0
+  if [[ "${HM_OLS_VHOST_YES:-0}" == "1" ]]; then
+    if ! hm_confirm_plan "${title}" \
+      "Błąd składni → automatyczny rollback z kopii." \
+      --yes "${plan_steps[@]}"; then
+      return 0
+    fi
+  else
+    if ! hm_confirm_plan "${title}" \
+      "Błąd składni → automatyczny rollback z kopii." \
+      "${plan_steps[@]}"; then
+      return 0
+    fi
   fi
 
   local stamp bak before_epoch err_out

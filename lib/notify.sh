@@ -29,16 +29,21 @@ hm_notify_is_valid_email() {
 }
 
 hm_notify_is_valid_webhook() {
-  local u="${1:-}"
-  # https://… lub http://127.0.0.1|localhost — bez spacji / shell meta
+  local u="${1:-}" i c
+  # Defense-in-depth: conf jest source'owany — allowlist znaków; zapis przez printf %q.
   [[ -n "${u}" ]] || return 1
-  case "${u}" in
-    *[[:space:]]*|*'`'*|*'$('*|*';'*|*'|'*) return 1 ;;
-  esac
+  [[ "${#u}" -le 2048 ]] || return 1
+  # pozwól tylko URL-safe (w tym & = ? #); bez " ' \ $ ` ; | ( ) < > { } * spacji
+  for ((i = 0; i < ${#u}; i++)); do
+    c="${u:i:1}"
+    case "${c}" in
+      [A-Za-z0-9._~:/?#@!%=+-]|'['|']'|','|'&') ;;
+      *) return 1 ;;
+    esac
+  done
   case "${u}" in
     https://*)
-      # prosta walidacja: brak białych znaków, min. host
-      [[ "${u}" == https://*.* || "${u}" == https://*/* ]] || [[ "${#u}" -gt 10 ]]
+      [[ "${#u}" -gt 10 ]]
       return $?
       ;;
     http://127.0.0.1/*|http://127.0.0.1:*|http://localhost/*|http://localhost:*|http://127.0.0.1|http://localhost)
@@ -164,13 +169,23 @@ hm_notify_send_webhook() {
   # Uniwersalny JSON (Slack/Discord/ntfy-friendly text)
   payload="$(printf '{"text":"[hmtools/%s] %s\\n%s","level":"%s","title":"%s","body":"%s"}' \
     "${jl}" "${te}" "${tb}" "${jl}" "${te}" "${tb}")"
-  # URL NIGDY do logu — curl bez -v; hm_file_log bez URL
+  # URL NIGDY do logu ani argv `ps` — curl -K ze stdin (plik 0600)
   hm_file_log INFO "NOTIFY_WEBHOOK: sending (url redacted)" 2>/dev/null || true
-  curl --max-time 10 -sS -o /dev/null -w '' \
-    -H 'Content-Type: application/json' \
-    -d "${payload}" \
-    "${url}" >/dev/null 2>&1
-  return $?
+  local cfg
+  cfg="$(hm_mktemp .curl-cfg)"
+  chmod 600 "${cfg}" 2>/dev/null || true
+  {
+    printf 'url = "%s"\n' "${url//\\/\\\\}"
+    printf 'max-time = "10"\n'
+    printf 'silent\n'
+    printf 'show-error\n'
+    printf 'header = "Content-Type: application/json"\n'
+  } > "${cfg}"
+  # -d @- czyta payload ze stdin; URL tylko w pliku cfg
+  local rc=0
+  printf '%s' "${payload}" | curl -K "${cfg}" -sS -o /dev/null -d @- >/dev/null 2>&1 || rc=$?
+  rm -f "${cfg}" 2>/dev/null || true
+  return "${rc}"
 }
 
 # hm_notify <level> <title> <body> [type_key]

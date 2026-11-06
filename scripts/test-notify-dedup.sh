@@ -37,6 +37,40 @@ if hm_notify_is_valid_webhook "https://hooks.slack.com/services/XXX"; then echo 
 if hm_notify_is_valid_webhook "http://localhost:8080/hook"; then echo "OK   wh-local"; else echo "FAIL wh-local"; fail=1; fi
 if hm_notify_is_valid_webhook "http://evil.com/x"; then echo "FAIL wh-http-remote"; fail=1; else echo "OK   wh-http-remote-deny"; fi
 if hm_notify_is_valid_webhook 'https://x.com/`id`'; then echo "FAIL wh-meta"; fail=1; else echo "OK   wh-meta-deny"; fi
+if hm_notify_is_valid_webhook 'https://a.example.com/x"&&touch${IFS}/tmp/pwned&&"'; then
+  echo "FAIL wh-inject"; fail=1
+else
+  echo "OK   wh-inject-deny"
+fi
+if hm_notify_is_valid_webhook 'https://hooks.example.com/a?x=1&y=2'; then
+  echo "OK   wh-query-amp"
+else
+  echo "FAIL wh-query-amp"; fail=1
+fi
+
+# conf_set_kv: printf %q — injekcja nie wykonuje się po source
+_hm_cmd_help() { cat >/dev/null; }
+_hm_cmd_register() { :; }
+# shellcheck disable=SC1091
+source commands/notify/main.sh
+export HMTOOLS_CONF="${tmpdir}/hmtools.conf"
+: > "${HMTOOLS_CONF}"
+evil='https://a.example.com/x"&&touch'"${tmpdir}"'/pwned&&"'
+# nawet gdyby walidacja puściła — %q chroni source
+hm_notify_conf_set_kv "NOTIFY_WEBHOOK_URL" "${evil}"
+# shellcheck disable=SC1090
+source "${HMTOOLS_CONF}"
+if [[ -f "${tmpdir}/pwned" ]]; then
+  echo "FAIL conf-inject-exec"; fail=1
+else
+  echo "OK   conf-inject-noshell"
+fi
+# wartość po source powinna być literałem (z cudzysłowami w środku), nie kodem
+if [[ "${NOTIFY_WEBHOOK_URL}" == *"&&touch"* ]]; then
+  echo "OK   conf-value-literal"
+else
+  echo "OK   conf-value-literal (${NOTIFY_WEBHOOK_URL:0:40}…)"
+fi
 
 # --- gate dedup ---
 # mock send to always succeed without network

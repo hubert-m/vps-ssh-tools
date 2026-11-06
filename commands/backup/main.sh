@@ -228,11 +228,17 @@ rc=${_bk_rc}
 Ostatnie linie logu (${_logf}):
 ${_tail:-"(brak logu cron)"}" \
             "backup.full"
-        elif [[ "${BACKUP_NOTIFY_SUCCESS:-0}" == "1" ]]; then
-          hm_notify ok "Backup full OK" \
-            "host=$(hostname -f 2>/dev/null || hostname)
+        else
+          # Zawsze czyść dedup po sukcesie (fail–OK–fail w 24h znów alarmuje).
+          # Opcjonalnie wyślij recovery/OK gdy BACKUP_NOTIFY_SUCCESS=1.
+          if [[ "${BACKUP_NOTIFY_SUCCESS:-0}" == "1" ]]; then
+            hm_notify ok "Backup full OK" \
+              "host=$(hostname -f 2>/dev/null || hostname)
 Pełny backup zakończony pomyślnie." \
-            "backup.full"
+              "backup.full"
+          elif declare -F hm_notify_mark >/dev/null 2>&1; then
+            hm_notify_mark "backup.full" "ok"
+          fi
         fi
       fi
       return "${_bk_rc}"

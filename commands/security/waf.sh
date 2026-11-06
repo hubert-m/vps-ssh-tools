@@ -471,13 +471,26 @@ hm_waf_rule_file_toggle() {
 # --- per-site whitelist ---
 
 hm_waf_exclusion_id() {
-  # unikalne id SecRule 9xxxxxx z domeny+rule
-  local domain="$1" rule="$2"
-  local h
-  h="$(printf '%s:%s' "${domain}" "${rule}" | cksum 2>/dev/null | awk '{print $1}')"
+  # ID użytkownika poza zakresem OWASP CRS (konwencja CRS: 1_000_000+)
+  local domain="$1" rule="$2" uri="${3:-}"
+  local h excl used eid n
+  h="$(printf '%s:%s:%s' "${domain}" "${rule}" "${uri}" | cksum 2>/dev/null | awk '{print $1}')"
   [[ -n "${h}" ]] || h=1
-  # 910000–919999
-  printf '91%04d' "$((h % 10000))"
+  eid="$((1000000 + (h % 900000)))" # 1000000–1899999
+  excl="$(hm_waf_exclusions_file)"
+  used="|"
+  if [[ -f "${excl}" ]]; then
+    while IFS= read -r n; do
+      [[ -n "${n}" ]] && used+="${n}|"
+    done < <(grep -oE 'id:[0-9]+' "${excl}" 2>/dev/null | sed 's/^id://' || true)
+  fi
+  n=0
+  while [[ "${used}" == *"|${eid}|"* && "${n}" -lt 500 ]]; do
+    eid=$((eid + 1))
+    [[ "${eid}" -gt 1999999 ]] && eid=1000000
+    n=$((n + 1))
+  done
+  printf '%s' "${eid}"
 }
 
 hm_waf_ensure_exclusions_include() {
@@ -530,21 +543,30 @@ EOF
 }
 
 hm_waf_whitelist_list_ids() {
-  local domain="$1" conf excl
-  conf="$(hm_vhost_conf_path "${domain}" 2>/dev/null || true)"
-  if [[ -n "${conf}" && -f "${conf}" ]] && hm_ols_vhost_has_block "${conf}" "waf" 2>/dev/null; then
-    awk '
-      /# hmtools:waf BEGIN/{p=1;next}
-      /# hmtools:waf END/{p=0;next}
-      p && /SecRuleRemoveById/ { print $2 }
-    ' "${conf}"
-  fi
+  # Zwraca ruleId lub ruleId@uri (źródło: exclusions; fallback vhconf).
+  local domain="$1" excl
   excl="$(hm_waf_exclusions_file)"
   if [[ -f "${excl}" ]]; then
     awk -v d="${domain}" '
-      $0 ~ ("# --- " d " BEGIN ---") {p=1;next}
-      $0 ~ ("# --- " d " END ---") {p=0;next}
-      p && /ctl:ruleRemoveById=/ {
+      $0 ~ ("# --- " d " BEGIN ---") {p=1; next}
+      $0 ~ ("# --- " d " END ---") {p=0; next}
+      !p { next }
+      /SecRule REQUEST_URI/ {
+        uri=""
+        if (match($0, /@beginsWith[[:space:]]+[^"]+/)) {
+          uri=substr($0, RSTART, RLENGTH)
+          sub(/^@beginsWith[[:space:]]+/, "", uri)
+        }
+        getline
+        if (match($0, /ctl:ruleRemoveById=[0-9]+/)) {
+          id=substr($0, RSTART, RLENGTH)
+          sub(/ctl:ruleRemoveById=/, "", id)
+          if (uri != "") print id "@" uri
+          else print id
+        }
+        next
+      }
+      /ctl:ruleRemoveById=/ {
         line=$0
         while (match(line, /ctl:ruleRemoveById=[0-9]+/)) {
           id=substr(line, RSTART, RLENGTH)
@@ -554,14 +576,30 @@ hm_waf_whitelist_list_ids() {
         }
       }
     ' "${excl}"
+    return 0
+  fi
+  local conf
+  conf="$(hm_vhost_conf_path "${domain}" 2>/dev/null || true)"
+  if [[ -n "${conf}" && -f "${conf}" ]] && hm_ols_vhost_has_block "${conf}" "waf" 2>/dev/null; then
+    awk '
+      /# hmtools:waf BEGIN/{p=1;next}
+      /# hmtools:waf END/{p=0;next}
+      p && /SecRuleRemoveById/ { print $2 }
+    ' "${conf}"
   fi
 }
 
 hm_waf_whitelist_apply() {
   local domain="$1"
   shift || true
+  local yes=0
+  if [[ "${1:-}" == "--yes" || "${1:-}" == "-y" ]]; then
+    yes=1
+    shift || true
+  fi
+  [[ "${HMTOOLS_WAF_YES:-0}" == "1" ]] && yes=1
   local -a ids=("$@")
-  local conf tmp body excl eid r uri_part=""
+  local conf tmp body excl eid
   # ids may include uri tagged as id@uri
   conf="$(hm_vhost_conf_path "${domain}" 2>/dev/null || hm_ols_vhost_conf_for "${domain}" 2>/dev/null || true)"
   [[ -n "${conf}" && -f "${conf}" ]] || {
@@ -569,35 +607,39 @@ hm_waf_whitelist_apply() {
     return 1
   }
 
-  local -a plain_ids=()
   local item id uri
   declare -A uri_for=()
+  local -a order=()
+  local seen="|"
   for item in "${ids[@]}"; do
     [[ -n "${item}" ]] || continue
     if [[ "${item}" == *@* ]]; then
       id="${item%%@*}"
       uri="${item#*@}"
-      plain_ids+=("${id}")
-      uri_for["${id}"]="${uri}"
     else
-      plain_ids+=("${item}")
+      id="${item}"
+      uri=""
+    fi
+    [[ -n "${id}" ]] || continue
+    if [[ "${seen}" != *"|${id}|"* ]]; then
+      seen+="${id}|"
+      order+=("${id}")
+    fi
+    # Późniejszy wpis z URI wygrywa tylko gdy podano URI; pusty nie kasuje istniejącego URI.
+    if [[ -n "${uri}" ]]; then
+      uri_for["${id}"]="${uri}"
+    elif [[ -z "${uri_for[${id}]+x}" ]]; then
+      uri_for["${id}"]=""
     fi
   done
-  # uniq
-  local -a uniq=()
-  local seen="|"
-  for id in "${plain_ids[@]}"; do
-    [[ "${seen}" == *"|${id}|"* ]] && continue
-    seen+="${id}|"
-    uniq+=("${id}")
-  done
 
-  # exclusions file (działa na OLS)
-  hm_waf_ensure_exclusions_include
   excl="$(hm_waf_exclusions_file)"
-  local tmp_excl
+  mkdir -p "$(dirname "${excl}")"
+  [[ -f "${excl}" ]] || printf '# hmtools waf exclusions — zarządzane przez: waf whitelist\n' > "${excl}"
+
+  local tmp_excl new_excl
   tmp_excl="$(hm_mktemp .excl)"
-  # usuń stary blok domeny
+  new_excl="$(hm_mktemp .exclnew)"
   awk -v d="${domain}" '
     $0 ~ ("# --- " d " BEGIN ---") {skip=1; next}
     $0 ~ ("# --- " d " END ---") {skip=0; next}
@@ -610,9 +652,9 @@ hm_waf_whitelist_apply() {
     echo "# --- ${domain} BEGIN ---"
     local esc_dom
     esc_dom="$(printf '%s' "${domain}" | sed 's/\./\\./g')"
-    for id in "${uniq[@]}"; do
-      eid="$(hm_waf_exclusion_id "${domain}" "${id}")"
+    for id in "${order[@]}"; do
       uri="${uri_for[${id}]:-}"
+      eid="$(hm_waf_exclusion_id "${domain}" "${id}" "${uri}")"
       if [[ -n "${uri}" ]]; then
         printf 'SecRule SERVER_NAME "@rx ^(?i)(www\\.)?%s$" \\\n' "${esc_dom}"
         printf '  "id:%s,phase:1,pass,nolog,chain"\n' "${eid}"
@@ -624,12 +666,10 @@ hm_waf_whitelist_apply() {
       fi
     done
     echo "# --- ${domain} END ---"
-  } > "${excl}.new"
-  cat "${excl}.new" > "${excl}"
-  rm -f "${tmp_excl}" "${excl}.new"
+  } > "${new_excl}"
 
-  # vhconf block (dokumentacja + SecRuleRemoveById jak w zadaniu)
-  body="$(hm_waf_vhconf_block_body "${domain}" "${uniq[@]}")"
+  # vhconf block (dokumentacja + SecRuleRemoveById)
+  body="$(hm_waf_vhconf_block_body "${domain}" "${order[@]}")"
   tmp="$(hm_mktemp .vhconf)"
   hm_ols_vhost_strip_block "${conf}" "waf" "${tmp}"
   {
@@ -640,15 +680,64 @@ hm_waf_whitelist_apply() {
   } > "${tmp}.new"
   mv "${tmp}.new" "${tmp}"
 
+  local -a plan=(
+    "Kopia ${excl} + zapis SecRule SERVER_NAME / REQUEST_URI"
+    "Aktualizacja # hmtools:waf w vhconf (SecRuleRemoveById)"
+    "Include exclusions w CRS/modsec (jeśli brak)"
+    "ols reload"
+  )
+  if [[ "${yes}" -eq 1 ]]; then
+    hm_confirm_plan "waf whitelist — ${domain}" \
+      "Błąd → rollback vhconf i exclusions." --yes "${plan[@]}" || {
+      rm -f "${tmp}" "${tmp_excl}" "${new_excl}"
+      return 1
+    }
+  else
+    hm_confirm_plan "waf whitelist — ${domain}" \
+      "Błąd → rollback vhconf i exclusions." "${plan[@]}" || {
+      rm -f "${tmp}" "${tmp_excl}" "${new_excl}"
+      return 1
+    }
+  fi
+
+  local excl_bak conf_sum_before
+  excl_bak="${excl}.hmtools.bak.$$"
+  cp -a "${excl}" "${excl_bak}" 2>/dev/null || true
+  conf_sum_before="$(cksum "${conf}" 2>/dev/null | awk '{print $1}')"
+
+  # 1) exclusions dopiero PO potwierdzeniu
+  if ! cat "${new_excl}" > "${excl}"; then
+    hm_err "Nie udało się zapisać exclusions."
+    rm -f "${tmp}" "${tmp_excl}" "${new_excl}" "${excl_bak}"
+    return 1
+  fi
+  hm_waf_ensure_exclusions_include || true
+
+  # 2) vhconf (bez drugiego promptu)
+  export HM_OLS_VHOST_YES=1
   if ! hm_ols_vhost_apply_tmp "${domain}" "${conf}" "${tmp}" \
     "waf whitelist — ${domain}" \
     "Aktualizacja # hmtools:waf w vhconf (SecRuleRemoveById)" \
-    "Aktualizacja ${excl} (SecRule SERVER_NAME + ctl:ruleRemoveById)" \
     "ols reload"; then
-    rm -f "${tmp}"
+    unset HM_OLS_VHOST_YES
+    hm_warn "Rollback exclusions z kopii."
+    [[ -f "${excl_bak}" ]] && cat "${excl_bak}" > "${excl}"
+    rm -f "${tmp}" "${tmp_excl}" "${new_excl}" "${excl_bak}"
     return 1
   fi
-  rm -f "${tmp}"
+  unset HM_OLS_VHOST_YES
+
+  local conf_sum_after
+  conf_sum_after="$(cksum "${conf}" 2>/dev/null | awk '{print $1}')"
+  if [[ "${conf_sum_before}" == "${conf_sum_after}" ]] \
+    && ! grep -qF '# hmtools:waf BEGIN' "${conf}" 2>/dev/null; then
+    # apply_tmp anulowany mimo --yes? przywróć exclusions
+    [[ -f "${excl_bak}" ]] && cat "${excl_bak}" > "${excl}"
+    rm -f "${tmp}" "${tmp_excl}" "${new_excl}" "${excl_bak}"
+    return 1
+  fi
+
+  rm -f "${tmp}" "${tmp_excl}" "${new_excl}" "${excl_bak}"
   return 0
 }
 
@@ -697,41 +786,65 @@ hm_waf_whitelist_cmd() {
         return 1
       }
       local -a keep=()
-      local id
+      local id base
       while IFS= read -r id; do
-        [[ -n "${id}" && "${id}" != "${rid}" ]] && keep+=("${id}")
+        [[ -n "${id}" ]] || continue
+        base="${id%%@*}"
+        [[ "${base}" != "${rid}" ]] && keep+=("${id}")
       done < <(hm_waf_whitelist_list_ids "${domain}" | sort -u)
-      if [[ "${yes}" -eq 1 ]]; then
-        # apply bez podwójnego confirm — hm_ols_vhost_apply_tmp ma własny
-        HMTOOLS_WAF_YES=1
-      fi
       if [[ "${#keep[@]}" -eq 0 ]]; then
-        # wyczyść całkowicie
-        local conf tmp excl
+        local conf tmp excl new_excl excl_bak
         conf="$(hm_vhost_conf_path "${domain}" 2>/dev/null || true)"
         [[ -n "${conf}" ]] || return 1
         tmp="$(hm_mktemp .vhconf)"
         hm_ols_vhost_strip_block "${conf}" "waf" "${tmp}"
         excl="$(hm_waf_exclusions_file)"
+        new_excl="$(hm_mktemp .excl)"
         if [[ -f "${excl}" ]]; then
-          local te
-          te="$(hm_mktemp .excl)"
           awk -v d="${domain}" '
             $0 ~ ("# --- " d " BEGIN ---") {skip=1; next}
             $0 ~ ("# --- " d " END ---") {skip=0; next}
             skip { next }
             { print }
-          ' "${excl}" > "${te}"
-          cat "${te}" > "${excl}"
-          rm -f "${te}"
+          ' "${excl}" > "${new_excl}"
+        else
+          : > "${new_excl}"
         fi
-        hm_ols_vhost_apply_tmp "${domain}" "${conf}" "${tmp}" \
+        local -a plan=(
+          "Usunięcie reguły ${rid} / pusty whitelist"
+          "Aktualizacja exclusions + vhconf"
+          "ols reload"
+        )
+        if [[ "${yes}" -eq 1 ]]; then
+          hm_confirm_plan "waf whitelist remove ${rid} — ${domain}" "" --yes "${plan[@]}" || {
+            rm -f "${tmp}" "${new_excl}"; return 1
+          }
+        else
+          hm_confirm_plan "waf whitelist remove ${rid} — ${domain}" "" "${plan[@]}" || {
+            rm -f "${tmp}" "${new_excl}"; return 1
+          }
+        fi
+        excl_bak="${excl}.hmtools.bak.$$"
+        [[ -f "${excl}" ]] && cp -a "${excl}" "${excl_bak}" 2>/dev/null || true
+        cat "${new_excl}" > "${excl}" 2>/dev/null || true
+        export HM_OLS_VHOST_YES=1
+        if ! hm_ols_vhost_apply_tmp "${domain}" "${conf}" "${tmp}" \
           "waf whitelist remove ${rid} — ${domain}" \
           "Usunięcie reguły ${rid} / pusty whitelist" \
-          "ols reload"
-        rm -f "${tmp}"
+          "ols reload"; then
+          unset HM_OLS_VHOST_YES
+          [[ -f "${excl_bak}" ]] && cat "${excl_bak}" > "${excl}"
+          rm -f "${tmp}" "${new_excl}" "${excl_bak}"
+          return 1
+        fi
+        unset HM_OLS_VHOST_YES
+        rm -f "${tmp}" "${new_excl}" "${excl_bak}"
       else
-        hm_waf_whitelist_apply "${domain}" "${keep[@]}"
+        if [[ "${yes}" -eq 1 ]]; then
+          hm_waf_whitelist_apply "${domain}" --yes "${keep[@]}"
+        else
+          hm_waf_whitelist_apply "${domain}" "${keep[@]}"
+        fi
       fi
       return $?
       ;;
@@ -775,23 +888,50 @@ hm_waf_whitelist_cmd() {
   }
 
   local -a cur=()
-  local id
+  local id base existing_uri
   while IFS= read -r id; do
     [[ -n "${id}" ]] && cur+=("${id}")
   done < <(hm_waf_whitelist_list_ids "${domain}" | sort -u)
-  # idempotent: już jest?
+  # idempotent / aktualizacja URI dla tego samego ruleId
+  local -a next=()
+  local found=0
   for id in "${cur[@]:-}"; do
-    if [[ "${id}" == "${rid}" ]]; then
-      hm_info "Reguła ${rid} już na whiteliście — brak zmian."
-      return 0
+    base="${id%%@*}"
+    if [[ "${id}" == *@* ]]; then existing_uri="${id#*@}"; else existing_uri=""; fi
+    if [[ "${base}" == "${rid}" ]]; then
+      found=1
+      if [[ -n "${uri}" ]]; then
+        if [[ "${existing_uri}" == "${uri}" ]]; then
+          hm_info "Reguła ${rid} (@ ${uri}) już na whiteliście — brak zmian."
+          return 0
+        fi
+        next+=("${rid}@${uri}")
+      else
+        if [[ -z "${existing_uri}" ]]; then
+          hm_info "Reguła ${rid} już na whiteliście — brak zmian."
+          return 0
+        fi
+        # bez --uri przy istniejącym @uri → zostaw (nie rozszerzaj na całą domenę)
+        next+=("${id}")
+        hm_info "Reguła ${rid} już z zakresem URI (${existing_uri}) — brak zmian (podaj ten sam --uri lub remove)."
+        return 0
+      fi
+    else
+      next+=("${id}")
     fi
   done
-  if [[ -n "${uri}" ]]; then
-    cur+=("${rid}@${uri}")
-  else
-    cur+=("${rid}")
+  if [[ "${found}" -eq 0 ]]; then
+    if [[ -n "${uri}" ]]; then
+      next+=("${rid}@${uri}")
+    else
+      next+=("${rid}")
+    fi
   fi
-  hm_waf_whitelist_apply "${domain}" "${cur[@]}"
+  if [[ "${yes}" -eq 1 ]]; then
+    hm_waf_whitelist_apply "${domain}" --yes "${next[@]}"
+  else
+    hm_waf_whitelist_apply "${domain}" "${next[@]}"
+  fi
 }
 
 cmd_waf() {

@@ -12,6 +12,8 @@ Użycie:
   limits show                  Szczegóły bieżącej strony
 
 CPU/RAM/IO → systemctl set-property user-<uid>.slice (+ drop-in 50-hmtools.conf).
+Na OpenLiteSpeed (lsphp w system.slice): dodatkowo memSoft/HardLimit + procSoft/Hard
+w extprocessor vhconf (bo user.slice nie obejmuje lsphp bez LSE cgroups).
 Dysk → setquota gdy usrquota na /home; inaczej tylko raport.
 EOF
 
@@ -24,6 +26,110 @@ hm_limits_ols_cgroups_enabled() {
   [[ -f "${conf}" ]] || return 1
   grep -qiE '^[[:space:]]*cgroups[[:space:]]+1([[:space:]]|$)' "${conf}" 2>/dev/null \
     || grep -qiE 'CGIRLimit' "${conf}" 2>/dev/null
+}
+
+# Czy żywy lsphp usera jest w user-<uid>.slice (LSE / OLS cgroups)?
+# 0 = tak; 1 = nie / brak procesu / nieznane
+hm_limits_lsphp_in_user_slice() {
+  local user="$1" uid pid cg
+  uid="$(hm_limits_uid_for_user "${user}")" || return 1
+  pid="$(pgrep -u "${user}" -x lsphp 2>/dev/null | head -1 || true)"
+  [[ -n "${pid}" ]] || pid="$(pgrep -u "${user}" lsphp 2>/dev/null | head -1 || true)"
+  [[ -n "${pid}" && -r "/proc/${pid}/cgroup" ]] || return 1
+  cg="$(tr '\n' ' ' < "/proc/${pid}/cgroup" 2>/dev/null || true)"
+  [[ "${cg}" == *"user-${uid}.slice"* ]]
+}
+
+hm_limits_bytes_to_ols_m() {
+  local b="${1:-0}" m
+  [[ "${b}" =~ ^[0-9]+$ ]] || return 1
+  m=$(( (b + 1048576 - 1) / 1048576 ))
+  [[ "${m}" -lt 1 ]] && m=1
+  printf '%sM' "${m}"
+}
+
+# Ustaw memSoft/Hard + procSoft/Hard w extprocessor vhconf (OLS limituje lsphp).
+# mem_b puste = nie ruszaj mem*; tasks puste = nie ruszaj proc*; clear=1 → domyślne 2047M/400/500
+hm_limits_apply_ols_ext_limits() {
+  local domain="$1" user="$2" mem_b="${3:-}" tasks="${4:-}" clear="${5:-0}"
+  local conf tmp mem_s="" soft_p="" hard_p=""
+  conf="$(hm_vhost_conf_path "${domain}" 2>/dev/null || true)"
+  [[ -n "${conf}" && -f "${conf}" ]] || {
+    hm_warn "Brak vhconf dla ${domain} — pomijam limity extprocessor OLS."
+    return 1
+  }
+  if [[ "${clear}" == "1" ]]; then
+    mem_s="2047M"
+    soft_p="400"
+    hard_p="500"
+  else
+    [[ -n "${mem_b}" ]] && mem_s="$(hm_limits_bytes_to_ols_m "${mem_b}")"
+    if [[ -n "${tasks}" ]]; then
+      soft_p="${tasks}"
+      hard_p="$((tasks + tasks / 4))"
+      [[ "${hard_p}" -le "${tasks}" ]] && hard_p=$((tasks + 1))
+    fi
+  fi
+  [[ -n "${mem_s}" || -n "${soft_p}" ]] || return 0
+
+  tmp="$(hm_mktemp .vhconf-limits)"
+  awk -v user="${user}" -v mem="${mem_s}" -v ps="${soft_p}" -v ph="${hard_p}" '
+    BEGIN { inext=0; matched=0 }
+    tolower($1)=="extprocessor" {
+      name=$2; gsub(/[{}]/,"",name)
+      inext = (name==user || name=="lsphp" || name ~ /^lsphp/)
+      if (inext) matched=1
+      print; next
+    }
+    inext && /^[[:space:]]*}/ { inext=0; print; next }
+    inext && mem!="" && $1=="memSoftLimit" {
+      printf "  memSoftLimit            %s\n", mem; next
+    }
+    inext && mem!="" && $1=="memHardLimit" {
+      printf "  memHardLimit            %s\n", mem; next
+    }
+    inext && ps!="" && $1=="procSoftLimit" {
+      printf "  procSoftLimit           %s\n", ps; next
+    }
+    inext && ph!="" && $1=="procHardLimit" {
+      printf "  procHardLimit           %s\n", ph; next
+    }
+    { print }
+    END { if (matched==0) exit 2 }
+  ' "${conf}" > "${tmp}" || {
+    local rc=$?
+    rm -f "${tmp}"
+    if [[ "${rc}" -eq 2 ]]; then
+      hm_warn "Brak extprocessor ${user}/lsphp w vhconf — pomijam limity OLS."
+      return 1
+    fi
+    return 1
+  }
+  cp -a "${conf}" "${conf}.hmtools.limits.bak" 2>/dev/null || true
+  if ! cat "${tmp}" > "${conf}"; then
+    hm_err "Zapis vhconf (limits) nieudany."
+    rm -f "${tmp}"
+    return 1
+  fi
+  rm -f "${tmp}"
+  # oznacznik dla clear / audytu (tylko przy ustawianiu, nie przy clear)
+  if [[ "${clear}" != "1" ]]; then
+    if ! grep -q '# hmtools:limits-ols' "${conf}" 2>/dev/null; then
+      printf '\n# hmtools:limits-ols applied\n' >> "${conf}"
+    fi
+  else
+    local tmpc
+    tmpc="$(hm_mktemp .vhconf-strip)"
+    grep -v '# hmtools:limits-ols' "${conf}" > "${tmpc}" 2>/dev/null && cat "${tmpc}" > "${conf}"
+    rm -f "${tmpc}"
+  fi
+  if declare -F hm_ols_reload >/dev/null 2>&1; then
+    hm_ols_reload 2>/dev/null || hm_warn "ols reload nieudany — limity vhconf zapisane, wymagany ręczny reload."
+  elif hm_have_cmd systemctl; then
+    systemctl reload lsws 2>/dev/null || systemctl reload lshttpd 2>/dev/null || true
+  fi
+  hm_ok "OLS extprocessor: mem=${mem_s:-(bez zmian)} procSoft=${soft_p:-(bez zmian)} (${domain})"
+  return 0
 }
 
 hm_limits_quota_available() {
@@ -155,7 +261,14 @@ hm_limits_check() {
   if hm_limits_ols_cgroups_enabled; then
     hm_ok "OLS cgroups: włączone w httpd_config (lsphp w cgroup usera)"
   else
-    hm_warn "OLS cgroups: nie wykryto (cgroups 1 / CGIRLimit). Limity slice działają dla procesów usera; lsphp może wymagać włączenia w OLS."
+    hm_warn "OLS cgroups: nie wykryto (cgroups 1 / CGIRLimit). user.slice NIE obejmuje lsphp OpenLiteSpeed — `limits set --mem/--tasks` ustawi też limity w extprocessor vhconf."
+  fi
+  if [[ -n "${HM_SITE_USER:-}" ]]; then
+    if hm_limits_lsphp_in_user_slice "${HM_SITE_USER}"; then
+      hm_ok "lsphp ${HM_SITE_USER}: w user-$(hm_limits_uid_for_user "${HM_SITE_USER}").slice"
+    else
+      hm_warn "lsphp ${HM_SITE_USER}: poza user.slice (lub brak procesu) — limity CPU/IO na slice nie ograniczą lsphp; używane limity OLS extprocessor dla --mem/--tasks."
+    fi
   fi
 }
 
@@ -321,21 +434,51 @@ hm_limits_set() {
     return 1
   fi
 
+  local lsphp_in_slice=0
+  if hm_limits_lsphp_in_user_slice "${user}"; then
+    lsphp_in_slice=1
+  fi
+  local need_ols=0
+  if [[ -n "${mem}${tasks}" ]] && [[ "${lsphp_in_slice}" -eq 0 ]]; then
+    need_ols=1
+    steps+=("OLS extprocessor vhconf: memSoft/HardLimit / procSoft/Hard (lsphp poza user.slice)")
+  fi
+  if [[ -n "${cpu}${io}" ]] && [[ "${lsphp_in_slice}" -eq 0 ]]; then
+    steps+=("UWAGA: --cpu/--io na user.slice NIE ograniczy lsphp OpenLiteSpeed (zostaje dla sesji SSH/cron)" )
+  fi
+
   steps+=("Drop-in: $(hm_limits_slice_dropin_file "${uid}")")
   steps+=("Bez wpływu na root/system i innych userów stron")
 
+  local plan_warn="Slice dotyczy procesów w user-${uid}.slice (SSH/cron; lsphp tylko przy LSE/OLS cgroups)."
+  if [[ "${need_ols}" -eq 1 ]]; then
+    plan_warn="lsphp poza user.slice — --mem/--tasks także w extprocessor vhconf OLS."
+  fi
+
   if [[ "${auto_yes}" -eq 1 ]]; then
-    hm_confirm_plan "limits set — ${HM_SITE_DOMAIN}" "" --yes "${steps[@]}" || return 1
+    hm_confirm_plan "limits set — ${HM_SITE_DOMAIN}" "${plan_warn}" --yes "${steps[@]}" || return 1
   else
     hm_confirm_plan "limits set — ${HM_SITE_DOMAIN} (user=${user} uid=${uid})" \
-      "Limity dotyczą procesów użytkownika strony (lsphp/PM2)." \
+      "${plan_warn}" \
       "${steps[@]}" || return 0
   fi
 
   if [[ "${#drop_lines[@]}" -gt 0 ]]; then
     hm_limits_write_dropin "${uid}" "${drop_lines[@]}" || return 1
     hm_limits_apply_slice_props "${uid}" "${set_props[@]}"
-    hm_ok "Cgroup: zapisano limity dla user-${uid}.slice"
+    if [[ "${lsphp_in_slice}" -eq 1 ]]; then
+      hm_ok "Cgroup: zapisano limity dla user-${uid}.slice (lsphp w slice — OK)"
+    else
+      hm_ok "Cgroup: zapisano limity dla user-${uid}.slice (sesje SSH/cron; lsphp OLS → osobno)"
+      if [[ -n "${cpu}${io}" ]]; then
+        hm_warn "--cpu/--io nie ograniczą lsphp OpenLiteSpeed (proces w system.slice/lsws)."
+      fi
+    fi
+  fi
+
+  if [[ "${need_ols}" -eq 1 ]]; then
+    hm_limits_apply_ols_ext_limits "${HM_SITE_DOMAIN}" "${user}" "${mem_b:-}" "${tasks:-}" 0 \
+      || hm_warn "Nie udało się ustawić limitów OLS extprocessor."
   fi
 
   if [[ -n "${disk_b}" || -n "${inode_n}" ]]; then
@@ -371,11 +514,19 @@ hm_limits_clear() {
   uid="$(hm_limits_uid_for_user "${user}")" || return 1
   local f
   f="$(hm_limits_slice_dropin_file "${uid}")"
+  local -a clear_steps=(
+    "Usunięcie ${f}"
+    "systemctl set-property …=infinity / reset"
+    "Opcjonalnie: setquota 0 0 0 0 (jeśli quota dostępna)"
+  )
+  local vh
+  vh="$(hm_vhost_conf_path "${HM_SITE_DOMAIN}" 2>/dev/null || true)"
+  if [[ -n "${vh}" && -f "${vh}" ]] && grep -q '# hmtools:limits-ols' "${vh}" 2>/dev/null; then
+    clear_steps+=("OLS extprocessor: przywróć mem 2047M / proc 400–500 (marker hmtools:limits-ols)")
+  fi
   if ! hm_confirm_plan "limits clear — ${HM_SITE_DOMAIN}" \
     "" \
-    "Usunięcie ${f}" \
-    "systemctl set-property …=infinity / reset" \
-    "Opcjonalnie: setquota 0 0 0 0 (jeśli quota dostępna)"; then
+    "${clear_steps[@]}"; then
     return 0
   fi
   if [[ -f "${f}" ]]; then
@@ -392,6 +543,9 @@ hm_limits_clear() {
     local fs
     fs="$(findmnt -n -o TARGET /home 2>/dev/null || echo /home)"
     setquota -u "${user}" 0 0 0 0 "${fs}" 2>/dev/null || true
+  fi
+  if [[ -n "${vh}" && -f "${vh}" ]] && grep -q '# hmtools:limits-ols' "${vh}" 2>/dev/null; then
+    hm_limits_apply_ols_ext_limits "${HM_SITE_DOMAIN}" "${user}" "" "" 1 || true
   fi
   hm_ok "Wyczyszczono limity dla ${user} (uid=${uid})."
 }

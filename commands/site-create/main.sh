@@ -270,6 +270,10 @@ hm_sc_ols_map_remove_alias() {
   local conf="${OLS_CONF:-}"
   [[ -n "${conf}" && -f "${conf}" ]] || return 1
   [[ -n "${master}" && -n "${alias}" ]] || return 1
+  # Nigdy nie usuwaj tokenu mastera z listy hostów mapy.
+  if [[ "${alias}" == "${master}" ]]; then
+    return 1
+  fi
   cp -a "${conf}" "${conf}.hmtools.bak" 2>/dev/null || true
   local tmp
   tmp="$(hm_mktemp .olsmap)"
@@ -283,7 +287,8 @@ hm_sc_ols_map_remove_alias() {
       out = ""
       for (i = 1; i <= n; i++) {
         gsub(/^[[:space:]]+|[[:space:]]+$/, "", parts[i])
-        if (parts[i] == "" || parts[i] == a) continue
+        # Nie usuwaj mastera nawet gdy a==m (ochrona przed złą ścieżką wywołania).
+        if (parts[i] == "" || (parts[i] == a && parts[i] != m)) continue
         if (out == "") out = parts[i]
         else out = out ", " parts[i]
       }
@@ -1083,6 +1088,33 @@ ORDER BY c.domain;
       [[ -n "${alias}" ]] || { hm_err "Użycie: alias remove <domena>"; return 1; }
       if ! hm_is_valid_domain "${alias}"; then
         hm_err "Nieprawidłowa domena: ${alias}"; return 1
+      fi
+      if [[ "${alias}" == "${domain}" ]]; then
+        hm_err "Nie wolno usuwać domeny głównej (${domain}) z mapy — to nie jest alias."
+        return 1
+      fi
+      if [[ "${alias}" == "www.${domain}" ]]; then
+        hm_warn "www.${domain} zwykle jest częścią mapy mastera — usunięcie może odciąć ruch www."
+      fi
+      local found=0 al
+      while IFS= read -r al; do
+        [[ "${al}" == "${alias}" ]] && found=1 && break
+      done < <(hm_sc_ols_list_aliases "${domain}")
+      if [[ "${found}" -eq 0 && "${PANEL:-}" == "cyberpanel" ]]; then
+        local q
+        q="$(hm_sql_quote "${domain}" 2>/dev/null || printf "'%s'" "${domain}")"
+        while IFS= read -r al; do
+          [[ "${al}" == "${alias}" ]] && found=1 && break
+        done < <(hm_mysql_exec cyberpanel -e "
+SELECT c.domain FROM websiteFunctions_childdomains c
+INNER JOIN websiteFunctions_websites w ON c.master_id = w.id
+WHERE w.domain = ${q} AND c.alais = 1
+ORDER BY c.domain;
+" 2>/dev/null || true)
+      fi
+      if [[ "${found}" -eq 0 ]]; then
+        hm_err "Brak aliasu ${alias} na stronie ${domain}."
+        return 1
       fi
       local -a plan=("Usunięcie aliasu ${alias} z mapy ${domain} (inne wpisy bez zmian)")
       if [[ "${PANEL}" == "cyberpanel" ]] && hm_sc_cp_vhutil >/dev/null; then

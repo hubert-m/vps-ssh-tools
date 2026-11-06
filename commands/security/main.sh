@@ -411,50 +411,110 @@ hm_security_ssh_rollback_state() {
   printf '%s' "${TMP_DIR:-/tmp}/hmtools-ssh-pending"
 }
 
+hm_security_ssh_cancel_rollback_timer() {
+  # Anuluj transient timer/service (systemd-run) — odporne na brak jednostki.
+  if hm_have_cmd systemctl; then
+    systemctl stop hmtools-ssh-rollback.timer 2>/dev/null || true
+    systemctl stop hmtools-ssh-rollback.service 2>/dev/null || true
+    systemctl reset-failed hmtools-ssh-rollback.service 2>/dev/null || true
+    systemctl reset-failed hmtools-ssh-rollback.timer 2>/dev/null || true
+  fi
+}
+
 cmd_security_ssh_confirm() {
   local st
   st="$(hm_security_ssh_rollback_state)"
-  if [[ ! -f "${st}.bak" ]]; then
+  if [[ ! -f "${st}.bak" && ! -f "${st}.meta" ]]; then
     hm_info "Brak oczekującej zmiany SSH do potwierdzenia."
     return 0
   fi
   touch "${st}.confirmed"
+  hm_security_ssh_cancel_rollback_timer
+  # skrypt setsid/nohup i tak wyjdzie po sleep gdy zobaczy .confirmed
   hm_ok "Potwierdzono zmianę SSH — auto-rollback anulowany."
-  # posprzątaj po chwili (timer i tak wyjdzie)
   return 0
+}
+
+# Skrypt rollbacka (standalone) — systemd-run / setsid (przeżywa SIGHUP sesji SSH).
+hm_security_ssh_write_rollback_script() {
+  local script="$1" st="$2" conf="$3" old_port="$4" new_port="$5" opened_fw="$6" do_sleep="${7:-0}"
+  # shellcheck disable=SC2086
+  cat > "${script}" <<EOF
+#!/usr/bin/env bash
+# hmtools: auto-rollback SSH — detached (SIGHUP-safe)
+set +e
+trap '' HUP PIPE
+st=$(printf '%q' "${st}")
+conf=$(printf '%q' "${conf}")
+old_port=$(printf '%q' "${old_port}")
+new_port=$(printf '%q' "${new_port}")
+opened_fw=$(printf '%q' "${opened_fw}")
+[[ "${do_sleep}" == "1" ]] && sleep 120
+if [[ -f "\${st}.confirmed" ]]; then
+  rm -f "\${st}".{bak,meta,confirmed,method,sh} 2>/dev/null
+  exit 0
+fi
+if [[ -f "\${st}.bak" && -f "\${conf}" ]]; then
+  echo "hmtools: brak potwierdzenia SSH w 120s — rollback…" >&2
+  cat "\${st}.bak" > "\${conf}"
+  if [[ "\${opened_fw}" == "1" && -n "\${new_port}" && "\${new_port}" != "\${old_port}" ]]; then
+    if command -v ufw >/dev/null 2>&1; then
+      ufw --force delete allow "\${new_port}/tcp" >/dev/null 2>&1 || true
+    fi
+    if command -v firewall-cmd >/dev/null 2>&1; then
+      firewall-cmd --permanent --remove-port="\${new_port}/tcp" >/dev/null 2>&1 || true
+      firewall-cmd --reload >/dev/null 2>&1 || true
+    fi
+    # CSF: best-effort — zostaw port otwarty jeśli sed niepewnie; krytyczne jest Port w sshd
+  fi
+  command -v sshd >/dev/null 2>&1 && sshd -t 2>/dev/null || true
+  systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null \\
+    || systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || true
+fi
+rm -f "\${st}".{bak,meta,confirmed,method,sh} 2>/dev/null
+exit 0
+EOF
+  chmod 700 "${script}"
 }
 
 hm_security_ssh_schedule_rollback() {
   local bak="$1" conf="$2" old_port="$3" new_port="$4" opened_fw="${5:-0}"
-  local st
+  local st script method="setsid"
   st="$(hm_security_ssh_rollback_state)"
+  script="${st}.sh"
   cp -a "${bak}" "${st}.bak" 2>/dev/null || cp "${bak}" "${st}.bak"
   rm -f "${st}.confirmed"
   printf '%s\n' "${conf}" "${old_port}" "${new_port}" "${opened_fw}" > "${st}.meta"
 
-  (
-    sleep 120
-    if [[ -f "${st}.confirmed" ]]; then
-      rm -f "${st}.bak" "${st}.meta" "${st}.confirmed" 2>/dev/null || true
-      exit 0
+  hm_security_ssh_cancel_rollback_timer
+
+  # 1) Preferuj systemd-run — timer przeżywa zerwanie sesji SSH
+  if hm_have_cmd systemd-run && hm_have_cmd systemctl; then
+    hm_security_ssh_write_rollback_script "${script}" "${st}" "${conf}" "${old_port}" "${new_port}" "${opened_fw}" 0
+    if systemd-run --collect \
+      --unit=hmtools-ssh-rollback \
+      --description="hmtools SSH port auto-rollback" \
+      --on-active=120s \
+      /bin/bash "${script}" >/dev/null 2>&1; then
+      printf '%s\n' "systemd-run" > "${st}.method"
+      hm_warn "Masz 120 s na: security ssh confirm — inaczej automatyczny rollback (systemd-run)."
+      return 0
     fi
-    if [[ -f "${st}.bak" && -f "${conf}" ]]; then
-      echo "hmtools: brak potwierdzenia SSH w 120s — rollback…" >&2
-      cat "${st}.bak" > "${conf}"
-      # zamknij nowy port jeśli otworzyliśmy
-      if [[ "${opened_fw}" == "1" && -n "${new_port}" && "${new_port}" != "${old_port}" ]]; then
-        hm_os_firewall_remove "${new_port}/tcp" 2>/dev/null || true
-      fi
-      if command -v sshd >/dev/null 2>&1; then
-        sshd -t 2>/dev/null || true
-      fi
-      systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null \
-        || systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || true
-    fi
-    rm -f "${st}.bak" "${st}.meta" "${st}.confirmed" 2>/dev/null || true
-  ) >/dev/null 2>&1 &
-  disown 2>/dev/null || true
-  hm_warn "Masz 120 s na: security ssh confirm — inaczej automatyczny rollback."
+    hm_warn "systemd-run niedostępny/nieudany — fallback setsid/nohup."
+  fi
+
+  # 2) Fallback: nowa sesja + nohup, stdin=/dev/null (nie ginie z pty/SIGHUP)
+  hm_security_ssh_write_rollback_script "${script}" "${st}" "${conf}" "${old_port}" "${new_port}" "${opened_fw}" 1
+  if hm_have_cmd setsid; then
+    setsid -f nohup /bin/bash "${script}" </dev/null >/dev/null 2>&1 \
+      || setsid nohup /bin/bash "${script}" </dev/null >/dev/null 2>&1 &
+  elif hm_have_cmd nohup; then
+    nohup /bin/bash "${script}" </dev/null >/dev/null 2>&1 &
+  else
+    ( trap '' HUP; /bin/bash "${script}" ) </dev/null >/dev/null 2>&1 &
+  fi
+  printf '%s\n' "setsid" > "${st}.method"
+  hm_warn "Masz 120 s na: security ssh confirm — inaczej automatyczny rollback (setsid/nohup)."
 }
 
 cmd_security_ssh_set() {

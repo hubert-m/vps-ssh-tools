@@ -164,6 +164,63 @@ else
   fail=1
 fi
 
+# --- cancel confirm: exclusions nietknięte ---
+hm_confirm_plan() { return 1; }
+excl_before="$(cksum "$(hm_waf_exclusions_file)" 2>/dev/null | awk '{print $1}')"
+set +e
+hm_waf_whitelist_apply "example.pl" "949110" >/dev/null 2>&1
+rc_cancel=$?
+set -e
+excl_after="$(cksum "$(hm_waf_exclusions_file)" 2>/dev/null | awk '{print $1}')"
+if [[ "${rc_cancel}" -ne 0 && "${excl_before}" == "${excl_after}" ]] \
+  && ! grep -q 'ctl:ruleRemoveById=949110' "$(hm_waf_exclusions_file)" 2>/dev/null; then
+  echo "OK   whitelist-cancel-no-excl"
+else
+  echo "FAIL whitelist-cancel-no-excl rc=${rc_cancel} sum=${excl_before}/${excl_after}"
+  fail=1
+fi
+hm_confirm_plan() { return 0; }
+
+# --- URI zachowane przy dodaniu drugiej reguły ---
+hm_waf_whitelist_cmd 941100 --uri /wp-admin/ --yes >/dev/null 2>&1 || true
+hm_waf_whitelist_cmd 942100 --yes >/dev/null 2>&1 || true
+excl_c="$(hm_waf_exclusions_file)"
+if grep -q 'REQUEST_URI "@beginsWith /wp-admin/"' "${excl_c}" \
+  && grep -q 'ctl:ruleRemoveById=941100' "${excl_c}" \
+  && grep -q 'ctl:ruleRemoveById=942100' "${excl_c}"; then
+  echo "OK   whitelist-uri-preserved"
+else
+  echo "FAIL whitelist-uri-preserved"
+  cat "${excl_c}" | sed 's/^/  | /' || true
+  fail=1
+fi
+listed="$(hm_waf_whitelist_list_ids example.pl | tr '\n' ' ')"
+if [[ "${listed}" == *941100@/wp-admin/* && "${listed}" == *942100* ]]; then
+  echo "OK   whitelist-list-uri"
+else
+  echo "FAIL whitelist-list-uri '${listed}'"
+  fail=1
+fi
+
+# --- ID exclusions poza CRS 91xxxx ---
+eid="$(hm_waf_exclusion_id example.pl 949110)"
+if [[ "${eid}" -ge 1000000 && "${eid}" -le 1999999 ]]; then
+  echo "OK   exclusion-id-range (${eid})"
+else
+  echo "FAIL exclusion-id-range (${eid})"
+  fail=1
+fi
+if grep -E 'id:91[0-9]{4},' "${excl_c}" >/dev/null 2>&1; then
+  echo "FAIL exclusion-id-still-91xxxx"
+  fail=1
+else
+  echo "OK   exclusion-id-not-91xxxx"
+fi
+
+# cleanup whitelist
+hm_waf_whitelist_cmd remove 941100 --yes >/dev/null 2>&1 || true
+hm_waf_whitelist_cmd remove 942100 --yes >/dev/null 2>&1 || true
+
 # --- mode off: confirm required (mock reject) ---
 hm_confirm_plan() { return 1; }
 if hm_waf_mode_cmd off 2>/dev/null; then

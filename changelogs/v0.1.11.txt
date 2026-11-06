@@ -1,5 +1,14 @@
 # hmtools v0.1.11
 
+- Fix: `waf whitelist` — zapis exclusions dopiero po confirm; zachowanie `--uri`; ID 1xxx_xxx (poza CRS); `--yes`
+- Fix: `malware quarantine` — unikalne ID (mktemp), bez nadpisywania manifestu; rc≠0 gdy nic nie przeniesiono
+- Fix: `alias remove` — odmowa usunięcia domeny głównej / obcego aliasu (rc≠0); mapa OLS nie kasuje tokenu mastera
+- Fix: `services` — `is-active`/`is-enabled` bez `|| echo` (failed na czerwono, bez `failed⏎unknown`)
+- Fix: `backup --targets` — przy awarii 1. celu pełny fallback na kolejne (nie SKIP); `inc restore` → `--target /` + include abs; `confirm_critical` domain-first
+- Fix: `notify setup` — walidacja webhook + zapis `printf %q` (bez injekcji do hmtools.conf); curl -K (URL poza argv); sukces backup czyści dedup
+- Fix: `limits set --mem/--tasks` — gdy lsphp poza `user.slice` (OLS), limity też w extprocessor vhconf; jasny WARN dla --cpu/--io; test OLS w `test-limits-parse.sh`
+- Fix: `security ssh set port` — auto-rollback 120 s przez `systemd-run` (fallback `setsid`/`nohup`), odporny na SIGHUP; `ssh confirm` stopuje timer
+- Fix: stub `_hm_cmd_register_site` w `test-firewall-ssh-protect` / `test-ip-valid`; usunięty zbędny `}` w `test-services-logs.sh` (bash -n)
 - Feat: `dns` — strefy PowerDNS (list/add/edit/delete/export), `dns check` (A/AAAA vs VPS, MX/SPF/DKIM/DMARC/CAA, propagacja); ssl podpowiada `dns check`; test `test-dns-zones.sh`
 - Feat: `mail add|passwd|delete|forward|catchall` — skrzynki CyberPanel CLI (hasła redagowane), przekierowania/catch-all w DB; test `test-mail-accounts.sh`
 - Feat: `mail` — kolejka Postfix (flush/delete), logi, check SPF/DKIM/DMARC/PTR/TLS, dkim generate, DNSBL; test `test-mail-diag.sh`

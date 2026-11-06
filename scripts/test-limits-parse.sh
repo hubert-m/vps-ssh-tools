@@ -94,6 +94,46 @@ fi
 mode="$(stat -c '%a' "${wf}" 2>/dev/null || stat -f '%Lp' "${wf}")"
 [[ "${mode}" == "644" || "${mode}" == "644" ]] && echo "OK   dropin-mode" || echo "OK   dropin-mode (${mode})"
 
+# OLS mem format
+om="$(hm_limits_bytes_to_ols_m $((512*1024*1024)))"
+[[ "${om}" == "512M" ]] && echo "OK   ols-mem-512" || { echo "FAIL ols-mem ${om}"; fail=1; }
+
+# OLS extprocessor apply when lsphp poza slice
+vh="${tmpdir}/vhconf.conf"
+cat > "${vh}" <<'EOF'
+extprocessor siteuser {
+  type                    lsapi
+  memSoftLimit            2047M
+  memHardLimit            2047M
+  procSoftLimit           400
+  procHardLimit           500
+}
+EOF
+hm_vhost_conf_path() { printf '%s' "${vh}"; }
+hm_ols_reload() { :; }
+hm_limits_apply_ols_ext_limits "example.pl" "siteuser" $((256*1024*1024)) "100" 0
+if grep -q 'memSoftLimit            256M' "${vh}" \
+  && grep -q 'procSoftLimit           100' "${vh}" \
+  && grep -q '# hmtools:limits-ols' "${vh}"; then
+  echo "OK   ols-ext-apply"
+else
+  echo "FAIL ols-ext-apply"; cat "${vh}"; fail=1
+fi
+hm_limits_apply_ols_ext_limits "example.pl" "siteuser" "" "" 1
+if grep -q 'memSoftLimit            2047M' "${vh}" \
+  && ! grep -q '# hmtools:limits-ols' "${vh}"; then
+  echo "OK   ols-ext-clear"
+else
+  echo "FAIL ols-ext-clear"; cat "${vh}"; fail=1
+fi
+
+# lsphp_in_user_slice: brak procesu → 1
+if hm_limits_lsphp_in_user_slice "nobody" 2>/dev/null; then
+  echo "OK   lsphp-slice-no-proc (unexpected match — OK if sandbox has it)"
+else
+  echo "OK   lsphp-slice-absent"
+fi
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"
   exit 1

@@ -17,6 +17,7 @@ hm_detect_all() { :; }
 C_BOLD=""; C_RESET=""; C_GREEN=""
 _hm_cmd_help() { cat >/dev/null; }
 _hm_cmd_register() { :; }
+_hm_cmd_register_site() { :; }
 
 # minimal IP validator (z security — lub lokalnie)
 hm_is_valid_ip() {
@@ -134,6 +135,21 @@ if [[ "${n}" == "0" || "${n}" == "0"$'\n'* ]]; then echo "OK   empty-keys"; else
 echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyDataHere000000000000000000000000 comment" > "${akdir}/authorized_keys"
 n="$(grep -cE '^(ssh-|ecdsa-|sk-)' "${akdir}/authorized_keys" 2>/dev/null || echo 0)"
 if [[ "${n}" -ge 1 ]]; then echo "OK   nonempty-keys"; else echo "FAIL nonempty-keys"; fail=1; fi
+
+# rollback timer musi być SIGHUP-safe (systemd-run / setsid / nohup / trap HUP)
+src="$(declare -f hm_security_ssh_schedule_rollback 2>/dev/null || true)"
+if [[ "${src}" == *systemd-run* && "${src}" == *setsid* ]]; then
+  echo "OK   rollback-sighup-safe"
+else
+  echo "FAIL rollback-sighup-safe (brak systemd-run/setsid w schedule)"
+  fail=1
+fi
+if declare -F hm_security_ssh_cancel_rollback_timer >/dev/null 2>&1; then
+  echo "OK   rollback-cancel-helper"
+else
+  echo "FAIL rollback-cancel-helper"
+  fail=1
+fi
 
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"

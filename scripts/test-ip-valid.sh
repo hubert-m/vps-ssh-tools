@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 _hm_cmd_help() { :; }
 _hm_cmd_register() { :; }
+_hm_cmd_register_site() { :; }
 hm_err() { :; }
 hm_warn() { :; }
 hm_ok() { :; }

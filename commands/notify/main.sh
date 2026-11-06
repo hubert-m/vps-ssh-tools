@@ -17,26 +17,21 @@ hm_notify_conf_path() {
 }
 
 hm_notify_conf_set_kv() {
-  local key="$1" val="$2" conf
+  # Bezpieczny zapis do hmtools.conf (source'owany): KEY=$(printf %q val) — bez wstrzyknięcia.
+  local key="$1" val="$2" conf quoted tmp
+  [[ "${key}" =~ ^[A-Z][A-Z0-9_]*$ ]] || { hm_err "Nieprawidłowy klucz conf: ${key}"; return 1; }
   conf="$(hm_notify_conf_path)"
   mkdir -p "$(dirname "${conf}")" 2>/dev/null || true
   touch "${conf}" 2>/dev/null || true
-  local tmp
+  quoted="$(printf '%q' "${val}")"
   tmp="$(hm_mktemp .conf)"
-  if grep -qE "^[[:space:]]*${key}=" "${conf}" 2>/dev/null; then
-    awk -v k="${key}" -v v="${val}" '
-      BEGIN { done=0 }
-      $0 ~ "^[[:space:]]*" k "=" {
-        print k "=\"" v "\""
-        done=1; next
-      }
-      { print }
-      END { if (!done) print k "=\"" v "\"" }
-    ' "${conf}" > "${tmp}"
+  # usuń stare linie KEY=…, dopisz nową (bez awk -v — %q może mieć spacje/' )
+  if [[ -s "${conf}" ]]; then
+    grep -Ev "^[[:space:]]*${key}=" "${conf}" > "${tmp}" || true
   else
-    cat "${conf}" > "${tmp}"
-    printf '\n%s="%s"\n' "${key}" "${val}" >> "${tmp}"
+    : > "${tmp}"
   fi
+  printf '%s=%s\n' "${key}" "${quoted}" >> "${tmp}"
   cat "${tmp}" > "${conf}"
   rm -f "${tmp}"
   chmod 600 "${conf}" 2>/dev/null || true

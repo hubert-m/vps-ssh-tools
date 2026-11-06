@@ -95,7 +95,10 @@ hm_services_is_active() {
 
 hm_services_active_str() {
   local unit="$1" s
-  s="$(systemctl is-active "${unit}" 2>/dev/null || echo unknown)"
+  # systemctl is-active wypisuje stan i rc≠0 dla failed/inactive — NIE doklejać || echo
+  s="$(systemctl is-active "${unit}" 2>/dev/null || true)"
+  s="$(printf '%s' "${s}" | tr -d '\r' | head -1 | tr -d '[:space:]')"
+  [[ -n "${s}" ]] || s="unknown"
   case "${s}" in
     active) printf '%s' "active" ;;
     failed) printf '%s' "failed" ;;
@@ -104,8 +107,11 @@ hm_services_active_str() {
 }
 
 hm_services_enabled_str() {
-  local unit="$1"
-  systemctl is-enabled "${unit}" 2>/dev/null || echo "-"
+  local unit="$1" s
+  s="$(systemctl is-enabled "${unit}" 2>/dev/null || true)"
+  s="$(printf '%s' "${s}" | tr -d '\r' | head -1 | tr -d '[:space:]')"
+  [[ -n "${s}" ]] || s="-"
+  printf '%s' "${s}"
 }
 
 hm_services_uptime_str() {

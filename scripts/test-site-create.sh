@@ -157,6 +157,37 @@ else
   fail=1
 fi
 
+# --- refuse removing master from map ---
+if hm_sc_ols_map_remove_alias example.pl example.pl 2>/dev/null; then
+  echo "FAIL remove-master-fn should fail"
+  fail=1
+else
+  echo "OK   remove-master-fn-rc"
+fi
+if grep -qE 'map[[:space:]]+example\.pl[[:space:]]+.*example\.pl' "${OLS_CONF}" \
+  || grep -q 'map example.pl example.pl' "${OLS_CONF}"; then
+  echo "OK   remove-master-keeps-apex"
+else
+  echo "FAIL remove-master-keeps-apex"
+  grep map "${OLS_CONF}" || true
+  fail=1
+fi
+
+PANEL=none
+HM_SITE_DOMAIN=example.pl
+if cmd_site_alias remove example.pl --yes 2>/dev/null; then
+  echo "FAIL alias-remove-apex should fail"
+  fail=1
+else
+  echo "OK   alias-remove-apex-rc"
+fi
+if cmd_site_alias remove www.other.pl --yes 2>/dev/null; then
+  echo "FAIL alias-remove-foreign should fail"
+  fail=1
+else
+  echo "OK   alias-remove-foreign-rc"
+fi
+
 # --- map has name ---
 if hm_sc_ols_map_has_name www.example.pl; then
   echo "OK   map-has-www"

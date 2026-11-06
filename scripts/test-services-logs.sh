@@ -137,10 +137,28 @@ else
   fail=1
 fi
 
+# is-active rc≠0 nie dokleja „unknown” (failed⏎unknown)
+systemctl() {
+  case "$1" in
+    is-active) printf 'failed\n'; return 3 ;;
+    is-enabled) printf 'disabled\n'; return 1 ;;
+    *) return 0 ;;
+  esac
+}
+st="$(hm_services_active_str postfix.service)"
+[[ "${st}" == "failed" ]] && echo "OK   active-str-failed" || { echo "FAIL active-str-failed got=${st}"; fail=1; }
+en="$(hm_services_enabled_str postfix.service)"
+[[ "${en}" == "disabled" ]] && echo "OK   enabled-str-disabled" || { echo "FAIL enabled-str got=${en}"; fail=1; }
+if ! grep -q '|| echo unknown' commands/services/main.sh; then
+  echo "OK   no-echo-unknown-append"
+else
+  echo "FAIL still-has-echo-unknown"
+  fail=1
+fi
+
 if [[ "${fail}" -eq 0 ]]; then
   echo "ALL OK"
   exit 0
 fi
 echo "FAILED=${fail}"
 exit 1
-}

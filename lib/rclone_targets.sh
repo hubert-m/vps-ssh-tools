@@ -257,8 +257,11 @@ hm_backup_run_on_targets() {
   esac
 
   local -a report=()
+  # Pierwszy udany cel = źródło replikacji (fallback: pełny backup na kolejnych)
+  local source_root=""
   if [[ "${rc_primary}" -eq 0 ]]; then
     report+=("OK  ${primary} (${primary_root})")
+    source_root="${primary_root}"
   else
     report+=("FAIL ${primary} (${primary_root}) rc=${rc_primary}")
   fi
@@ -271,7 +274,7 @@ hm_backup_run_on_targets() {
   fi
 
   local overall="${rc_primary}"
-  local i name root
+  local i name root rc_fb=0
   for ((i = 1; i < ${#tnames[@]}; i++)); do
     name="${tnames[$i]}"
     if ! root="$(hm_backup_target_spec "${name}")"; then
@@ -280,16 +283,36 @@ hm_backup_run_on_targets() {
       continue
     fi
     root="$(hm_backup_spec_normalize "${root}")"
-    if [[ "${rc_primary}" -ne 0 ]]; then
-      report+=("SKIP ${name} (brak kompletnego źródła)")
+
+    if [[ -n "${source_root}" ]]; then
+      if hm_backup_copy_snapshot_between "${source_root}" "${root}" "${rel}" \
+        && hm_backup_verify_snapshot "${root}" "${rel}"; then
+        report+=("OK  ${name} (${root})")
+      else
+        report+=("FAIL ${name} (${root}) — replikacja/weryfikacja")
+        overall=1
+      fi
+      continue
+    fi
+
+    # Brak kompletnego źródła — pełny snapshot bezpośrednio na ten cel (ten sam stamp)
+    hm_info "Cel ${primary} nieudany — pełny backup na ${name} (fallback)…"
+    if ! hm_backup_use_target "${name}"; then
+      report+=("FAIL ${name} (nie można ustawić celu)")
       overall=1
       continue
     fi
-    if hm_backup_copy_snapshot_between "${primary_root}" "${root}" "${rel}" \
-      && hm_backup_verify_snapshot "${root}" "${rel}"; then
-      report+=("OK  ${name} (${root})")
+    rc_fb=0
+    case "${mode}" in
+      site) hm_backup_site "${domain}" || rc_fb=$? ;;
+      full) hm_backup_full || rc_fb=$? ;;
+    esac
+    if [[ "${rc_fb}" -eq 0 ]] && hm_backup_verify_snapshot "${root}" "${rel}"; then
+      report+=("OK  ${name} (${root}) [fallback direct]")
+      source_root="${root}"
+      overall=0
     else
-      report+=("FAIL ${name} (${root}) — replikacja/weryfikacja")
+      report+=("FAIL ${name} (${root}) rc=${rc_fb} [fallback]")
       overall=1
     fi
   done

@@ -165,6 +165,24 @@ else
   echo "OK   no-secrets-in-conf"
 fi
 
+# multi-target: fallback direct zamiast SKIP gdy brak source
+if grep -q 'fallback direct' lib/rclone_targets.sh \
+  && ! grep -q 'SKIP.*brak kompletnego źródła' lib/rclone_targets.sh; then
+  echo "OK   multi-target-fallback"
+else
+  echo "FAIL multi-target-fallback"
+  fail=1
+fi
+
+# inc restore: --target / + confirm domain-first
+if grep -q 'restore "${snap}" --target /' commands/backup/inc.sh \
+  && grep -q 'hm_confirm_plan_critical "${domain}"' commands/backup/inc.sh; then
+  echo "OK   inc-restore-abs-and-confirm"
+else
+  echo "FAIL inc-restore-abs-and-confirm"
+  fail=1
+fi
+
 if [[ "${fail}" -eq 0 ]]; then
   echo "ALL OK"
   exit 0

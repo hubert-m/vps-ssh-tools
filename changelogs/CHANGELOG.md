@@ -16,6 +16,14 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [v0.1.11]
 
+- Fix: `waf whitelist` — exclusions po confirm + rollback; zachowanie `--uri`; ID poza CRS; `--yes`
+- Fix: `malware quarantine` — unikalne ID (mktemp), bez nadpisywania manifestu; rc≠0 gdy nic nie przeniesiono
+- Fix: `alias remove` — nie usuwa domeny głównej / obcego aliasu; mapa OLS chroni token mastera
+- Fix: `services` — stan failed bez doklejania `unknown` (kolor + tabela)
+- Fix: `backup --targets` fallback przy awarii 1. celu; `inc restore` ścieżki absolutne; confirm_critical domain-first
+- Fix: `notify setup` — `printf %q` + twardsza walidacja URL; curl -K; dedup clear po udanym backup
+- Fix: `limits set` — limity OLS extprocessor gdy lsphp poza user.slice; WARN dla --cpu/--io na OLS
+- Fix: `security ssh set port` — rollback 120 s przez `systemd-run` / `setsid` (SIGHUP-safe); stuby testów firewall/ip-valid; `test-services-logs` bash -n
 - Feat: `dns` — strefy PowerDNS (list/add/edit/delete/export), `dns check`; ssl → `dns check`; test `test-dns-zones.sh`
 - Feat: `mail add|passwd|delete|forward|catchall` — skrzynki CyberPanel CLI + przekierowania/catch-all; test `test-mail-accounts.sh`
 - Feat: `mail` — kolejka Postfix, logi, check SPF/DKIM/DMARC/PTR/TLS, dkim generate, DNSBL; test `test-mail-diag.sh`

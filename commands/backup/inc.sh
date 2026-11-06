@@ -233,22 +233,36 @@ hm_backup_inc_restore() {
   repo="$(hm_restic_repo_for_target "${target}")" || { hm_site_context_pop; return 1; }
   hm_restic_ensure_pass || { hm_site_context_pop; return 1; }
 
+  # restic backup zapisuje ścieżki absolutne (backup_root) → restore --target /
+  local backup_root include_abs=""
+  backup_root="$(hm_backup_resolve_files_root "${HM_SITE_ROOT:-${HM_SITE_DOCROOT}}" "${HM_SITE_USER}")"
+  backup_root="$(hm_backup_prefer_docroot_if_shared_home "${domain}" "${backup_root}" "${HM_SITE_DOCROOT}")"
+  if [[ -n "${path}" ]]; then
+    if [[ "${path}" == /* ]]; then
+      include_abs="${path}"
+    else
+      include_abs="${backup_root%/}/${path#./}"
+    fi
+  fi
+
   local -a steps=(
-    "restic restore ${snap} → ${dest}"
+    "restic restore ${snap} --target / (ścieżki absolutne ze snapshotu)"
     "Cel: ${target}"
   )
-  [[ -n "${path}" ]] && steps+=("Tylko ścieżka: ${path}")
-  if ! hm_confirm_plan_critical "backup inc restore — ${domain}" \
-    "Nadpisanie plików w ${dest}." \
-    "${domain}" \
+  [[ -n "${include_abs}" ]] && steps+=("Tylko: ${include_abs}")
+  if ! hm_confirm_plan_critical "${domain}" \
+    "backup inc restore — ${domain}" \
+    "Nadpisanie plików w ${dest} (restic → /)." \
     "${steps[@]}"; then
     hm_site_context_pop
     return 0
   fi
 
-  local -a args=(-r "${repo}" restore "${snap}" --target "${dest}")
-  if [[ -n "${path}" ]]; then
-    args+=(--include "${path}")
+  local -a args=(-r "${repo}" restore "${snap}" --target /)
+  if [[ -n "${include_abs}" ]]; then
+    args+=(--include "${include_abs}")
+  else
+    args+=(--include "${backup_root}")
   fi
   hm_restic "${args[@]}" || { hm_site_context_pop; return 1; }
   hm_ok "Przywrócono snapshot ${snap} (${domain})."
