@@ -1,5 +1,9 @@
 # hmtools v0.1.11
 
+- Fix: `dns add TXT` — wartość zbierana mimo `-all`; strip cudzysłowów; `dns check` DKIM wymaga v=DKIM1+p=
+- Fix: `mail add|passwd` — `hm_print_secret` (TTY/fd3, poza applog); hasło przez plik 0600 + CyberCP python (bez argv) / fallback CLI
+- Fix: `deploy rollback` — rsync --delete ze snapshu (usuwa pliki dodane przez deploy); 1:1 z tar
+- Fix: `mail queue delete` — walidacja QID (≥6 alfanum., nie ALL) + musi istnieć w kolejce; `mail check` bez dig → „pominięto”
 - Fix: `waf whitelist` — zapis exclusions dopiero po confirm; zachowanie `--uri`; ID 1xxx_xxx (poza CRS); `--yes`
 - Fix: `malware quarantine` — unikalne ID (mktemp), bez nadpisywania manifestu; rc≠0 gdy nic nie przeniesiono
 - Fix: `alias remove` — odmowa usunięcia domeny głównej / obcego aliasu (rc≠0); mapa OLS nie kasuje tokenu mastera

@@ -16,6 +16,10 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [v0.1.11]
 
+- Fix: `dns add TXT` — SPF `-all` nie jest flagą; strip cudzysłowów; DKIM check wymaga v=DKIM1+p=
+- Fix: `mail add|passwd` — hasło poza applog (`hm_print_secret`); CyberCP python czyta plik 0600 (bez argv)
+- Fix: `deploy rollback` — rsync --delete ze snapshu (pliki dodane przez deploy znikają)
+- Fix: `mail queue delete` — walidacja QID + obecność w kolejce; `mail check` bez dig → „pominięto”
 - Fix: `waf whitelist` — exclusions po confirm + rollback; zachowanie `--uri`; ID poza CRS; `--yes`
 - Fix: `malware quarantine` — unikalne ID (mktemp), bez nadpisywania manifestu; rc≠0 gdy nic nie przeniesiono
 - Fix: `alias remove` — nie usuwa domeny głównej / obcego aliasu; mapa OLS chroni token mastera

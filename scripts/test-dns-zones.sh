@@ -248,6 +248,20 @@ assert_run_contains "www.example.pl" "add FQDN name"
 hm_dns_add_record TXT _dmarc 'v=DMARC1; p=quarantine' --yes
 assert_run_contains "v=DMARC1; p=quarantine" "add TXT keeps spaces"
 
+# SPF z -all (nie flaga) + cudzysłów zewnętrzny
+: > "${RUN_LOG}"
+hm_dns_add_record TXT @ v=spf1 ip4:1.2.3.4 -all --yes
+assert_run_contains "v=spf1 ip4:1.2.3.4 -all" "add TXT SPF -all"
+: > "${RUN_LOG}"
+hm_dns_add_record TXT @ '"v=spf1 ip4:1.2.3.4 -all"' --yes
+assert_run_contains "v=spf1 ip4:1.2.3.4 -all" "add TXT strip quotes"
+if grep -qE -- '--value "\\"v=spf1|--value \\"v=spf1' "${RUN_LOG}"; then
+  echo "FAIL quotes still in value"
+  fail=1
+else
+  echo "PASS TXT quotes stripped"
+fi
+
 # bad A
 if hm_dns_add_record A www not-an-ip --yes 2>/dev/null; then
   echo "FAIL bad A accepted"

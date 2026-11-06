@@ -24,6 +24,15 @@ hm_file_log() { :; }
 hm_detect_all() { PANEL=cyberpanel; }
 hm_gen_password() { printf 'GenPass12!xYzAb'; }
 hm_human_size() { echo "${1}B"; }
+hm_ui_tty_fd() { return 1; }
+# zbieraj sekrety do pliku (nie na stdout / applog) — działa też przy $(…)
+hm_print_secret() {
+  local line
+  [[ -n "${SECRET_FILE:-}" ]] || return 0
+  for line in "$@"; do
+    printf '%s\n' "${line}" >> "${SECRET_FILE}"
+  done
+}
 hm_sql_quote() {
   local s="${1:-}"
   s="${s//\'/\'\'}"
@@ -272,16 +281,29 @@ else
   fail=1
 fi
 
-# --- add calls createEmail via hm_run ---
+# --- add calls createEmail via hm_run; hasło nie na stdout ---
 : > "${RUN_LOG}"
+SECRET_FILE="${tmpdir}/secret.out"
+: > "${SECRET_FILE}"
 FAKE_USERS=()
 HM_SITE_DOMAIN="example.pl"
-hm_mail_account_add biuro --yes >/dev/null
+add_out="$(hm_mail_account_add biuro --yes 2>&1)"
 if grep -q 'createEmail' "${RUN_LOG}" && grep -q -- '--password' "${RUN_LOG}"; then
   echo "OK   add-createEmail"
 else
   echo "FAIL add-createEmail"
   cat "${RUN_LOG}"
+  fail=1
+fi
+if printf '%s\n' "${add_out}" | grep -q 'GenPass12'; then
+  echo "FAIL add-password-on-stdout"
+  fail=1
+elif grep -q 'GenPass12' "${SECRET_FILE}"; then
+  echo "OK   add-password-via-print-secret"
+else
+  echo "FAIL add-password-via-print-secret"
+  printf 'out=%s\n' "${add_out}"
+  cat "${SECRET_FILE}" || true
   fail=1
 fi
 

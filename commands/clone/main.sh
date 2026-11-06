@@ -583,7 +583,8 @@ hm_clone_snap_prod() {
   mkdir -p "${dir}" || { hm_site_context_pop; return 1; }
   chmod 700 "$(hm_clone_snap_root "${prod}")" "${dir}" 2>/dev/null || true
 
-  hm_info "Snapshot produkcji ${prod} → ${dir}"
+  # Progress na stderr — stdout tylko stamp (dla $(hm_clone_snap_prod …)).
+  hm_info "Snapshot produkcji ${prod} → ${dir}" >&2
   if [[ -d "${docroot}" ]]; then
     tar -C "${docroot}" -czf "${dir}/files.tar.gz" . 2>/dev/null || {
       hm_err "Tar plików produkcji nieudany."
@@ -628,7 +629,9 @@ hm_clone_deploy_rollback() {
   dbname=""
   [[ -f "${dir}/db.name" ]] && dbname="$(tr -d '[:space:]' < "${dir}/db.name")"
 
-  local -a plan=("Przywrócenie plików z ${dir}/files.tar.gz → ${docroot}")
+  local -a plan=(
+    "Rozpakowanie ${dir}/files.tar.gz → tmp + rsync --delete → ${docroot} (1:1 ze snapshu)"
+  )
   [[ -n "${dbname}" && -f "${dir}/db.sql.gz" ]] && plan+=("Import ${dir}/db.sql.gz → ${dbname}")
 
   if [[ "${yes}" -eq 1 ]]; then
@@ -640,7 +643,20 @@ hm_clone_deploy_rollback() {
   fi
 
   if [[ -f "${dir}/files.tar.gz" ]]; then
-    tar -C "${docroot}" -xzf "${dir}/files.tar.gz" || return 1
+    local tmp_files
+    tmp_files="$(mktemp -d "${TMPDIR:-/tmp}/hm.snaprest.XXXXXX")"
+    [[ -d "${tmp_files}" ]] || { hm_err "Nie udało się utworzyć katalogu tymczasowego."; return 1; }
+    if ! tar -C "${tmp_files}" -xzf "${dir}/files.tar.gz"; then
+      rm -rf -- "${tmp_files}"
+      return 1
+    fi
+    # rsync --delete: usuwa pliki dodane przez deploy, przywraca stan snapshu
+    if ! rsync -aHAX --delete -- "${tmp_files}/" "${docroot}/"; then
+      hm_err "rsync rollback nieudany."
+      rm -rf -- "${tmp_files}"
+      return 1
+    fi
+    rm -rf -- "${tmp_files}"
   fi
   if [[ -n "${dbname}" && -f "${dir}/db.sql.gz" ]]; then
     hm_clone_mysql_import_quiet "${dbname}" "${dir}/db.sql.gz" || return 1

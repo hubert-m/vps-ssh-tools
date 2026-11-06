@@ -304,11 +304,11 @@ hm_dns_add_record() {
   local typ_raw="${1:-}" name_raw="${2:-}"
   shift 2 || true
   local value="" ttl=3600 prio=0 yes=0 a
-  # wartość = tokeny do pierwszej flagi (TXT ze spacjami)
+  # wartość = tokeny aż do znanych flag / `--` (TXT ze spacjami i -all w SPF)
   while [[ $# -gt 0 ]]; do
     case "${1}" in
+      --) shift || true; break ;;
       --ttl|--prio|--priority|--yes|-y|help|-h|--help) break ;;
-      -*) break ;;
       *) value="${value}${value:+ }$1"; shift || true ;;
     esac
   done
@@ -323,9 +323,14 @@ hm_dns_add_record() {
         return 0
         ;;
       -*) hm_err "Nieznana flaga: ${a}"; return 1 ;;
-      *) hm_err "Za dużo argumentów: ${a}"; return 1 ;;
+      *) value="${value}${value:+ }${a}" ;;
     esac
   done
+  # zdejmij zewnętrzne cudzysłowy z wartości (REPL / hmtools -c)
+  case "${value}" in
+    \"*\") value="${value#\"}"; value="${value%\"}" ;;
+    \'*\') value="${value#\'}"; value="${value%\'}" ;;
+  esac
 
   [[ -n "${domain}" ]] || { hm_err "Kontekst: use <domena> → dns add …"; return 1; }
   [[ -n "${typ_raw}" && -n "${name_raw}" && -n "${value}" ]] || {

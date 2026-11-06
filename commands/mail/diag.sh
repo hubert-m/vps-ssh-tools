@@ -262,6 +262,23 @@ hm_mail_queue_delete() {
       fi
     done < "${tmp}"
   elif [[ -n "${qid}" ]]; then
+    # Walidacja QID: format Postfix (bez ALL / - / ścieżek)
+    local qid_l
+    qid_l="$(printf '%s' "${qid}" | tr '[:upper:]' '[:lower:]')"
+    if [[ ! "${qid}" =~ ^[0-9A-Za-z]{6,}$ ]] || [[ "${qid_l}" == "all" ]]; then
+      hm_err "Nieprawidłowy QID: ${qid} (oczekiwany hex/alfanum. ≥6 znaków; nie ALL)."
+      rm -f "${tmp}"
+      return 1
+    fi
+    local found=0 qchk
+    while IFS=$'\t' read -r qchk _ _ _ _; do
+      [[ "${qchk}" == "${qid}" ]] && found=1 && break
+    done < "${tmp}"
+    if [[ "${found}" -eq 0 ]]; then
+      hm_err "Brak wiadomości o QID ${qid} w kolejce."
+      rm -f "${tmp}"
+      return 1
+    fi
     ids+=("${qid}")
   else
     hm_err "Użycie: mail queue delete <id> | --from <email>"
@@ -465,41 +482,52 @@ hm_mail_check_cmd() {
   echo "${C_BOLD}Mail check — ${domain}${C_RESET}"
   echo
 
+  local have_dig=0
+  hm_have_cmd dig && have_dig=1
+  if [[ "${have_dig}" -eq 0 ]]; then
+    hm_warn "Brak dig — pomijam MX/SPF/DKIM DNS/DMARC/PTR (bez fałszywych alarmów)."
+    echo
+  fi
+
   # MX
   echo "${C_BOLD}MX${C_RESET}"
   local mx
-  mx="$(hm_mail_dig_mx "${domain}" 2>/dev/null || true)"
-  if [[ -z "${mx}" ]]; then
-    if ! hm_have_cmd dig; then
-      hm_warn "Brak dig — pomijam MX/SPF/DKIM DNS."
-    else
-      hm_warn "Brak rekordów MX dla ${domain}"
-    fi
+  if [[ "${have_dig}" -eq 0 ]]; then
+    hm_info "pominięto (brak dig)"
   else
-    printf '%s\n' "${mx}" | sed 's/^/  /'
+    mx="$(hm_mail_dig_mx "${domain}" 2>/dev/null || true)"
+    if [[ -z "${mx}" ]]; then
+      hm_warn "Brak rekordów MX dla ${domain}"
+    else
+      printf '%s\n' "${mx}" | sed 's/^/  /'
+    fi
   fi
   echo
 
   # SPF
   echo "${C_BOLD}SPF${C_RESET}"
   local spf ip
-  spf="$(hm_mail_dig_txt "${domain}" 2>/dev/null || true)"
-  spf="$(printf '%s' "${spf}" | grep -oE 'v=spf1[^"]*' | head -1 || true)"
   ip="$(hm_mail_public_ipv4 2>/dev/null || true)"
-  if [[ -z "${spf}" ]]; then
-    hm_warn "Brak SPF (TXT v=spf1) dla ${domain}"
+  if [[ "${have_dig}" -eq 0 ]]; then
+    hm_info "pominięto (brak dig)"
   else
-    echo "  ${spf}"
-    if [[ -n "${ip}" ]]; then
-      if [[ "${spf}" == *"ip4:${ip}"* ]]; then
-        hm_ok "SPF zawiera ip4:${ip}"
-      elif [[ "${spf}" == *include:* || "${spf}" =~ (^|[[:space:]])a([[:space:]]|/|:|$) || "${spf}" =~ (^|[[:space:]])mx([[:space:]]|/|:|$) ]]; then
-        hm_info "SPF ma a/mx/include — zweryfikuj czy obejmuje ${ip}"
-      else
-        hm_warn "SPF bez ip4:${ip} (IP VPS) — możliwe odrzucenia"
-      fi
+    spf="$(hm_mail_dig_txt "${domain}" 2>/dev/null || true)"
+    spf="$(printf '%s' "${spf}" | grep -oE 'v=spf1[^"]*' | head -1 || true)"
+    if [[ -z "${spf}" ]]; then
+      hm_warn "Brak SPF (TXT v=spf1) dla ${domain}"
     else
-      hm_warn "Nie ustalono publicznego IPv4 — pomijam porównanie SPF."
+      echo "  ${spf}"
+      if [[ -n "${ip}" ]]; then
+        if [[ "${spf}" == *"ip4:${ip}"* ]]; then
+          hm_ok "SPF zawiera ip4:${ip}"
+        elif [[ "${spf}" == *include:* || "${spf}" =~ (^|[[:space:]])a([[:space:]]|/|:|$) || "${spf}" =~ (^|[[:space:]])mx([[:space:]]|/|:|$) ]]; then
+          hm_info "SPF ma a/mx/include — zweryfikuj czy obejmuje ${ip}"
+        else
+          hm_warn "SPF bez ip4:${ip} (IP VPS) — możliwe odrzucenia"
+        fi
+      else
+        hm_warn "Nie ustalono publicznego IPv4 — pomijam porównanie SPF."
+      fi
     fi
   fi
   echo
@@ -507,24 +535,30 @@ hm_mail_check_cmd() {
   # DKIM
   echo "${C_BOLD}DKIM (default._domainkey)${C_RESET}"
   local dns_dkim local_f local_p dns_p
-  dns_dkim="$(hm_mail_dig_txt "default._domainkey.${domain}" 2>/dev/null || true)"
-  if [[ -z "${dns_dkim}" ]]; then
-    hm_warn "Brak TXT default._domainkey.${domain}"
+  if [[ "${have_dig}" -eq 0 ]]; then
+    hm_info "DNS DKIM: pominięto (brak dig)"
   else
-    echo "  DNS: ${dns_dkim:0:80}…"
+    dns_dkim="$(hm_mail_dig_txt "default._domainkey.${domain}" 2>/dev/null || true)"
+    if [[ -z "${dns_dkim}" ]]; then
+      hm_warn "Brak TXT default._domainkey.${domain}"
+    else
+      echo "  DNS: ${dns_dkim:0:80}…"
+    fi
   fi
   if local_f="$(hm_mail_opendkim_txt_file "${domain}" 2>/dev/null)"; then
     echo "  lokalny: ${local_f}"
     local_p="$(hm_mail_extract_p_from_txtfile "${local_f}")"
-    dns_p="$(printf '%s' "${dns_dkim}" | sed -n 's/.*p=\([A-Za-z0-9+/=]*\).*/\1/p')"
-    if [[ -n "${local_p}" && -n "${dns_p}" ]]; then
-      if [[ "${local_p}" == "${dns_p}" ]]; then
-        hm_ok "DKIM lokalny = DNS"
-      else
-        hm_warn "DKIM rozbieżność: klucz lokalny ≠ TXT w DNS"
+    if [[ "${have_dig}" -eq 1 ]]; then
+      dns_p="$(printf '%s' "${dns_dkim}" | sed -n 's/.*p=\([A-Za-z0-9+/=]*\).*/\1/p')"
+      if [[ -n "${local_p}" && -n "${dns_p}" ]]; then
+        if [[ "${local_p}" == "${dns_p}" ]]; then
+          hm_ok "DKIM lokalny = DNS"
+        else
+          hm_warn "DKIM rozbieżność: klucz lokalny ≠ TXT w DNS"
+        fi
+      elif [[ -z "${dns_p}" && -n "${local_p}" ]]; then
+        hm_warn "Klucz lokalny jest, brak p= w DNS"
       fi
-    elif [[ -z "${dns_p}" && -n "${local_p}" ]]; then
-      hm_warn "Klucz lokalny jest, brak p= w DNS"
     fi
   else
     hm_warn "Brak lokalnego klucza OpenDKIM dla ${domain} (/etc/opendkim/keys/…)"
@@ -534,12 +568,16 @@ hm_mail_check_cmd() {
   # DMARC
   echo "${C_BOLD}DMARC${C_RESET}"
   local dmarc
-  dmarc="$(hm_mail_dig_txt "_dmarc.${domain}" 2>/dev/null || true)"
-  dmarc="$(printf '%s' "${dmarc}" | grep -oE 'v=DMARC1[^"]*' | head -1 || true)"
-  if [[ -z "${dmarc}" ]]; then
-    hm_warn "Brak DMARC (_dmarc.${domain})"
+  if [[ "${have_dig}" -eq 0 ]]; then
+    hm_info "pominięto (brak dig)"
   else
-    hm_ok "${dmarc}"
+    dmarc="$(hm_mail_dig_txt "_dmarc.${domain}" 2>/dev/null || true)"
+    dmarc="$(printf '%s' "${dmarc}" | grep -oE 'v=DMARC1[^"]*' | head -1 || true)"
+    if [[ -z "${dmarc}" ]]; then
+      hm_warn "Brak DMARC (_dmarc.${domain})"
+    else
+      hm_ok "${dmarc}"
+    fi
   fi
   echo
 
@@ -550,19 +588,23 @@ hm_mail_check_cmd() {
   echo "  myhostname/HELO: ${helo:--}"
   if [[ -n "${ip}" ]]; then
     echo "  public IP: ${ip}"
-    ptr="$(hm_mail_dig_ptr "${ip}" 2>/dev/null || true)"
-    echo "  PTR: ${ptr:--}"
-    if [[ -n "${ptr}" && -n "${helo}" ]]; then
-      local ptr_l helo_l
-      ptr_l="$(printf '%s' "${ptr}" | tr '[:upper:]' '[:lower:]')"
-      helo_l="$(printf '%s' "${helo}" | tr '[:upper:]' '[:lower:]')"
-      if [[ "${ptr_l}" == "${helo_l}" ]]; then
-        hm_ok "PTR = hostname"
-      else
-        hm_warn "PTR (${ptr}) ≠ hostname (${helo})"
+    if [[ "${have_dig}" -eq 0 ]]; then
+      hm_info "PTR: pominięto (brak dig)"
+    else
+      ptr="$(hm_mail_dig_ptr "${ip}" 2>/dev/null || true)"
+      echo "  PTR: ${ptr:--}"
+      if [[ -n "${ptr}" && -n "${helo}" ]]; then
+        local ptr_l helo_l
+        ptr_l="$(printf '%s' "${ptr}" | tr '[:upper:]' '[:lower:]')"
+        helo_l="$(printf '%s' "${helo}" | tr '[:upper:]' '[:lower:]')"
+        if [[ "${ptr_l}" == "${helo_l}" ]]; then
+          hm_ok "PTR = hostname"
+        else
+          hm_warn "PTR (${ptr}) ≠ hostname (${helo})"
+        fi
+      elif [[ -z "${ptr}" ]]; then
+        hm_warn "Brak PTR dla ${ip}"
       fi
-    elif [[ -z "${ptr}" ]]; then
-      hm_warn "Brak PTR dla ${ip}"
     fi
   fi
   echo

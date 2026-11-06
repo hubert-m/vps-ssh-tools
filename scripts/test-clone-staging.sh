@@ -65,10 +65,11 @@ trap 'rm -rf "${tmpdir}"' EXIT
 mkdir -p "${tmpdir}/bin"
 cat > "${tmpdir}/bin/rsync" <<'EOF'
 #!/bin/sh
-# minimal: skopiuj src/ → dst/ (ignoruj flagi)
-src=""; dst=""
+# minimal: skopiuj src/ → dst/; --delete usuwa pliki spoza src
+src=""; dst=""; do_delete=0
 for a in "$@"; do
   case "$a" in
+    --delete) do_delete=1 ;;
     -*) ;;
     *)
       if [ -z "$src" ]; then src=$a
@@ -80,7 +81,13 @@ done
 src=${src%/}; dst=${dst%/}
 [ -d "$src" ] || exit 1
 mkdir -p "$dst"
-# POSIX cp -a may be cp -R on some systems
+if [ "$do_delete" = 1 ]; then
+  # usuń w dst to, czego nie ma w src (tylko pliki/katalogi 1. poziomu + rekurencyjnie przez find)
+  find "$dst" -mindepth 1 -print 2>/dev/null | sort -r | while read -r f; do
+    rel=${f#"$dst"/}
+    [ -e "$src/$rel" ] || rm -rf -- "$f"
+  done
+fi
 cp -R "$src"/. "$dst"/ 2>/dev/null || cp -a "$src"/. "$dst"/
 exit 0
 EOF
@@ -169,6 +176,32 @@ if printf '%s\n' "${out}" | grep -q staging.example.pl; then
   echo "OK   staging-list"
 else
   echo "FAIL staging-list"
+  fail=1
+fi
+
+# --- deploy rollback: usunięcie plików dodanych przez deploy (przed mockiem snap fail) ---
+prod_doc="${FAKE_HOME}/example.pl/public_html"
+printf 'v1' > "${prod_doc}/index.php"
+printf 'keep' > "${prod_doc}/a.txt"
+rm -f "${prod_doc}/debug-staging.php"
+export HMTOOLS_STATE_DIR="${tmpdir}/state"
+HM_SITE_DOMAIN="example.pl"
+HM_SITE_ROOT="${FAKE_HOME}/example.pl"
+HM_SITE_DOCROOT="${prod_doc}"
+HM_SITE_USER="siteuser"
+stamp="$(hm_clone_snap_prod example.pl)"
+printf 'v2-staging' > "${prod_doc}/index.php"
+printf 'staging-debug' > "${prod_doc}/debug-staging.php"
+rm -f "${prod_doc}/a.txt"
+hm_clone_deploy_rollback "${stamp}" --yes >/dev/null 2>&1 || true
+if [[ "$(cat "${prod_doc}/index.php")" == "v1" ]] \
+  && [[ "$(cat "${prod_doc}/a.txt")" == "keep" ]] \
+  && [[ ! -f "${prod_doc}/debug-staging.php" ]]; then
+  echo "OK   deploy-rollback-1to1"
+else
+  echo "FAIL deploy-rollback-1to1"
+  ls -la "${prod_doc}" || true
+  cat "${prod_doc}/index.php" 2>/dev/null || true
   fail=1
 fi
 

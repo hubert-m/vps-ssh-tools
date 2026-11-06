@@ -134,8 +134,10 @@ hm_dns_check_cmd() {
   # DKIM
   local dkim
   dkim="$(hm_dns_dig TXT "default._domainkey.${domain}" 2>/dev/null | tr -d '"' | tr '\n' ' ')"
-  if [[ -n "${dkim}" ]]; then
-    hm_dns_check_status_line OK "DKIM" "default._domainkey obecny"
+  if [[ -n "${dkim}" && "${dkim}" == *v=DKIM1* && "${dkim}" == *p=* ]]; then
+    hm_dns_check_status_line OK "DKIM" "default._domainkey (v=DKIM1 + p=)"
+  elif [[ -n "${dkim}" ]]; then
+    hm_dns_check_status_line WARN "DKIM" "TXT bez v=DKIM1/p= — ${dkim:0:50}"
   else
     hm_dns_check_status_line WARN "DKIM" "brak default._domainkey"
   fi

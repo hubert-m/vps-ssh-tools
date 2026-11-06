@@ -22,6 +22,85 @@ hm_mail_cp_db_ok() {
   [[ "${n}" == "1" ]]
 }
 
+hm_mail_passfile_write() {
+  local pass="$1" f
+  f="$(hm_mktemp .mailpass)"
+  umask 077
+  printf '%s' "${pass}" > "${f}"
+  chmod 600 "${f}" 2>/dev/null || true
+  printf '%s' "${f}"
+}
+
+# createEmail / changeEmailPassword bez hasła w argv (CyberCP python czyta plik 0600).
+hm_mail_cp_create_email() {
+  local domain="$1" user="$2" passfile="$3"
+  local py="/usr/local/CyberCP/bin/python"
+  if [[ -x "${py}" && -d /usr/local/CyberCP ]]; then
+    hm_run "${py}" - "${domain}" "${user}" "${passfile}" <<'PY'
+import sys
+sys.path.insert(0, "/usr/local/CyberCP")
+domain, user, pf = sys.argv[1], sys.argv[2], sys.argv[3]
+password = open(pf, "r", encoding="utf-8").read().rstrip("\n")
+ok = False
+try:
+    from plogical.mailUtilities import mailUtilities
+    mailUtilities.createEmailAccount(domain, user, password)
+    ok = True
+except Exception:
+    try:
+        from plogical import mailUtilities as mu
+        mu.mailUtilities.createEmailAccount(domain, user, password)
+        ok = True
+    except Exception as e:
+        sys.stderr.write("mailUtilities.createEmailAccount: %s\n" % e)
+        sys.exit(1)
+sys.exit(0 if ok else 1)
+PY
+    return $?
+  fi
+  # Fallback CLI — hasło chwilowo w argv cyberpanel (brak CyberCP python).
+  local pass
+  pass="$(tr -d '\n' < "${passfile}")"
+  hm_run cyberpanel createEmail \
+    --domainName "${domain}" \
+    --userName "${user}" \
+    --password "${pass}"
+}
+
+hm_mail_cp_change_password() {
+  local email="$1" passfile="$2"
+  local py="/usr/local/CyberCP/bin/python"
+  if [[ -x "${py}" && -d /usr/local/CyberCP ]]; then
+    hm_run "${py}" - "${email}" "${passfile}" <<'PY'
+import sys
+sys.path.insert(0, "/usr/local/CyberCP")
+email, pf = sys.argv[1], sys.argv[2]
+password = open(pf, "r", encoding="utf-8").read().rstrip("\n")
+try:
+    from plogical.mailUtilities import mailUtilities
+    mailUtilities.changeEmailPassword(email, password)
+except Exception:
+    try:
+        from plogical.mailUtilities import mailUtilities
+        mailUtilities.changeEmailPassword(email, password, 1)
+    except Exception as e:
+        sys.stderr.write("mailUtilities.changeEmailPassword: %s\n" % e)
+        sys.exit(1)
+sys.exit(0)
+PY
+    return $?
+  fi
+  local pass
+  pass="$(tr -d '\n' < "${passfile}")"
+  if ! hm_run cyberpanel changeEmailPassword \
+    --email "${email}" \
+    --password "${pass}"; then
+    hm_run cyberpanel changeEmailPass \
+      --email "${email}" \
+      --password "${pass}"
+  fi
+}
+
 hm_mail_normalize_local() {
   # biuro | biuro@example.pl → lokalna część; weryfikacja domeny
   local arg="$1" domain="$2" localpart
@@ -248,20 +327,20 @@ hm_mail_account_add() {
     hm_confirm_plan "mail add — ${email}" "Nowe konto pocztowe." "${plan[@]}" || return 1
   fi
 
-  # hm_run redaguje --password w applog
-  if ! hm_run cyberpanel createEmail \
-    --domainName "${domain}" \
-    --userName "${localpart}" \
-    --password "${pass}"; then
+  local passfile
+  passfile="$(hm_mail_passfile_write "${pass}")"
+  if ! hm_mail_cp_create_email "${domain}" "${localpart}" "${passfile}"; then
+    rm -f -- "${passfile}"
     hm_err "cyberpanel createEmail nieudane."
     return 1
   fi
+  rm -f -- "${passfile}"
 
   hm_ok "Utworzono ${email}"
-  echo
-  echo "  ${C_BOLD}Email:${C_RESET} ${email}"
-  echo "  ${C_BOLD}Hasło:${C_RESET} ${pass}"
-  echo "  ${C_DIM}Zapisz hasło — nie będzie ponownie pokazane.${C_RESET}"
+  hm_print_secret "" \
+    "  ${C_BOLD}Email:${C_RESET} ${email}" \
+    "  ${C_BOLD}Hasło:${C_RESET} ${pass}" \
+    "  ${C_DIM}Zapisz hasło — nie będzie ponownie pokazane.${C_RESET}"
   if hm_have_cmd doveadm; then
     hm_info "Weryfikacja: doveadm auth test ${email}  (wpisz hasło)"
   fi
@@ -296,22 +375,19 @@ hm_mail_account_passwd() {
     hm_confirm_plan "mail passwd — ${email}" "Nowe hasło zostanie wypisane raz." "${plan[@]}" || return 1
   fi
 
-  if ! hm_run cyberpanel changeEmailPassword \
-    --email "${email}" \
-    --password "${pass}"; then
-    # starsze aliasy
-    if ! hm_run cyberpanel changeEmailPass \
-      --email "${email}" \
-      --password "${pass}" 2>/dev/null; then
-      hm_err "cyberpanel changeEmailPassword nieudane."
-      return 1
-    fi
+  local passfile
+  passfile="$(hm_mail_passfile_write "${pass}")"
+  if ! hm_mail_cp_change_password "${email}" "${passfile}"; then
+    rm -f -- "${passfile}"
+    hm_err "cyberpanel changeEmailPassword nieudane."
+    return 1
   fi
+  rm -f -- "${passfile}"
 
   hm_ok "Hasło zmienione: ${email}"
-  echo
-  echo "  ${C_BOLD}Email:${C_RESET} ${email}"
-  echo "  ${C_BOLD}Hasło:${C_RESET} ${pass}"
+  hm_print_secret "" \
+    "  ${C_BOLD}Email:${C_RESET} ${email}" \
+    "  ${C_BOLD}Hasło:${C_RESET} ${pass}"
 }
 
 hm_mail_account_delete() {

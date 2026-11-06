@@ -131,6 +131,53 @@ else
   fail=1
 fi
 
+# --- delete QID: odmowa ALL / nieistniejący ---
+: > "${DELETED}"
+set +e
+hm_mail_queue_delete ALL --yes >/dev/null 2>"${tmpdir}/del-all.err"
+rc_all=$?
+hm_mail_queue_delete nonexist-qid --yes >/dev/null 2>"${tmpdir}/del-miss.err"
+rc_miss=$?
+set -e
+if [[ "${rc_all}" -ne 0 && "${rc_miss}" -ne 0 ]] \
+  && [[ ! -s "${DELETED}" ]] \
+  && grep -qi 'Nieprawidłowy QID\|ALL' "${tmpdir}/del-all.err" \
+  && grep -qi 'Brak wiadomości\|QID' "${tmpdir}/del-miss.err"; then
+  echo "OK   delete-qid-validate"
+else
+  echo "FAIL delete-qid-validate rc=${rc_all}/${rc_miss}"
+  cat "${tmpdir}/del-all.err" "${tmpdir}/del-miss.err" "${DELETED}" 2>/dev/null || true
+  fail=1
+fi
+
+# --- mail check bez dig: pominięto, nie „Brak SPF” ---
+hm_have_cmd() {
+  case "$1" in
+    postqueue|postsuper) return 0 ;;
+    dig) return 1 ;;
+    *) return 1 ;;
+  esac
+}
+chk="$(hm_mail_check_cmd example.pl 2>&1 || true)"
+if printf '%s\n' "${chk}" | grep -qi 'pominięto (brak dig)' \
+  && ! printf '%s\n' "${chk}" | grep -q 'Brak SPF' \
+  && ! printf '%s\n' "${chk}" | grep -q 'Brak DMARC' \
+  && ! printf '%s\n' "${chk}" | grep -q 'Brak TXT default'; then
+  echo "OK   check-no-dig-skip"
+else
+  echo "FAIL check-no-dig-skip"
+  printf '%s\n' "${chk}" | head -40
+  fail=1
+fi
+# przywróć dig w have_cmd
+hm_have_cmd() {
+  case "$1" in
+    postqueue|postsuper|dig) return 0 ;;
+    openssl|ss|nc|postconf|opendkim-genkey|systemctl|curl|timeout) return 1 ;;
+    *) command -v "$1" >/dev/null 2>&1 ;;
+  esac
+}
+
 # --- log domain filter exact ---
 logf="${tmpdir}/mail.log"
 cat > "${logf}" <<'EOF'
