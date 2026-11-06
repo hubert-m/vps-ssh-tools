@@ -16,6 +16,8 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [v0.1.11]
 
+- Fix: `backup restore` child po archive — wyjątek DB z manif. `databases_from_site_config` / wp-config w tar (live DOCROOT po archive znika)
+- Fix: `hm_detect_docker` — bez stdout (psuje `$(find_site)`); regresja w `test-docker-map.sh`
 - Fix: `dns add TXT` — SPF `-all` nie jest flagą; strip cudzysłowów; DKIM check wymaga v=DKIM1+p=
 - Fix: `mail add|passwd` — hasło poza applog (`hm_print_secret`); CyberCP python czyta plik 0600 (bez argv)
 - Fix: `deploy rollback` — rsync --delete ze snapshu (pliki dodane przez deploy znikają)

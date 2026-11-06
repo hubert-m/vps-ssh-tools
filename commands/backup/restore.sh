@@ -133,8 +133,61 @@ hm_backup_db_is_nonempty() {
 
 # Czy import DB zagraża żywej innej domenie (np. bazy mastera w starym snapshocie childa).
 # Przy restore childa: DB z website_id=master blokuj, chyba że config DOCROOT childa ją wskazuje.
+# DB z wp-config/.env snapshota: pole manifestu (nowe archive) albo files.tar.gz (stare).
+hm_backup_snap_site_config_dbs() {
+  local remote_base="$1"
+  local json raw name work member members tmp
+  [[ -n "${remote_base}" ]] || return 0
+  json="$(hm_backup_cat_manifest "${remote_base}" 2>/dev/null || true)"
+  raw="$(hm_backup_json_arr "${json}" "databases_from_site_config")"
+  raw="${raw//\"/}"
+  raw="${raw// /}"
+  if [[ -n "${raw}" ]]; then
+    IFS=',' read -r -a _cfg_arr <<< "${raw}"
+    for name in "${_cfg_arr[@]}"; do
+      [[ -n "${name}" ]] && printf '%s\n' "${name}"
+    done
+    return 0
+  fi
+  # Fallback: config w archiwum plików (po archive live docroot nie istnieje)
+  local has_tar=0
+  if [[ "${remote_base}" == /* ]]; then
+    [[ -f "${remote_base}/files.tar.gz" && -s "${remote_base}/files.tar.gz" ]] && has_tar=1
+  elif rclone ls "${remote_base}/files.tar.gz" >/dev/null 2>&1; then
+    has_tar=1
+  fi
+  [[ "${has_tar}" -eq 1 ]] || return 0
+  work="$(mktemp -d "${TMP_DIR:-/tmp}/hmtools-snapcfg.XXXXXX")"
+  members="$(hm_backup_r_cat "${remote_base}/files.tar.gz" 2>/dev/null \
+    | tar -tzf - 2>/dev/null \
+    | grep -E '(^|/)(wp-config\.php|\.env|configuration\.php)$' \
+    | head -n 20 || true)"
+  if [[ -z "${members}" ]]; then
+    rm -rf "${work}" 2>/dev/null || true
+    return 0
+  fi
+  # shellcheck disable=SC2086
+  hm_backup_r_cat "${remote_base}/files.tar.gz" 2>/dev/null \
+    | tar -xzf - -C "${work}" ${members} 2>/dev/null || true
+  {
+    while IFS= read -r member; do
+      [[ -n "${member}" ]] || continue
+      tmp="${work}/${member#./}"
+      [[ -f "${tmp}" ]] || continue
+      case "${member}" in
+        *wp-config.php) hm_extract_db_from_file "${tmp}" wp ;;
+        *.env) hm_extract_db_from_file "${tmp}" env ;;
+        *configuration.php) hm_extract_db_from_file "${tmp}" joomla ;;
+      esac
+    done <<< "${members}"
+  } | awk -F'\t' 'NF && !seen[$1]++ { print $1 }'
+  rm -rf "${work}" 2>/dev/null || true
+}
+
+# return 0 = odmowa (cudza DB); return 1 = OK do importu
+# opcjonalnie $3 = remote_base snapshota (wyjątek child: DB z wp-config w archiwum)
 hm_backup_db_belongs_to_other_domain() {
-  local dbname="$1" skip_domain="$2" other q row root doc hname horigin is_child
+  local dbname="$1" skip_domain="$2" remote_base="${3:-}" other q row root doc hname horigin is_child
   [[ -n "${dbname}" && -n "${skip_domain}" ]] || return 1
   hm_is_valid_db_name "${dbname}" || return 1
   [[ "${PANEL:-}" == "cyberpanel" ]] || return 1
@@ -174,7 +227,13 @@ LIMIT 1;
         )
       fi
     fi
-    return 0 # child restore + DB mastera
+    # Po archive live docroot znika — sprawdź DB z snapshota (manifest / files.tar.gz)
+    if [[ -n "${remote_base}" ]]; then
+      while IFS= read -r hname; do
+        [[ "${hname}" == "${dbname}" ]] && return 1
+      done < <(hm_backup_snap_site_config_dbs "${remote_base}")
+    fi
+    return 0 # child restore + DB mastera (nie z configu childa)
   fi
   # Dwa niezależne website — zawsze odmowa
   return 0
@@ -222,7 +281,7 @@ hm_backup_restore_dbs() {
     [[ -n "${db}" ]] || continue
     hm_is_valid_db_name "${db}" || { hm_warn "Pominięto nieprawidłową nazwę bazy: ${db}"; continue; }
     di=$((di + 1))
-    if [[ -n "${for_domain}" ]] && hm_backup_db_belongs_to_other_domain "${db}" "${for_domain}"; then
+    if [[ -n "${for_domain}" ]] && hm_backup_db_belongs_to_other_domain "${db}" "${for_domain}" "${remote_base}"; then
       hm_err "ODMOWA: baza \`${db}\` należy w CyberPanel do innej żywej domeny niż ${for_domain} — nie nadpisuję (nawet z --overwrite-db)."
       return 1
     fi
@@ -1372,7 +1431,7 @@ _hm_backup_restore_body() {
       _cdb="${_cdb// /}"
       [[ -n "${_cdb}" ]] || continue
       hm_is_valid_db_name "${_cdb}" || continue
-      if [[ -n "${domain}" ]] && hm_backup_db_belongs_to_other_domain "${_cdb}" "${domain}"; then
+      if [[ -n "${domain}" ]] && hm_backup_db_belongs_to_other_domain "${_cdb}" "${domain}" "${remote_base}"; then
         db_foreign=1
         plan_steps+=("ODMOWA: baza \`${_cdb}\` należy w CP do innej żywej domeny — bez importu (także z --overwrite-db)")
         continue

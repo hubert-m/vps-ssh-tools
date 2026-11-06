@@ -86,6 +86,19 @@ out="$(printf '%s\n' "${line}" | hm_docker_filter_for_site "other.test")"
 # name doesn't contain other.test, port maps to n8n only
 [[ -z "${out}" ]] && echo "OK   filter-miss" || { echo "FAIL filter-miss: ${out}"; fail=1; }
 
+# regresja: hm_detect_docker nie może pisać DOCKER na stdout (psuje $(find_site))
+if awk '
+  /^hm_detect_docker\(\)/ { in_fn=1; next }
+  in_fn && /^hm_detect_[a-z_]+\(\)/ { exit 0 }
+  in_fn && /printf[[:space:]]+['\''"]%s['\''"].*DOCKER/ { exit 1 }
+  END { exit 0 }
+' lib/detect.sh; then
+  echo "OK   detect-no-stdout-printf"
+else
+  echo "FAIL detect-no-stdout-printf"
+  fail=1
+fi
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"
   exit 1

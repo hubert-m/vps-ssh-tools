@@ -442,7 +442,8 @@ _hm_backup_archive_site_body() {
 
   local -a archive_dbs=()
   local -a archive_db_users=()
-  local dline dname dorigin dreason seen_adb="|"
+  local -a archive_dbs_from_config=()
+  local dline dname dorigin dreason seen_adb="|" seen_cfg="|"
   for dline in "${HM_DEL_DBS[@]}"; do
     [[ -n "${dline}" ]] || continue
     IFS='|' read -r dname _ <<<"${dline}"
@@ -458,12 +459,16 @@ _hm_backup_archive_site_body() {
     if [[ -n "${child_doc}" && -d "${child_doc}" ]]; then
       while IFS=$'\t' read -r hname horigin; do
         [[ -n "${hname}" ]] || continue
-        [[ "${seen_adb}" == *"|${hname}|"* ]] && continue
         case "${horigin}" in
           wp-config|.env|.env-url|configuration.php) ;;
           *) continue ;;
         esac
         hm_is_valid_db_name "${hname}" || continue
+        if [[ "${seen_cfg}" != *"|${hname}|"* ]]; then
+          archive_dbs_from_config+=("${hname}")
+          seen_cfg="${seen_cfg}${hname}|"
+        fi
+        [[ "${seen_adb}" == *"|${hname}|"* ]] && continue
         archive_dbs+=("${hname}")
         seen_adb="${seen_adb}${hname}|"
         hm_info "Archive dump DB ${hname} (child docroot, origin=${horigin}; w CP może być pod masterem — delete nadal nie dropuje)."
@@ -785,6 +790,13 @@ _hm_backup_archive_site_body() {
   done
   dbu_json="${dbu_json%,}"
 
+  local dbs_cfg_json=""
+  for n in "${archive_dbs_from_config[@]}"; do
+    [[ -n "${n}" ]] || continue
+    dbs_cfg_json="${dbs_cfg_json}\"${n}\","
+  done
+  dbs_cfg_json="${dbs_cfg_json%,}"
+
   local manifest
   manifest="$(hm_mktemp .json)"
   local _j_domain _j_host _j_root _j_doc _j_user _j_php _j_remote _j_uhome
@@ -809,6 +821,7 @@ _hm_backup_archive_site_body() {
   "unix_home": "${_j_uhome}",
   "php": "${_j_php}",
   "databases": [${db_json}],
+  "databases_from_site_config": [${dbs_cfg_json}],
   "db_users": [${dbu_json}],
   "db_accounts": ${has_db_accounts},
   "unix_account": ${has_unix_account},

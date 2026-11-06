@@ -306,8 +306,7 @@ hm_detect_docker() {
         ;;
     esac
   fi
-
-  printf '%s' "${DOCKER}"
+  # Tylko zmienne DOCKER_* — bez stdout (psuje $(find_site) / archive / restore).
 }
 
 hm_detect_supervisor() {

@@ -1,5 +1,7 @@
 # hmtools v0.1.11
 
+- Fix: `backup restore` child po archive — wyjątek DB z `databases_from_site_config` / wp-config w `files.tar.gz` (nie tylko live DOCROOT); `archive` zapisuje pole w manifeście
+- Fix: `hm_detect_docker` — bez `printf` na stdout (nie psuje `$(find_site)` / archive / restore); regresja w `test-docker-map.sh`
 - Fix: `dns add TXT` — wartość zbierana mimo `-all`; strip cudzysłowów; `dns check` DKIM wymaga v=DKIM1+p=
 - Fix: `mail add|passwd` — `hm_print_secret` (TTY/fd3, poza applog); hasło przez plik 0600 + CyberCP python (bez argv) / fallback CLI
 - Fix: `deploy rollback` — rsync --delete ze snapshu (usuwa pliki dodane przez deploy); 1:1 z tar
