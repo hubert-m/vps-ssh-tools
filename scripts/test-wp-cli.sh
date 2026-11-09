@@ -120,13 +120,68 @@ else
   fail=1
 fi
 
-# --- find cli ---
+# --- find cli (system/PATH, brak bundled) ---
 cli="$(hm_wp_find_cli)"
-if [[ -n "${cli}" && -x "${cli}" ]]; then
+if [[ -n "${cli}" && -x "${cli}" && "${cli}" != *"/lib/wp-cli/wp-cli.phar" ]]; then
   echo "OK   find-cli"
 else
-  echo "FAIL find-cli"
+  echo "FAIL find-cli got=${cli}"
   fail=1
+fi
+
+# --- bundled phar ma pierwszeństwo; cli-info bez kontekstu strony ---
+_saved_root="${HMTOOLS_ROOT}"
+_saved_domain="${HM_SITE_DOMAIN:-}"
+HMTOOLS_ROOT="${tmpdir}/hmroot"
+mkdir -p "${HMTOOLS_ROOT}/lib/wp-cli"
+cat > "${HMTOOLS_ROOT}/lib/wp-cli/wp-cli.phar" <<'EOF'
+#!/bin/sh
+if [ "$1" = "--info" ]; then
+  echo "WP-CLI version: 9.9.9-test"
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "${HMTOOLS_ROOT}/lib/wp-cli/wp-cli.phar"
+cli="$(hm_wp_find_cli)"
+if [[ "${cli}" == "${HMTOOLS_ROOT}/lib/wp-cli/wp-cli.phar" ]]; then
+  echo "OK   find-cli-bundled"
+else
+  echo "FAIL find-cli-bundled got=${cli}"
+  fail=1
+fi
+unset HM_SITE_DOMAIN
+info_out="$(cmd_wp cli-info 2>&1 || true)"
+if [[ "${info_out}" == *"9.9.9-test"* && "${info_out}" == *"lib/wp-cli/wp-cli.phar"* ]]; then
+  echo "OK   cli-info-global"
+else
+  echo "FAIL cli-info-global got=${info_out}"
+  fail=1
+fi
+HMTOOLS_ROOT="${_saved_root}"
+HM_SITE_DOMAIN="${_saved_domain}"
+
+# --- weryfikacja SHA-512 (bez sieci) ---
+# shellcheck disable=SC1091
+source scripts/install-wp-cli.sh
+printf 'wpcli-test' > "${tmpdir}/blob"
+if sum="$(hm_wpcli_sha512 "${tmpdir}/blob")"; then
+  printf '%s\n' "${sum}" > "${tmpdir}/blob.sha512"
+  if hm_wpcli_verify_sha512 "${tmpdir}/blob" "${tmpdir}/blob.sha512"; then
+    echo "OK   sha512-match"
+  else
+    echo "FAIL sha512-match"
+    fail=1
+  fi
+  printf '%s\n' "deadbeef" > "${tmpdir}/blob.bad"
+  if hm_wpcli_verify_sha512 "${tmpdir}/blob" "${tmpdir}/blob.bad"; then
+    echo "FAIL sha512-reject"
+    fail=1
+  else
+    echo "OK   sha512-reject"
+  fi
+else
+  echo "SKIP sha512 (brak sha512sum/shasum/openssl)"
 fi
 
 # --- snapshot create ---

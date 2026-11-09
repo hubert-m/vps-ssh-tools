@@ -412,7 +412,7 @@ hm_tab_complete() {
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         else
-          for m in sites install plugins plugin update maintenance verify search-replace admin-reset cache cron rollback snaps help; do
+          for m in sites install cli-info cli-update plugins plugin update maintenance verify search-replace admin-reset cache cron rollback snaps help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi

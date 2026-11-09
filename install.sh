@@ -217,9 +217,37 @@ else
   echo "Wersja local : (brak — świeża instalacja)"
 fi
 
+# Dociąga oficjalny wp-cli.phar do ${DEST}/lib/wp-cli/ (nie przerywa instalacji hmtools przy błędzie sieci).
+install_wp_cli() {
+  local script="${DEST}/scripts/install-wp-cli.sh"
+  local fetched=""
+  if [[ ! -f "${script}" ]]; then
+    fetched="$(mktemp /tmp/install-wp-cli.XXXXXX.sh)"
+    local url="https://raw.githubusercontent.com/${REPO_SLUG}/${REPO_BRANCH}/scripts/install-wp-cli.sh"
+    if ! curl -fsSL --retry 2 --max-time 60 -o "${fetched}" "${url}"; then
+      echo "UWAGA: nie pobrano scripts/install-wp-cli.sh — pomijam WP-CLI." >&2
+      rm -f "${fetched}"
+      return 0
+    fi
+    script="${fetched}"
+  fi
+  if ! bash "${script}" "${DEST}"; then
+    echo "UWAGA: WP-CLI nie zostało zainstalowane (sieć lub suma SHA-512). hmtools działa dalej." >&2
+    echo "       Ponowienie: hmtools → wp cli-update" >&2
+    rm -f "${fetched}"
+    return 1
+  fi
+  rm -f "${fetched}"
+  return 0
+}
+
 if [[ "${IS_UPDATE}" -eq 1 && -n "${CURRENT_VERSION}" && "${CURRENT_VERSION}" == "${TARGET_VERSION}" && "${FORCE}" != "1" ]]; then
   echo
   echo "hmtools jest już w najnowszej wersji (${CURRENT_VERSION}). Nic do zrobienia."
+  if [[ ! -s "${DEST}/lib/wp-cli/wp-cli.phar" ]]; then
+    echo "Brak lib/wp-cli/wp-cli.phar — pobieram WP-CLI."
+    install_wp_cli || true
+  fi
   if [[ -f "${DEST}/changelogs/${CURRENT_VERSION}.txt" ]]; then
     print_changelog_file "${CURRENT_VERSION}" "Co zawiera ${CURRENT_VERSION}"
   fi
@@ -398,8 +426,13 @@ else
   fi
 fi
 
-# --- Zachowaj istniejącą konfigurację ---
+# --- Zachowaj istniejącą konfigurację i phar WP-CLI (install_tree kasuje lib/) ---
 CONF_BACKUP=""
+WPCLI_KEEP=""
+if [[ -f "${DEST}/lib/wp-cli/wp-cli.phar" ]]; then
+  WPCLI_KEEP="$(mktemp /tmp/wp-cli.phar.XXXXXX)"
+  "${HM_CP[@]}" -a "${DEST}/lib/wp-cli/wp-cli.phar" "${WPCLI_KEEP}"
+fi
 if [[ -f "${DEST}/config/hmtools.conf" ]]; then
   CONF_BACKUP="$(mktemp /tmp/hmtools.conf.XXXXXX)"
   "${HM_CP[@]}" -a "${DEST}/config/hmtools.conf" "${CONF_BACKUP}"
@@ -440,6 +473,16 @@ install_tree() {
 }
 
 install_tree "${SRC}"
+
+if ! install_wp_cli; then
+  if [[ -n "${WPCLI_KEEP}" && -s "${WPCLI_KEEP}" ]]; then
+    mkdir -p "${DEST}/lib/wp-cli"
+    "${HM_CP[@]}" -a "${WPCLI_KEEP}" "${DEST}/lib/wp-cli/wp-cli.phar"
+    chmod 755 "${DEST}/lib/wp-cli/wp-cli.phar" 2>/dev/null || true
+    echo "Przywrócono poprzedni lib/wp-cli/wp-cli.phar" >&2
+  fi
+fi
+rm -f "${WPCLI_KEEP}"
 
 mkdir -p "${DEST}/config"
 if [[ -n "${CONF_BACKUP}" && -f "${CONF_BACKUP}" ]]; then

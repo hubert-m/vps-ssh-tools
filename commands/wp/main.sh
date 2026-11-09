@@ -2,9 +2,14 @@
 # Moduł: wp — WordPress przez WP-CLI (jako user strony, snapshot przed zmianami)
 
 _hm_cmd_help wp <<'EOF'
-Użycie (globalnie):
+Użycie (globalnie, bez kontekstu strony):
   wp sites                         Instalacje WP: wersja, aktualizacje, maintenance, PHP
   wp install <domena> --title "…" --admin-email … [--yes]
+  wp cli-info                      ścieżka i `wp --info` (bundled phar lub systemowy wp)
+  wp cli-update                    pobierz oficjalny wp-cli.phar → lib/wp-cli/ (SHA-512)
+
+WP-CLI: <hmtools>/lib/wp-cli/wp-cli.phar (dociągany przez update-hmtools / wp cli-update).
+Gdy brak bundled — używany jest /usr/local/bin/wp lub /usr/bin/wp.
 
 Użycie (kontekst [domena]>):
   wp                               Status: wersja, URL, aktualizacje, debug, cron
@@ -29,10 +34,22 @@ source "${_HM_WP_DIR}/snapshot.sh"
 # shellcheck source=update.sh
 source "${_HM_WP_DIR}/update.sh"
 
+hm_wp_bundled_phar() {
+  local root="${HMTOOLS_ROOT:-/hm-tools}"
+  printf '%s' "${root}/lib/wp-cli/wp-cli.phar"
+}
+
 hm_wp_find_cli() {
-  local p
+  local p bundled
+  bundled="$(hm_wp_bundled_phar)"
+  if [[ -f "${bundled}" && -s "${bundled}" ]]; then
+    printf '%s' "${bundled}"
+    return 0
+  fi
   for p in /usr/local/bin/wp /usr/bin/wp "$(command -v wp 2>/dev/null || true)"; do
     [[ -n "${p}" && -x "${p}" ]] || continue
+    # nie bierz samego hmtools, gdyby PATH wskazał wrapper o tej nazwie
+    [[ "$(basename "${p}")" == "hmtools" ]] && continue
     printf '%s' "${p}"
     return 0
   done
@@ -45,12 +62,64 @@ hm_wp_ensure_cli() {
     printf '%s' "${cli}"
     return 0
   fi
-  hm_err "Brak WP-CLI (/usr/bin/wp lub /usr/local/bin/wp)."
-  hm_info "Instalacja (jak CyberPanel installWPCLI):"
-  echo "  curl -fsSL -o /usr/local/bin/wp https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar"
-  echo "  chmod +x /usr/local/bin/wp && wp --info"
-  echo "  (opcjonalnie: sha256sum weryfikacja z oficjalnego checksum)"
+  hm_err "Brak WP-CLI (lib/wp-cli/wp-cli.phar ani /usr/bin/wp, /usr/local/bin/wp)."
+  hm_info "Pobierz oficjalny phar (SHA-512):  wp cli-update"
+  hm_info "Albo zaktualizuj hmtools:          update-hmtools  (instalator dociąga phar)"
   return 1
+}
+
+# Globalnie — bez kontekstu strony. Sam phar (shebang) albo php, gdy brak +x.
+hm_wp_cli_exec() {
+  local cli php
+  cli="$(hm_wp_ensure_cli)" || return 1
+  if [[ -x "${cli}" ]]; then
+    "${cli}" "$@"
+    return $?
+  fi
+  php=""
+  if command -v php >/dev/null 2>&1; then
+    php="$(command -v php)"
+  elif [[ -x /usr/bin/php ]]; then
+    php="/usr/bin/php"
+  fi
+  [[ -n "${php}" && -x "${php}" ]] || {
+    hm_err "WP-CLI nie jest wykonywalny i brak php w PATH."
+    return 1
+  }
+  "${php}" "${cli}" "$@"
+}
+
+hm_wp_cli_info() {
+  local cli
+  cli="$(hm_wp_ensure_cli)" || return 1
+  echo "${C_BOLD}WP-CLI${C_RESET}"
+  echo "  Path : ${cli}"
+  if [[ "${cli}" == "$(hm_wp_bundled_phar)" ]]; then
+    echo "  Źródło: hmtools (lib/wp-cli/wp-cli.phar)"
+  else
+    echo "  Źródło: system"
+  fi
+  hm_wp_cli_exec --info
+}
+
+hm_wp_cli_update() {
+  local script="${HMTOOLS_ROOT:-/hm-tools}/scripts/install-wp-cli.sh"
+  local dest="${HMTOOLS_ROOT:-/hm-tools}"
+  [[ -f "${script}" ]] || {
+    hm_err "Brak skryptu ${script}"
+    return 1
+  }
+  if [[ ! -w "${dest}" && "$(id -u)" -ne 0 ]]; then
+    hm_err "wp cli-update wymaga zapisu do ${dest}/lib/wp-cli (uruchom jako root)."
+    return 1
+  fi
+  hm_info "Aktualizacja WP-CLI → ${dest}/lib/wp-cli/wp-cli.phar"
+  if ! bash "${script}" "${dest}"; then
+    hm_err "wp cli-update nieudany (phar bez zmian, jeśli podmiana nie doszła do mv)."
+    return 1
+  fi
+  hm_ok "WP-CLI zaktualizowany."
+  hm_wp_cli_info
 }
 
 # Znajdź katalog z wp-config.php (docroot + głębokość ≤2)
@@ -471,6 +540,12 @@ hm_wp_install() {
 cmd_wp() {
   local sub="${1:-}"
   case "${sub}" in
+    cli-info|cliinfo)
+      hm_wp_cli_info
+      ;;
+    cli-update|cliupdate)
+      hm_wp_cli_update
+      ;;
     sites|list-sites)
       shift || true
       cmd_wp_sites "$@"

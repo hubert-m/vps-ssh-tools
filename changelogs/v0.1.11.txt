@@ -1,5 +1,6 @@
 # hmtools v0.1.11
 
+- Feat: `wp cli-info` / `wp cli-update` — oficjalny `wp-cli.phar` w `lib/wp-cli/` (SHA-512); `update-hmtools` / `install.sh` dociąga phar
 - Fix: `backup restore` child po archive — wyjątek DB z `databases_from_site_config` / wp-config w `files.tar.gz` (nie tylko live DOCROOT); `archive` zapisuje pole w manifeście
 - Fix: `hm_detect_docker` — bez `printf` na stdout (nie psuje `$(find_site)` / archive / restore); regresja w `test-docker-map.sh`
 - Fix: `dns add TXT` — wartość zbierana mimo `-all`; strip cudzysłowów; `dns check` DKIM wymaga v=DKIM1+p=

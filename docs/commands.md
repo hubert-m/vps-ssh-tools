@@ -13,6 +13,7 @@
 | `mail …` | Skrzynki CP (`add`/`passwd`/`delete`/`forward`/`catchall`) + diag (`queue`/`log`/`check`/`dkim`/`blacklist`) |
 | `dns` / `dns check <d>` | Strefy PowerDNS + diagnostyka A/AAAA/MX/SPF/DKIM/DMARC/CAA vs IP VPS |
 | `wp sites` / `wp install <d> …` | Lista instalacji WP; opcjonalnie `cyberpanel installWordPress` |
+| `wp cli-info` / `wp cli-update` | Info bundled WP-CLI; pobranie `lib/wp-cli/wp-cli.phar` (SHA-512). To samo przy `update-hmtools` |
 | `use <n\|domena>` | Wejście w kontekst (Tab uzupełnia domenę z listy) |
 | `backup setup` | Instalacja/konfiguracja rclone + Google Drive |
 | `backup config` | Ustaw katalog root backupów na Drive (jednorazowo) |

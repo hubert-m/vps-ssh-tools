@@ -16,6 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [v0.1.11]
 
+- Feat: `wp cli-info` / `wp cli-update` — phar w `lib/wp-cli/` (weryfikacja SHA-512); instalator hmtools dociąga WP-CLI
 - Fix: `backup restore` child po archive — wyjątek DB z manif. `databases_from_site_config` / wp-config w tar (live DOCROOT po archive znika)
 - Fix: `hm_detect_docker` — bez stdout (psuje `$(find_site)`); regresja w `test-docker-map.sh`
 - Fix: `dns add TXT` — SPF `-all` nie jest flagą; strip cudzysłowów; DKIM check wymaga v=DKIM1+p=
