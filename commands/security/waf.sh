@@ -309,7 +309,12 @@ hm_waf_log_cmd() {
   local tmp
   tmp="$(hm_mktemp .waflog)"
   hm_waf_parse_audit "${log}" > "${tmp}.all"
-  awk -F'\t' -v dom="${domain}" -v ipf="${ip}" '
+  hm_table_begin RLLL
+  hm_table_row COUNT RULE MSG "URI (przykład)"
+  while IFS=$'\t' read -r c id msg uri; do
+    [[ -n "${id}" ]] || continue
+    hm_table_row "${c}" "${id}" "${msg}" "${uri}"
+  done < <(awk -F'\t' -v dom="${domain}" -v ipf="${ip}" '
     {
       id=$1; msg=$2; host=$3; uri=$4; ip=$5
       if (dom != "") {
@@ -325,13 +330,8 @@ hm_waf_log_cmd() {
     END {
       for (i in cnt) printf "%d\t%s\t%s\t%s\n", cnt[i], i, sample_msg[i], sample_uri[i]
     }
-  ' "${tmp}.all" | sort -t$'\t' -k1,1nr | head -n "${n}" | {
-    printf '  %-6s %-10s %-40s %s\n' "COUNT" "RULE" "MSG" "URI (przykład)"
-    while IFS=$'\t' read -r c id msg uri; do
-      [[ -n "${id}" ]] || continue
-      printf '  %-6s %-10s %-40s %s\n' "${c}" "${id}" "${msg:0:40}" "${uri:0:40}"
-    done
-  }
+  ' "${tmp}.all" | sort -t$'\t' -k1,1nr | head -n "${n}")
+  hm_table_print
   rm -f "${tmp}" "${tmp}.all"
 }
 

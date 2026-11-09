@@ -127,8 +127,9 @@ hm_redis_cmd_dbs() {
 hm_redis_cmd_clients() {
   hm_redis_require || return 1
   echo "${C_BOLD}Redis — clients${C_RESET}"
-  printf '  %-8s %-18s %-16s %-12s %s\n' "id" "addr" "name" "cmd" "age"
-  hm_redis_cli CLIENT LIST 2>/dev/null | while IFS= read -r line; do
+  hm_table_begin LLLLR
+  hm_table_row id addr name cmd age
+  while IFS= read -r line; do
     [[ -n "${line}" ]] || continue
     local id addr name cmd age
     id="$(printf '%s' "${line}" | sed -n 's/.*\bid=\([0-9]*\).*/\1/p')"
@@ -136,12 +137,12 @@ hm_redis_cmd_clients() {
     name="$(printf '%s' "${line}" | sed -n 's/.*\bname=\([^ ]*\).*/\1/p')"
     cmd="$(printf '%s' "${line}" | sed -n 's/.*\bcmd=\([^ ]*\).*/\1/p')"
     age="$(printf '%s' "${line}" | sed -n 's/.*\bage=\([0-9]*\).*/\1/p')"
-    # unix socket — skróć do basename
     if [[ "${addr}" == /* ]]; then
       addr="unix:$(basename "${addr}")"
     fi
-    printf '  %-8s %-18s %-16s %-12s %s\n' "${id:--}" "${addr:--}" "${name:--}" "${cmd:--}" "${age:--}"
-  done
+    hm_table_row "${id:--}" "${addr:--}" "${name:--}" "${cmd:--}" "${age:--}"
+  done < <(hm_redis_cli CLIENT LIST 2>/dev/null || true)
+  hm_table_print
 }
 
 hm_redis_cmd_slowlog() {
@@ -237,6 +238,8 @@ hm_redis_cmd_sites() {
     hm_warn "Brak stron na liście (webs / use)."
     return 0
   fi
+  hm_table_begin
+  hm_table_row DOMENA HINT PLIK
 
   # Zachowaj kontekst REPL — po skanie wróć (pusty = hmtools> bez strony).
   hm_site_context_push
@@ -268,9 +271,12 @@ hm_redis_cmd_sites() {
       hint="$(hm_redis_scan_file_hints "${f}" 2>/dev/null || true)"
       [[ -n "${hint}" ]] || continue
       any=1
-      printf '  %-28s %s  %s\n' "${domain}" "${hint}" "${f}"
+      hm_table_row "${domain}" "${hint}" "${f}"
     done
   done
+  if [[ "${any}" -eq 1 ]]; then
+    hm_table_print
+  fi
   hm_site_context_pop
   if [[ "${any}" -eq 0 ]]; then
     echo "  (brak heurystycznych trafień .env / WP / Laravel)"

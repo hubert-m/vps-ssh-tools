@@ -150,17 +150,18 @@ hm_ols_stats_print() {
   echo
 
   echo "${C_BOLD}VHost (REQ_RATE) — top REQ_PER_SEC${C_RESET}"
+  local sorted
   if [[ "${#vh_rps[@]}" -eq 0 ]]; then
     echo "  (brak danych per-vhost)"
   else
-    local sorted
-    # liczby zawsze niepuste (unikaj zlewania kolumn przy IFS=tab)
+    hm_table_begin LRR
+    hm_table_row VHOST "REQ/s" PROC
     sorted="$(for k in "${!vh_rps[@]}"; do printf '%s\t%s\t%s\n' "${vh_rps[$k]:-0}" "${vh_proc[$k]:-0}" "${k:--}"; done | sort -t$'\t' -k1,1nr)"
-    printf '  %-40s %10s %8s\n' "VHOST" "REQ/s" "PROC"
     while IFS=$'\t' read -r rps proc vh; do
       [[ -n "${vh}" && "${vh}" != "-" ]] || continue
-      printf '  %-40s %10s %8s\n' "${vh}" "${rps}" "${proc}"
+      hm_table_row "${vh}" "${rps}" "${proc}"
     done <<< "${sorted}"
+    hm_table_print
   fi
   echo
 
@@ -168,7 +169,8 @@ hm_ols_stats_print() {
   if [[ "${#ea_wait[@]}" -eq 0 ]]; then
     echo "  (brak EXTAPP w raporcie)"
   else
-    printf '  %-48s %6s %6s %6s %6s %8s\n' "APP" "WAITQ" "INUSE" "IDLE" "POOL" "REQ/s"
+    hm_table_begin LRRRRR
+    hm_table_row APP WAITQ INUSE IDLE POOL "REQ/s"
     sorted="$(for k in "${!ea_wait[@]}"; do
       printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "${ea_wait[$k]:-0}" "${ea_inuse[$k]:-0}" "${ea_idle[$k]:-0}" "${ea_pool[$k]:-0}" \
@@ -177,12 +179,12 @@ hm_ols_stats_print() {
     while IFS=$'\t' read -r wq inu idl pool rps lab _; do
       [[ -n "${lab}" && "${lab}" != "-" ]] || continue
       if [[ "${wq:-0}" -gt 0 ]]; then
-        printf '  %s%-48s%s %s%6s%s %6s %6s %6s %8s\n' \
-          "${C_RED}" "${lab}" "${C_RESET}" "${C_RED}" "${wq}" "${C_RESET}" "${inu}" "${idl}" "${pool}" "${rps}"
+        hm_table_row "${C_RED}${lab}${C_RESET}" "${C_RED}${wq}${C_RESET}" "${inu}" "${idl}" "${pool}" "${rps}"
       else
-        printf '  %-48s %6s %6s %6s %6s %8s\n' "${lab}" "${wq}" "${inu}" "${idl}" "${pool}" "${rps}"
+        hm_table_row "${lab}" "${wq}" "${inu}" "${idl}" "${pool}" "${rps}"
       fi
     done <<< "${sorted}"
+    hm_table_print
   fi
 }
 
@@ -588,7 +590,9 @@ hm_ols_proxy_status_domain() {
   local domain="$1"
   local line name addr port listen http st
   echo "${C_BOLD}Proxy — ${domain}${C_RESET}"
-  local found=0
+  local found=0 curl_st
+  hm_table_begin
+  hm_table_row NAME ADDR PORT STATUS CURL
   while IFS='|' read -r name addr port; do
     [[ -n "${port}" ]] || continue
     found=1
@@ -598,16 +602,18 @@ hm_ols_proxy_status_domain() {
     else
       st="${C_RED}MARTWE (503?)${C_RESET}"
     fi
-    printf '  %-20s %s → :%s  [%s]' "${name}" "${addr}" "${port}" "${st}"
+    curl_st="-"
     if [[ "${listen}" -eq 1 && "${http}" -eq 1 ]]; then
-      printf '  curl=OK'
+      curl_st="OK"
     elif [[ "${listen}" -eq 1 ]]; then
-      printf '  curl=brak odpowiedzi'
+      curl_st="brak odpowiedzi"
     fi
-    echo
+    hm_table_row "${name}" "${addr}" ":${port}" "${st}" "${curl_st}"
   done < <(hm_ols_proxy_blocks_for_domain "${domain}")
   if [[ "${found}" -eq 0 ]]; then
     echo "  (brak extprocessor type proxy)"
+  else
+    hm_table_print
   fi
 }
 

@@ -100,11 +100,10 @@ hm_health_section_ram() {
   echo "${C_BOLD}Top RAM (RSS ↓)${C_RESET} ${C_DIM}— ${count} procesów${C_RESET}"
   hm_health_mem_summary
   echo
-  printf '  %s%-12s %5s %7s %-12s %-28s %s%s\n' \
-    "${C_DIM}" "RSS" "%MEM" "PID" "USER" "SITE / SERVICE" "COMMAND" "${C_RESET}"
-  printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..96})" "${C_RESET}"
+  hm_table_begin LRRLLLL
+  hm_table_row RSS "%MEM" PID USER "SITE / SERVICE" COMMAND CWD
 
-  local pid user pmem rss_kb cmd site unit cwd hint rss_h label
+  local pid user pmem rss_kb cmd site unit cwd hint rss_h label cwd_show
   local n=0
   # RSS w KB (ps); sort malejąco
   while IFS= read -r line || [[ -n "${line:-}" ]]; do
@@ -131,18 +130,17 @@ hm_health_section_ram() {
     elif [[ -n "${unit}" ]]; then
       label="${unit}"
     fi
-    if [[ ${#label} -gt 28 ]]; then
-      label="${label:0:27}…"
-    fi
-    printf '  %-12s %5s %7s %-12s %-28s %s\n' \
-      "${rss_h}" "${pmem}" "${pid}" "${user:0:12}" "${label}" "${cmd}"
+    cwd_show="-"
     if [[ -n "${cwd}" && "${cwd}" != "/" ]]; then
-      echo "  ${C_DIM}             cwd: ${cwd}${C_RESET}"
+      cwd_show="${cwd}"
     fi
+    hm_table_row "${rss_h}" "${pmem}" "${pid}" "${user}" "${label}" "${cmd}" "${cwd_show}"
   done < <(ps -eo pid=,user=,%mem=,rss=,args= --sort=-rss 2>/dev/null | head -n "$((count + 5))")
 
   if [[ "${n}" -eq 0 ]]; then
     hm_warn "Brak danych z ps (RSS)."
+  else
+    hm_table_print
   fi
 }
 
@@ -152,11 +150,10 @@ hm_health_section_cpu() {
   echo -n "  Load: "
   cat /proc/loadavg 2>/dev/null || uptime
   echo
-  printf '  %s%6s %7s %-12s %-28s %s%s\n' \
-    "${C_DIM}" "%CPU" "PID" "USER" "SITE / SERVICE" "COMMAND" "${C_RESET}"
-  printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..96})" "${C_RESET}"
+  hm_table_begin RRLLLL
+  hm_table_row "%CPU" PID USER "SITE / SERVICE" COMMAND CWD
 
-  local pid user pcpu cmd site unit cwd label n=0
+  local pid user pcpu cmd site unit cwd label cwd_show n=0
   while IFS= read -r line || [[ -n "${line:-}" ]]; do
     [[ -n "${line}" ]] || continue
     pid="$(printf '%s' "${line}" | awk '{print $1}')"
@@ -177,18 +174,17 @@ hm_health_section_cpu() {
     elif [[ -n "${unit}" ]]; then
       label="${unit}"
     fi
-    if [[ ${#label} -gt 28 ]]; then
-      label="${label:0:27}…"
-    fi
-    printf '  %6s %7s %-12s %-28s %s\n' \
-      "${pcpu}" "${pid}" "${user:0:12}" "${label}" "${cmd}"
+    cwd_show="-"
     if [[ -n "${cwd}" && "${cwd}" != "/" ]]; then
-      echo "  ${C_DIM}             cwd: ${cwd}${C_RESET}"
+      cwd_show="${cwd}"
     fi
+    hm_table_row "${pcpu}" "${pid}" "${user}" "${label}" "${cmd}" "${cwd_show}"
   done < <(ps -eo pid=,user=,%cpu=,args= --sort=-%cpu 2>/dev/null | head -n "$((count + 5))")
 
   if [[ "${n}" -eq 0 ]]; then
     hm_warn "Brak danych z ps (CPU)."
+  else
+    hm_table_print
   fi
 }
 

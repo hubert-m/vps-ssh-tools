@@ -214,19 +214,20 @@ hm_mail_accounts_list() {
 
   echo "${C_BOLD}Skrzynki — ${domain}${C_RESET}"
   local any=0 email quota mailp localpart path kb
-  printf '  %-36s %10s %10s  %s\n' "EMAIL" "QUOTA" "SIZE" "MAILDIR"
+  hm_table_begin LRRL
+  hm_table_row EMAIL QUOTA SIZE MAILDIR
   while IFS=$'\t' read -r email quota mailp; do
     [[ -n "${email}" ]] || continue
     any=1
     localpart="${email%%@*}"
     path="$(hm_mail_maildir_path "${domain}" "${localpart}")"
     kb="$(hm_mail_du_kb "${path}")"
-    printf '  %-36s %10s %10s  %s\n' \
-      "${email}" "${quota}" "$(hm_human_size "$((kb * 1024))" 2>/dev/null || echo "${kb}K")" "${path}"
+    hm_table_row "${email}" "${quota}" "$(hm_human_size "$((kb * 1024))" 2>/dev/null || echo "${kb}K")" "${path}"
   done < <(hm_mail_list_domain_emails "${domain}")
-
   if [[ "${any}" -eq 0 ]]; then
     echo "  (brak skrzynek)"
+  else
+    hm_table_print
   fi
 
   echo
@@ -281,9 +282,13 @@ ORDER BY d;
     return 0
   fi
   local line
-  printf '%s\n' "${rows[@]}" | sort -t'|' -k1,1nr | head -20 | while IFS='|' read -r kb email path; do
-    printf '  %10s  %-40s  %s\n' "$(hm_human_size "$((kb * 1024))" 2>/dev/null || echo "${kb}K")" "${email}" "${path}"
-  done
+  hm_table_begin RLL
+  hm_table_row ROZMIAR EMAIL MAILDIR
+  while IFS='|' read -r kb email path; do
+    [[ -n "${email}" ]] || continue
+    hm_table_row "$(hm_human_size "$((kb * 1024))" 2>/dev/null || echo "${kb}K")" "${email}" "${path}"
+  done < <(printf '%s\n' "${rows[@]}" | sort -t'|' -k1,1nr | head -20)
+  hm_table_print
 }
 
 hm_mail_account_add() {

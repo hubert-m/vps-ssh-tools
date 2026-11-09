@@ -243,32 +243,26 @@ hm_print_dbs_for_site() {
   local site_user="${4:-${HM_SITE_USER:-}}"
   local any=0
 
-  printf '  %s%-32s %-14s %-12s %s%s\n' \
-    "${C_DIM}" "DATABASE" "USER/ŹRÓDŁO" "ROZMIAR" "STATUS" "${C_RESET}"
-  printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..72})" "${C_RESET}"
+  hm_table_begin LLRL
+  hm_table_row DATABASE "USER/ŹRÓDŁO" ROZMIAR STATUS
 
   local name user size origin
   # sort malejąco po rozmiarze (kolumna 3)
   while IFS=$'\t' read -r name user size origin; do
     [[ -n "${name}" ]] || continue
     any=1
-    printf '  %-32s %-14s %-12s %s\n' \
-      "${name}" \
-      "${user:--}" \
-      "$(hm_human_size "${size}")" \
-      "${origin}"
+    hm_table_row "${name}" "${user:--}" "$(hm_human_size "${size}")" "${origin}"
   done < <(hm_dbs_for_site "${domain}" "${docroot}" "${site_root}" "${site_user}" \
             | sort -t$'\t' -k3,3nr)
 
   if [[ "${any}" -eq 0 ]]; then
     hm_warn "Brak wykrytych baz dla ${domain}."
+  else
+    hm_table_print
   fi
 }
 
 hm_print_all_dbs() {
-  printf '  %s%-40s %s%s\n' "${C_DIM}" "DATABASE" "ROZMIAR" "${C_RESET}"
-  printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..52})" "${C_RESET}"
-
   local db size any=0
   local -a rows=() dbs=()
   while IFS= read -r db; do
@@ -290,10 +284,13 @@ hm_print_all_dbs() {
   done
   hm_progress_done
 
+  hm_table_begin LR
+  hm_table_row DATABASE ROZMIAR
   while IFS=$'\t' read -r size db; do
     [[ -n "${db}" ]] || continue
-    printf '  %-40s %s\n' "${db}" "$(hm_human_size "${size}")"
+    hm_table_row "${db}" "$(hm_human_size "${size}")"
   done < <(printf '%s\n' "${rows[@]}" | sort -t$'\t' -k1,1nr)
+  hm_table_print
   echo
   echo "  ${C_DIM}Sortowanie: rozmiar ↓${C_RESET}"
 }
@@ -378,25 +375,26 @@ ORDER BY table_schema, (data_length + index_length) DESC;
     done | sort -t $'\t' -nr -k1,1 | cut -f2-
   )
 
-  printf '  %s%-40s %s%s\n' "${C_DIM}" "DATABASE / TABLE" "ROZMIAR" "${C_RESET}"
-  printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..52})" "${C_RESET}"
+  hm_table_begin LLR
+  hm_table_row BAZA TABELA ROZMIAR
 
   local any=0
   for d in "${sorted_dbs[@]}"; do
     [[ "${db_sum[$d]}" -ge "${min_bytes}" ]] || continue
     any=1
-    printf '  %-40s %s\n' "${d}" "$(hm_human_size "${db_sum[$d]}")"
+    hm_table_row "${d}" "(suma)" "$(hm_human_size "${db_sum[$d]}")"
     while IFS=$'\t' read -r schema table sz || [[ -n "${schema:-}" ]]; do
       [[ "${schema}" == "${d}" ]] || continue
       [[ "${sz}" =~ ^[0-9]+$ ]] || continue
       [[ "${sz}" -ge "${min_bytes}" ]] || continue
-      printf '    %-38s %s\n' "${table}" "$(hm_human_size "${sz}")"
+      hm_table_row "${d}" "${table}" "$(hm_human_size "${sz}")"
     done <<<"${raw}"
   done
 
   if [[ "${any}" -eq 0 ]]; then
     echo "  ${C_DIM}(brak baz ≥ ${min_label})${C_RESET}"
   else
+    hm_table_print
     echo
     echo "  ${C_DIM}Próg: ${min_label} — tabele poniżej progu pominięte${C_RESET}"
   fi

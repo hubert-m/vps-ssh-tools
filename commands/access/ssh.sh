@@ -335,6 +335,8 @@ hm_access_ssh_keys_list() {
   hm_access_ssh_path_ok "${user}" "${home}" "${keysf}" || return 1
   echo "  Plik: ${keysf}"
   echo
+  hm_table_begin RLL
+  hm_table_row "#" TYP KOMENTARZ
   while IFS= read -r line || [[ -n "${line}" ]]; do
     [[ -n "${line}" ]] || continue
     [[ "${line}" =~ ^[[:space:]]*# ]] && continue
@@ -343,10 +345,12 @@ hm_access_ssh_keys_list() {
     local typ comment
     typ="$(printf '%s' "${line}" | awk '{print $1}')"
     comment="$(printf '%s' "${line}" | awk '{print $3}')"
-    printf '  %2d  %-20s %s\n' "${i}" "${typ}" "${comment:-(brak komentarza)}"
+    hm_table_row "${i}" "${typ}" "${comment:-(brak komentarza)}"
   done < "${keysf}"
   if [[ "${i}" -eq 0 ]]; then
     echo "  (brak kluczy)"
+  else
+    hm_table_print
   fi
 }
 

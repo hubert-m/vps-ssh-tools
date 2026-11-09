@@ -200,10 +200,13 @@ hm_mail_queue_cmd() {
   } END{for(x in c) printf "%6d  %s\n", c[x], x}' "${tmp}" | sort -nr | head -15
   echo
   echo "${C_BOLD}Próbka (max 20)${C_RESET}"
-  printf '  %-12s %-28s %-28s %s\n' "QID" "FROM" "TO" "REASON"
-  head -20 "${tmp}" | while IFS=$'\t' read -r q s r w sz; do
-    printf '  %-12s %-28s %-28s %s\n' "${q}" "${s:0:28}" "${r:0:28}" "${w:0:40}"
-  done
+  hm_table_begin
+  hm_table_row QID FROM TO REASON
+  while IFS=$'\t' read -r q s r w sz; do
+    [[ -n "${q}" ]] || continue
+    hm_table_row "${q}" "${s}" "${r}" "${w}"
+  done < <(head -20 "${tmp}")
+  hm_table_print
   rm -f "${tmp}"
 }
 

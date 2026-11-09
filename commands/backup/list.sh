@@ -134,13 +134,11 @@ hm_backup_print_snapshot_row() {
   esac
   size_b="$(hm_rclone_remote_size_bytes "${remote_base}")"
   size_h="$(hm_human_size "${size_b:-0}")"
-  printf '  %-18s %-8s %10s  %-14s  %s\n' "${stamp}" "${type}" "${size_h}" "${mode}" "php=${php}  db=[${dbs}]"
+  local note="-"
   if [[ "${type}" == *"/BAD"* ]]; then
-    printf '  %-18s %s\n' "" "${C_YELLOW}niepełny/osierocony — prune usunie; nie używaj w restore${C_RESET}"
+    note="${C_YELLOW}niepełny/osierocony — prune usunie; nie używaj w restore${C_RESET}"
   fi
-  if [[ "${created}" != "-" ]]; then
-    printf '  %-18s %s\n' "" "${C_DIM}created: ${created}${C_RESET}"
-  fi
+  hm_table_row "${stamp}" "${type}" "${size_h}" "${mode}" "${created}" "php=${php}  db=[${dbs}]" "${note}"
   : "${status}"
 }
 
@@ -156,15 +154,16 @@ hm_backup_list() {
   if [[ -z "${target}" ]]; then
     echo "${C_BOLD}Backup — przegląd root (${RCLONE_REMOTE})${C_RESET}"
     echo
-    printf '  %-28s %s\n' "KATALOG" "SNAPSHOTY"
-    printf '  %-28s %s\n' "-------" "---------"
+    hm_table_begin LR
+    hm_table_row KATALOG SNAPSHOTY
     local name n
     while IFS= read -r name; do
       [[ -n "${name}" ]] || continue
       [[ "${name}" == "db-dumps" ]] && continue
       n="$(hm_backup_list_stamps "${name}" | wc -l | tr -d ' ')"
-      printf '  %-28s %s\n' "${name}" "${n}"
+      hm_table_row "${name}" "${n}"
     done < <(hm_rclone_lsd_names "${RCLONE_REMOTE}")
+    hm_table_print
     echo
     hm_info "Szczegóły: backup list <domena|full>"
     return 0
@@ -188,8 +187,8 @@ hm_backup_list() {
     return 0
   fi
 
-  printf '  %-18s %-6s %10s  %-14s  %s\n' "STAMP" "TYP" "ROZMIAR" "ARCHIWUM" "META"
-  printf '  %-18s %-6s %10s  %-14s  %s\n' "-----" "---" "-------" "--------" "----"
+  hm_table_begin LLRLLLL
+  hm_table_row STAMP TYP ROZMIAR ARCHIWUM UTWORZONO META UWAGA
 
   for stamp in "${stamps[@]}"; do
     count=$((count + 1))
@@ -199,6 +198,7 @@ hm_backup_list() {
     hm_backup_print_snapshot_row "${stamp}" "${remote_base}"
   done
   hm_progress_done
+  hm_table_print
   echo
   hm_ok "Znaleziono ${count} snapshot(ów)."
 }

@@ -336,3 +336,153 @@ hm_print_secret() {
   hm_warn "Brak TTY — sekret nie został wypisany (bezpieczeństwo logów)."
   return 0
 }
+
+# --- tabele kolumnowe -------------------------------------------------------
+# Szerokość z treści (nie ze stałego %-Ns), więc długie domeny nie rozjeżdżają
+# kolejnych kolumn. Kolory ANSI nie wchodzą do szerokości.
+#   hm_table_begin [LRRL]     # L lewo, R prawo; domyślnie same L
+#   hm_table_row  "a" "b"
+#   hm_table_print [wcięcie]  # domyślnie 2 spacje; pierwszy wiersz = nagłówek
+
+hm_visible_len() {
+  local s="${1:-}" out=""
+  while [[ "${s}" == *$'\033'* ]]; do
+    out+="${s%%$'\033'*}"
+    s="${s#*$'\033'}"
+    if [[ "${s:0:1}" == "[" ]]; then
+      s="${s:1}"
+      while [[ -n "${s}" && "${s:0:1}" == [0-9\;?] ]]; do
+        s="${s:1}"
+      done
+      [[ -n "${s}" ]] && s="${s:1}"
+    fi
+  done
+  out+="${s}"
+  printf '%s' "${#out}"
+}
+
+hm_table_dashes() {
+  local n="${1:-0}" i s=""
+  for ((i = 0; i < n; i++)); do
+    s+=-
+  done
+  printf '%s' "${s}"
+}
+
+hm_table_indent() {
+  local n="${1:-0}" i
+  for ((i = 0; i < n; i++)); do
+    printf ' '
+  done
+}
+
+hm_table_pad() {
+  local text="${1:-}" width="${2:-0}" align="${3:-L}" vis pad
+  vis="$(hm_visible_len "${text}")"
+  [[ "${vis}" =~ ^[0-9]+$ ]] || vis=0
+  [[ "${width}" =~ ^[0-9]+$ ]] || width=0
+  if [[ "${vis}" -ge "${width}" ]]; then
+    printf '%s' "${text}"
+    return 0
+  fi
+  pad=$((width - vis))
+  case "${align}" in
+    R|r) printf '%*s%s' "${pad}" "" "${text}" ;;
+    *) printf '%s%*s' "${text}" "${pad}" "" ;;
+  esac
+}
+
+hm_table_begin() {
+  HM_TABLE_ROWS=()
+  HM_TABLE_ALIGN="${1:-}"
+}
+
+hm_table_row() {
+  local -a cells=()
+  local c n joined
+  for c in "$@"; do
+    c="${c//$'\n'/ }"
+    c="${c//$'\r'/ }"
+    c="${c//$'\t'/ }"
+    c="${c//$'\x1e'/ }"
+    cells+=("${c}")
+  done
+  n="${#cells[@]}"
+  [[ "${n}" -gt 0 ]] || return 0
+  joined="${n}"
+  for c in "${cells[@]}"; do
+    joined+=$'\x1e'"${c}"
+  done
+  HM_TABLE_ROWS+=("${joined}")
+}
+
+hm_table_split_row() {
+  local stored="${1:-}" rest count i part
+  HM_TABLE_CELLS=()
+  count="${stored%%$'\x1e'*}"
+  [[ "${count}" =~ ^[0-9]+$ ]] || return 0
+  rest="${stored#*$'\x1e'}"
+  for ((i = 0; i < count; i++)); do
+    if [[ "${i}" -eq $((count - 1)) ]]; then
+      HM_TABLE_CELLS+=("${rest}")
+      break
+    fi
+    part="${rest%%$'\x1e'*}"
+    rest="${rest#*$'\x1e'}"
+    HM_TABLE_CELLS+=("${part}")
+  done
+}
+
+hm_table_print() {
+  local indent="${1:-2}"
+  [[ "${#HM_TABLE_ROWS[@]}" -gt 0 ]] || return 0
+  local -a widths=()
+  local stored i vis w cell align n idx=0
+  for stored in "${HM_TABLE_ROWS[@]}"; do
+    hm_table_split_row "${stored}"
+    for i in "${!HM_TABLE_CELLS[@]}"; do
+      vis="$(hm_visible_len "${HM_TABLE_CELLS[$i]}")"
+      w="${widths[$i]:-0}"
+      if [[ "${vis}" -gt "${w}" ]]; then
+        widths[$i]="${vis}"
+      fi
+    done
+  done
+  n="${#widths[@]}"
+  [[ "${n}" -gt 0 ]] || return 0
+  for stored in "${HM_TABLE_ROWS[@]}"; do
+    hm_table_split_row "${stored}"
+    hm_table_indent "${indent}"
+    if [[ "${idx}" -eq 0 ]]; then
+      printf '%s' "${C_BOLD:-}"
+    fi
+    for ((i = 0; i < n; i++)); do
+      cell="${HM_TABLE_CELLS[$i]:-}"
+      align="L"
+      if [[ -n "${HM_TABLE_ALIGN:-}" && "${i}" -lt "${#HM_TABLE_ALIGN}" ]]; then
+        align="${HM_TABLE_ALIGN:i:1}"
+      fi
+      [[ -n "${widths[$i]:-}" ]] || widths[$i]=0
+      hm_table_pad "${cell}" "${widths[$i]}" "${align}"
+      if [[ "${i}" -lt $((n - 1)) ]]; then
+        printf '  '
+      fi
+    done
+    if [[ "${idx}" -eq 0 ]]; then
+      printf '%s\n' "${C_RESET:-}"
+      hm_table_indent "${indent}"
+      printf '%s' "${C_DIM:-}"
+      for ((i = 0; i < n; i++)); do
+        hm_table_dashes "${widths[$i]}"
+        if [[ "${i}" -lt $((n - 1)) ]]; then
+          printf '  '
+        fi
+      done
+      printf '%s\n' "${C_RESET:-}"
+    else
+      printf '\n'
+    fi
+    idx=$((idx + 1))
+  done
+  return 0
+}

@@ -91,11 +91,14 @@ hm_clone_registry_list() {
     return 0
   fi
   local line dom when flags
+  hm_table_begin
+  hm_table_row DOMENA KIEDY FLAGI
   while IFS= read -r line || [[ -n "${line}" ]]; do
     [[ -n "${line}" && "${line}" != \#* ]] || continue
     IFS='|' read -r dom when flags <<<"${line}"
-    printf '  %-40s  %s  %s\n' "${dom}" "${when}" "${flags}"
+    hm_table_row "${dom}" "${when}" "${flags}"
   done < "${reg}"
+  hm_table_print
 }
 
 hm_clone_write_marker() {

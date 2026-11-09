@@ -597,7 +597,8 @@ hm_limits_show_one() {
 hm_limits_table() {
   hm_discover_sites 2>/dev/null || true
   echo "${C_BOLD}limits — strony${C_RESET}  ${C_DIM}(dysk z cache; limity z drop-in)${C_RESET}"
-  printf '  %-28s %-12s %-10s %s\n' "DOMAIN" "USER" "DISK" "LIMITS"
+  hm_table_begin
+  hm_table_row DOMAIN USER DISK LIMITS
   local d row user root doc uid path sz props drop
   local n=0
   for d in "${HM_SITES_LIST[@]:-}"; do
@@ -633,8 +634,9 @@ hm_limits_table() {
         props="$(hm_limits_read_dropin_props "${drop}" 2>/dev/null || echo "-")"
       fi
     fi
-    printf '  %-28s %-12s %-10s %s\n' "${d}" "${user}" "${sz}" "${props}"
+    hm_table_row "${d}" "${user}" "${sz}" "${props}"
   done
+  hm_table_print
   if [[ "${n}" -eq 0 ]]; then
     hm_info "Brak stron (discover)."
   fi

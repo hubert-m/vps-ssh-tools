@@ -3,16 +3,37 @@
 
 _hm_cmd_help chrome <<'EOF'
 Użycie:
-  chrome | info | status   Binarka, wersja, CDP, unit systemd
+  chrome | info | status   Binarka, wersja, CDP, unit, liczba kart
   chrome which             Tylko ścieżka binarki
   chrome version           Pełne --version (lub CDP Browser)
+  chrome cdp               Wersja protokołu / V8 / User-Agent (bez tokenu WS)
   chrome test              Smoke: CDP /json/version albo --headless --dump-dom
+  chrome tabs [--all]      Otwarte karty (CDP /json/list, tylko localhost)
+  chrome open <url> [--yes]
+                           Nowa karta: http, https albo about:blank
+  chrome tab close <id> [--yes]
+  chrome tab activate <id> [--yes]
+  chrome disk              Rozmiar buildów Puppeteer, /tmp i cache profilu
+  chrome clean [--execute] [--yes]
+                           Domyślnie dry-run. Zostawia działającą binarkę,
+                           cookies i historię
+  chrome ps                PID, RAM, nasłuch portu debuggera
+  chrome restart [--yes]   systemctl restart znanego unitu headless
+  chrome log [N]           journalctl (N=1..200, domyślnie 40)
 
 Aliasy: chromium, headless
 Detekcja: PATH → ścieżki systemowe → systemd (chrome-headless) →
   Puppeteer ~/.cache/puppeteer/chrome → CDP :9222
 Nadpisanie: FORCE_CHROME_BIN=/ścieżka  FORCE_CHROME_CDP=http://127.0.0.1:9222
+CDP (karty, open, close) tylko dla 127.0.0.1, localhost i ::1.
+Wyjście nie zawiera webSocketDebuggerUrl.
 EOF
+
+_HM_CHROME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=cdp.sh
+source "${_HM_CHROME_DIR}/cdp.sh"
+# shellcheck source=clean.sh
+source "${_HM_CHROME_DIR}/clean.sh"
 
 hm_chrome_require() {
   hm_detect_chrome 2>/dev/null || true
@@ -69,10 +90,11 @@ cmd_chrome_info() {
     echo "  Service  : ${CHROME_SERVICE} (${st})"
   fi
   if [[ -n "${CHROME_CDP_URL:-}" ]]; then
-    echo "  CDP      : ${CHROME_CDP_URL}  (${CHROME_CDP_BROWSER:-ok})"
+    echo "  CDP      : $(hm_chrome_cdp_url_display)  (${CHROME_CDP_BROWSER:-ok})"
   else
     echo "  CDP      : —"
   fi
+  hm_chrome_info_extra || true
   if [[ -n "${CHROME_BIN:-}" && -x "${CHROME_BIN}" ]]; then
     echo "  Headless : tak (--headless; smoke: chrome test)"
   elif [[ -n "${CHROME_CDP_URL:-}" ]]; then
@@ -91,7 +113,7 @@ cmd_chrome_test() {
   fi
   if [[ -n "${CHROME_CDP_URL:-}" ]]; then
     echo "${C_BOLD}Chrome CDP smoke test${C_RESET}"
-    echo "  URL: ${CHROME_CDP_URL}/json/version"
+    echo "  URL: $(hm_chrome_cdp_url_display)/json/version"
     local raw
     raw="$(curl -sf --max-time 3 "${CHROME_CDP_URL}/json/version" 2>/dev/null || true)"
     if [[ -n "${raw}" ]] && printf '%s' "${raw}" | grep -qiE '"Browser"|"webSocketDebuggerUrl"'; then
@@ -133,6 +155,7 @@ cmd_chrome_test() {
 
 cmd_chrome() {
   local sub="${1:-}"
+  shift || true
   case "${sub}" in
     ""|info|status|show)
       cmd_chrome_info
@@ -169,6 +192,33 @@ cmd_chrome() {
       ;;
     test|smoke|check)
       cmd_chrome_test
+      ;;
+    cdp|protocol)
+      cmd_chrome_cdp "$@"
+      ;;
+    tabs|targets|pages)
+      cmd_chrome_tabs "$@"
+      ;;
+    open|new)
+      cmd_chrome_open "$@"
+      ;;
+    tab)
+      cmd_chrome_tab "$@"
+      ;;
+    disk|du)
+      cmd_chrome_disk "$@"
+      ;;
+    clean|cleanup)
+      cmd_chrome_clean "$@"
+      ;;
+    ps|proc|pid)
+      cmd_chrome_ps "$@"
+      ;;
+    restart)
+      cmd_chrome_restart "$@"
+      ;;
+    log|logs|journal)
+      cmd_chrome_log "$@"
       ;;
     help|-h|--help)
       hm_help_topic chrome

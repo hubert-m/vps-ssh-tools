@@ -177,9 +177,8 @@ cmd_docker_list() {
     echo "${C_BOLD}Docker — kontenery${C_RESET}"
   fi
   echo
-  printf '  %s%-22s %-18s %-10s %-14s %-18s %s%s\n' \
-    "${C_DIM}" "NAME" "STATUS" "CPU" "MEM" "PORTS" "OLS / STACK" "${C_RESET}"
-  printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..100})" "${C_RESET}"
+  hm_table_begin
+  hm_table_row NAME STATUS CPU MEM PORTS "OLS / STACK"
 
   local line name image status ports stack workdir cpu mem domains label n=0
   while IFS= read -r line; do
@@ -193,9 +192,9 @@ cmd_docker_list() {
     if [[ -n "${stack}" && "${stack}" != "-" ]]; then
       label="${label} [${stack}]"
     fi
-    printf '  %-22s %-18s %-10s %-14s %-18s %s\n' \
-      "${name:0:22}" "${status:0:18}" "${cpu:0:10}" "${mem:0:14}" "${ports:0:18}" "${label}"
+    hm_table_row "${name}" "${status}" "${cpu}" "${mem}" "${ports}" "${label}"
   done < <(hm_docker_list_raw | hm_docker_filter_for_site "${filter_domain}")
+  hm_table_print
 
   if [[ "${n}" -eq 0 ]]; then
     if [[ -n "${filter_domain}" ]]; then

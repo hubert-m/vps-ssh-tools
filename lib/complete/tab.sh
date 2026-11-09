@@ -802,9 +802,27 @@ hm_tab_complete() {
         fi
         ;;
       chrome|chromium|headless)
-        for m in info status which version test help; do
-          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
-        done
+        if [[ "${prefix}" =~ (chrome|chromium|headless)[[:space:]]+tab[[:space:]] ]]; then
+          for m in close activate help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ (chrome|chromium|headless)[[:space:]]+clean[[:space:]] ]]; then
+          for m in --execute --dry-run --yes; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ (chrome|chromium|headless)[[:space:]]+tabs[[:space:]] ]]; then
+          for m in --all --pages; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ (chrome|chromium|headless)[[:space:]]+(open|restart)[[:space:]] ]]; then
+          for m in --yes; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in info status which version cdp test tabs open tab clean disk ps restart log help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
         ;;
       supervisor)
         if [[ "${prefix}" =~ $re_sup_action ]]; then

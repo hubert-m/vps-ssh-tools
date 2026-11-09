@@ -56,6 +56,7 @@
 | `access …` | SSH/FTP strony: `ssh` (passwd/shell/keys), `ftp` (list/add/passwd/delete) |
 | `redis …` | Redis: status/memory/dbs/clients/slowlog/sites; `config`/`flush*`/`restart`/`client kill` |
 | `docker …` | Kontenery: lista (+ domena OLS proxy), logs, start/stop/restart, compose ls/pull/up, prune (domyślnie dry-run) |
+| `chrome …` | Headless: info/wersja/test, karty CDP (`tabs`/`open`/`tab close`), `disk`/`clean` (dry-run), `ps`/`restart`/`log` |
 | `git` / `deploy` | (w `use`) status/attach/klucz deploy; deploy pull+build+reload / rollback |
 | `detect` | Wypisz wykryty panel / webserver / DB |
 | `help [polecenie]` | Lista komend lub pomoc do wybranej (np. `help use`) |

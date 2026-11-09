@@ -271,20 +271,20 @@ hm_node_print_row() {
     npm_show="${npm_ver:-?}"
     [[ -n "${HM_NODE_LATEST_NPM:-}" ]] && npm_l="${HM_NODE_LATEST_NPM}"
   fi
-  printf '  %-28s %-10s %-10s %-10s %-10s %s\n' \
-    "${domain}" "${nvm_show}" "${nvm_l}" "${npm_show}" "${npm_l}" "${mark}"
+  hm_table_row "${domain}" "${nvm_show}" "${nvm_l}" "${npm_show}" "${npm_l}" "${mark}"
 }
 
 hm_node_list_sites() {
   hm_node_load_latest
   hm_discover_sites
-  echo "${C_BOLD}nvm / npm — serwisy (katalog obok public_html)${C_RESET}"
+  echo "${C_BOLD}nvm / npm — serwisy ${C_RESET}"
   if [[ -z "${HM_NODE_LATEST_NVM:-}" || -z "${HM_NODE_LATEST_NPM:-}" ]]; then
     hm_warn "Nie pobrano najnowszej wersji (nvm=${HM_NODE_LATEST_NVM:-?} npm=${HM_NODE_LATEST_NPM:-?})."
   else
     echo "  Najnowsze: nvm ${HM_NODE_LATEST_NVM}    npm ${HM_NODE_LATEST_NPM}"
   fi
-  printf '  %-28s %-10s %-10s %-10s %-10s %s\n' "DOMENA" "NVM" "NVM-NEW" "NPM" "NPM-NEW" "UPDATE"
+  hm_table_begin
+  hm_table_row DOMENA NVM NVM-NEW NPM NPM-NEW UPDATE
   local d found=0
   for d in "${HM_SITES_LIST[@]:-}"; do
     [[ -n "${d}" ]] || continue
@@ -292,6 +292,7 @@ hm_node_list_sites() {
       found=1
     fi
   done
+  hm_table_print
   [[ "${found}" -eq 1 ]] || echo "  (brak serwisów z .nvm lub .npm)"
 }
 
@@ -307,8 +308,10 @@ hm_node_print_one() {
     hm_warn "Brak .nvm i .npm w ${home:-katalogu serwisu} (obok public_html)."
     return 1
   fi
-  printf '  %-28s %-10s %-10s %-10s %-10s %s\n' "DOMENA" "NVM" "NVM-NEW" "NPM" "NPM-NEW" "UPDATE"
+  hm_table_begin
+  hm_table_row DOMENA NVM NVM-NEW NPM NPM-NEW UPDATE
   hm_node_print_row "${domain}"
+  hm_table_print
 }
 
 hm_node_resolve_domain() {

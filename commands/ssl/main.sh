@@ -85,20 +85,16 @@ cmd_ssl() {
     return 0
   fi
 
-  printf '  %s%-36s %-8s %6s  %-28s%s\n' \
-    "${C_DIM}" "DOMAIN" "STATUS" "DNI" "EXPIRY" "${C_RESET}"
-  printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..78})" "${C_RESET}"
-
   local domain cert expiry days status
   local total="${#HM_SITES_LIST[@]}" i=0
-  local -a rows=()
+  hm_table_begin LLRL
+  hm_table_row DOMAIN STATUS DNI EXPIRY
   for domain in "${HM_SITES_LIST[@]}"; do
     i=$((i + 1))
     hm_progress_bar "${i}" "${total}" "Sprawdzanie certyfikatu SSL: ${domain}"
     cert="$(hm_ssl_paths_for_domain "${domain}" 2>/dev/null || true)"
     if [[ -z "${cert}" ]]; then
-      rows+=("$(printf '  %-36s %s%-8s%s %6s  %s' \
-        "${domain}" "${C_RED}" "BRAK" "${C_RESET}" "-" "-")")
+      hm_table_row "${domain}" "${C_RED}BRAK${C_RESET}" "-" "-"
       continue
     fi
     status="$(hm_ssl_status "${cert}")"
@@ -106,24 +102,21 @@ cmd_ssl() {
     expiry="$(hm_ssl_expiry "${cert}")"
     case "${status}" in
       expired)
-        rows+=("$(printf '  %-36s %s%-8s%s %6s  %s' \
-          "${domain}" "${C_RED}" "WYGASŁ" "${C_RESET}" "${days}" "${expiry}")")
+        hm_table_row "${domain}" "${C_RED}WYGASŁ${C_RESET}" "${days}" "${expiry}"
         ;;
       soon)
-        rows+=("$(printf '  %-36s %s%-8s%s %6s  %s' \
-          "${domain}" "${C_YELLOW}" "WKRÓTCE" "${C_RESET}" "${days}" "${expiry}")")
+        hm_table_row "${domain}" "${C_YELLOW}WKRÓTCE${C_RESET}" "${days}" "${expiry}"
         ;;
       ok)
-        rows+=("$(printf '  %-36s %s%-8s%s %6s  %s' \
-          "${domain}" "${C_GREEN}" "OK" "${C_RESET}" "${days}" "${expiry}")")
+        hm_table_row "${domain}" "${C_GREEN}OK${C_RESET}" "${days}" "${expiry}"
         ;;
       *)
-        rows+=("$(printf '  %-36s %-8s %6s  %s' "${domain}" "?" "${days}" "${expiry}")")
+        hm_table_row "${domain}" "?" "${days}" "${expiry}"
         ;;
     esac
   done
   hm_progress_done
-  printf '%s\n' "${rows[@]}"
+  hm_table_print
   echo
   echo "  ${C_DIM}Wydanie: ssl issue [domena]   |   Odnawianie: renew-ssl [domena]   |   Diagnoza: ssl diagnose${C_RESET}"
 }

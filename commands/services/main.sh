@@ -206,9 +206,9 @@ cmd_services_table() {
     return 1
   fi
   echo "${C_BOLD}Usługi stosu (tylko zainstalowane)${C_RESET}"
-  printf '  %-12s %-10s %-10s %-8s %-10s %s\n' "SERVICE" "ACTIVE" "ENABLED" "UPTIME" "RAM" "PORTS"
-  printf '  %-12s %-10s %-10s %-8s %-10s %s\n' "-------" "------" "-------" "------" "---" "-----"
-  local alias unit st en up mem ports any=0
+  hm_table_begin
+  hm_table_row SERVICE ACTIVE ENABLED UPTIME RAM PORTS
+  local alias unit st en up mem ports any=0 stc
   while IFS= read -r alias; do
     [[ -n "${alias}" ]] || continue
     unit="$(hm_services_resolve_unit "${alias}")" || continue
@@ -218,17 +218,16 @@ cmd_services_table() {
     up="$(hm_services_uptime_str "${unit}")"
     mem="$(hm_services_memory_str "${unit}")"
     ports="$(hm_services_listen_ports "${unit}")"
-    printf '  %-12s ' "${alias}"
-    # kolor tylko dla active kolumny — szerokość ANSI
     if [[ "${st}" == "failed" ]]; then
-      printf '%s%-10s%s' "${C_RED:-}" "${st}" "${C_RESET:-}"
+      stc="${C_RED:-}${st}${C_RESET:-}"
     elif [[ "${st}" == "active" ]]; then
-      printf '%s%-10s%s' "${C_GREEN:-}" "${st}" "${C_RESET:-}"
+      stc="${C_GREEN:-}${st}${C_RESET:-}"
     else
-      printf '%-10s' "${st}"
+      stc="${st}"
     fi
-    printf ' %-10s %-8s %-10s %s\n' "${en}" "${up}" "${mem}" "${ports}"
+    hm_table_row "${alias}" "${stc}" "${en}" "${up}" "${mem}" "${ports}"
   done < <(hm_services_list_installed)
+  hm_table_print
   if [[ "${any}" -eq 0 ]]; then
     hm_warn "Nie wykryto żadnej znanej usługi."
   fi

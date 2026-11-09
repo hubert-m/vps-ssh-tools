@@ -407,9 +407,8 @@ hm_pm2_print_table() {
     rows+=("${sortkey}|${name}|${pid}|${status}|${cwd}|${script}|${port}|${mem}|${restarts}")
   done
 
-  printf '  %s%-24s %-8s %-10s %6s %12s %5s  %s%s\n' \
-    "${C_DIM}" "NAME" "PID" "STATUS" "PORT" "MEM" "RST" "CWD" "${C_RESET}"
-  printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..82})" "${C_RESET}"
+  hm_table_begin LLLRRRL
+  hm_table_row NAME PID STATUS PORT MEM RST CWD
 
   if [[ "${#rows[@]}" -eq 0 ]]; then
     echo "  (brak procesów PM2 — sprawdź PM2_HOME użytkownika strony)"
@@ -425,15 +424,16 @@ hm_pm2_print_table() {
     else
       mem_h="${mem:--}"
     fi
-    printf '  %-24s %-8s %s%-10s%s %6s %12s %5s  %s\n' \
-      "${name:0:24}" \
+    hm_table_row \
+      "${name}" \
       "${pid}" \
-      "${stc}" "${status:0:10}" "${C_RESET}" \
+      "${stc}${status}${C_RESET}" \
       "${port:--}" \
       "${mem_h}" \
       "${restarts:--}" \
       "${cwd:--}"
   done < <(printf '%s\n' "${rows[@]}" | sort -t'|' -k1,1)
+  hm_table_print
 }
 
 hm_detect_node_stack() {

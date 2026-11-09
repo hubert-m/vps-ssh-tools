@@ -167,13 +167,17 @@ hm_access_ftp_list() {
   case "${backend}" in
     cyberpanel)
       local line user path any=0
+      hm_table_begin
+      hm_table_row KONTO "ŚCIEŻKA"
       while IFS=$'\t' read -r user path; do
         [[ -n "${user}" ]] || continue
         any=1
-        printf '  %-28s %s\n' "${user}" "${path:--}"
+        hm_table_row "${user}" "${path:--}"
       done < <(hm_access_cp_ftp_list "${domain}")
       if [[ "${any}" -eq 0 ]]; then
         echo "  (brak kont FTP w CyberPanel dla tej domeny)"
+      else
+        hm_table_print
       fi
       ;;
     pure-ftpd)

@@ -566,22 +566,36 @@ hm_php_restart() {
 hm_php_ps() {
   echo "${C_BOLD}Procesy lsphp${C_RESET}"
   echo
-  printf '  %-16s %6s %5s %5s  %s\n' "USER" "PID" "%CPU" "%MEM" "CMD"
-  local found=0 line
-  while IFS= read -r line; do
-    [[ -n "${line}" ]] || continue
-    echo "  ${line}"
+  hm_table_begin LRRRL
+  hm_table_row USER PID "%CPU" "%MEM" CMD
+  local found=0 user pid pcpu pmem cmd
+  while IFS=$'\t' read -r user pid pcpu pmem cmd; do
+    [[ -n "${pid}" ]] || continue
     found=1
-  done < <(ps -eo user:16,pid,pcpu,pmem,args 2>/dev/null | awk 'NR>1 && $0 ~ /lsphp/ && $0 !~ /awk/ {printf "%-16s %6s %5s %5s  %s\n", $1,$2,$3,$4,substr($0, index($0,$5))}')
+    hm_table_row "${user}" "${pid}" "${pcpu}" "${pmem}" "${cmd}"
+  done < <(ps -eo user=,pid=,pcpu=,pmem=,args= 2>/dev/null | awk '$0 ~ /lsphp/ && $0 !~ /awk/ {printf "%s\t%s\t%s\t%s\t%s\n", $1,$2,$3,$4,substr($0, index($0,$5))}')
 
   if [[ "${found}" -eq 0 ]]; then
     hm_warn "Brak procesów lsphp."
     return 0
   fi
+  hm_table_print
   if [[ -n "${HM_SITE_USER:-}" ]]; then
     echo
     echo "  ${C_DIM}Filtr user=${HM_SITE_USER}:${C_RESET}"
-    ps -u "${HM_SITE_USER}" -o pid,pcpu,pmem,args 2>/dev/null | awk 'NR==1 || /lsphp/' | sed 's/^/  /' || echo "    (brak)"
+    hm_table_begin RRRL
+    hm_table_row PID "%CPU" "%MEM" CMD
+    found=0
+    while IFS=$'\t' read -r pid pcpu pmem cmd; do
+      [[ -n "${pid}" ]] || continue
+      found=1
+      hm_table_row "${pid}" "${pcpu}" "${pmem}" "${cmd}"
+    done < <(ps -u "${HM_SITE_USER}" -o pid=,pcpu=,pmem=,args= 2>/dev/null | awk '$0 ~ /lsphp/ && $0 !~ /awk/ {printf "%s\t%s\t%s\t%s\n", $1,$2,$3,substr($0, index($0,$4))}')
+    if [[ "${found}" -eq 0 ]]; then
+      echo "    (brak)"
+    else
+      hm_table_print
+    fi
   fi
   local n
   n="$(pgrep -c -f 'lsphp' 2>/dev/null || echo 0)"

@@ -189,13 +189,15 @@ hm_dns_zones_overview() {
   fi
   echo
   echo "${C_BOLD}Strefy lokalne${C_RESET}"
-  printf '  %-6s %-40s %s\n' "ID" "NAZWA" "TYP"
+  hm_table_begin
+  hm_table_row ID NAZWA TYP
   local line
   while IFS=$'\t' read -r id name typ; do
     [[ -n "${id}" ]] || continue
-    printf '  %-6s %-40s %s\n' "${id}" "${name}" "${typ:-NATIVE}"
+    hm_table_row "${id}" "${name}" "${typ:-NATIVE}"
   done < <(hm_mysql_exec cyberpanel -N -e \
     "SELECT id, name, type FROM domains ORDER BY name;" 2>/dev/null || true)
+  hm_table_print
   echo
   hm_info "W kontekście: use <domena> → dns list | add | edit | delete | export"
   hm_info "Globalnie: dns check <domena>"
@@ -236,7 +238,8 @@ hm_dns_list_records() {
   fi
 
   echo "${C_BOLD}Rekordy — ${domain}${C_RESET} (zone id=${zid})"
-  printf '  %-8s %-8s %-36s %-6s %-6s %s\n' "ID" "TYP" "NAZWA" "TTL" "PRIO" "WARTOŚĆ"
+  hm_table_begin LLLRRL
+  hm_table_row ID TYP NAZWA TTL PRIO "WARTOŚĆ"
   local sql type_clause=""
   if [[ -n "${typ_filter}" ]]; then
     type_clause=" AND type=$(hm_sql_quote "${typ_filter}")"
@@ -247,9 +250,9 @@ hm_dns_list_records() {
   local id type name ttl prio content
   while IFS=$'\t' read -r id type name ttl prio content; do
     [[ -n "${id}" ]] || continue
-    printf '  %-8s %-8s %-36s %-6s %-6s %s\n' \
-      "${id}" "${type}" "${name}" "${ttl}" "${prio}" "${content}"
+    hm_table_row "${id}" "${type}" "${name}" "${ttl}" "${prio}" "${content}"
   done < <(hm_mysql_exec cyberpanel -N -e "${sql}" 2>/dev/null || true)
+  hm_table_print
 }
 
 hm_dns_export_zone() {

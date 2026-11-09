@@ -187,8 +187,8 @@ cmd_security_ports() {
   tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-ports.XXXXXX")"
   ss -lntup 2>/dev/null | awk 'NR>1 { print }' > "${tmp}" || true
 
-  printf '  %-6s %-22s %s\n' "PORT" "ADRES" "PROCES / ALERT"
-  printf '  %s\n' "$(printf '%.0s─' {1..64})"
+  hm_table_begin RLLL
+  hm_table_row PORT ADRES PROCES ALERT
 
   local line addr port pub=0
   while IFS= read -r line; do
@@ -239,10 +239,9 @@ cmd_security_ports() {
         ;;
     esac
 
-    printf '  %-6s %-22s %s' "${port}" "${addr}" "${proc:--}"
-    [[ -n "${alert}" ]] && printf '  %s' "${alert}"
-    echo
+    hm_table_row "${port}" "${addr}" "${proc:--}" "${alert:--}"
   done < "${tmp}"
+  hm_table_print
 
   if [[ "${pub}" -eq 0 ]]; then
     hm_ok "Brak oczywistych nasłuchów na 0.0.0.0 / [::] (lub ss pusty)."

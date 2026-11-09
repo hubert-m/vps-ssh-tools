@@ -16,6 +16,11 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [vX.Y.Z]
 
+- Feat: `chrome tabs` / `open` / `tab close|activate` — karty CDP tylko na loopback (127.0.0.1, localhost, ::1); bez `webSocketDebuggerUrl` w wyjściu
+- Feat: `chrome disk` / `clean` — stare buildy Puppeteer (zostaje działająca binarka), cache profilu i śmieci w /tmp; domyślnie dry-run, `--execute` kasuje po potwierdzeniu
+- Feat: `chrome ps` / `restart` / `log` / `cdp` — proces, nasłuch portu, restart znanych unitów headless, journal i metadane protokołu
+- Feat: listy wielokolumnowe (`wp sites`, `webs`, `node`, `ssl`, `mail`, `dns`, `docker`, `pm2`, `php`, `health`, `security`, `backup`, `chrome tabs`) — szerokość kolumn z treści, długa domena nie spycha kolejnych pól
+
 ## [v0.1.12]
 
 - Fix: `node sites` — wersje nvm/npm z plików (bez source `nvm.sh` i bez `npm --version` jako root); aktualizacja nvm bez `git -c safe.directory`

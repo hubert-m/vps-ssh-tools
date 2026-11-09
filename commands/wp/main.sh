@@ -287,7 +287,8 @@ cmd_wp_sites() {
   hm_wp_ensure_cli >/dev/null || return 1
   hm_discover_sites
   echo "${C_BOLD}WordPress — instalacje${C_RESET}"
-  printf '  %-28s %-10s %-8s %-8s %-12s %s\n' "DOMENA" "CORE" "PLUG↑" "THEME↑" "MAINT" "PHP"
+  hm_table_begin
+  hm_table_row DOMENA CORE "PLUG↑" "THEME↑" MAINT PHP
   local d path ver updp updt maint row doc php
   local found=0
   for d in "${HM_SITES_LIST[@]:-}"; do
@@ -313,8 +314,9 @@ cmd_wp_sites() {
       if [[ -f "${path}/.maintenance" ]]; then maint="ON"; fi
       hm_site_context_pop 2>/dev/null || true
     fi
-    printf '  %-28s %-10s %-8s %-8s %-12s %s\n' "${d}" "${ver:-?}" "${updp}" "${updt}" "${maint}" "${php:--}"
+    hm_table_row "${d}" "${ver:-?}" "${updp}" "${updt}" "${maint}" "${php:--}"
   done
+  hm_table_print
   [[ "${found}" -eq 1 ]] || echo "  (brak instalacji WP)"
 }
 

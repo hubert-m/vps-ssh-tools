@@ -92,9 +92,8 @@ hm_php_print_installable_newer() {
 
   echo
   echo "  ${C_BOLD}Nowsze PHP dostępne do instalacji${C_RESET} ${C_DIM}(brak lokalnego lsphp*)${C_RESET}"
-  printf '  %s%-12s %-18s %s%s\n' \
-    "${C_DIM}" "LSPHP" "W REPO" "KANAŁ / INSTALACJA" "${C_RESET}"
-  printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..76})" "${C_RESET}"
+  hm_table_begin
+  hm_table_row LSPHP "W REPO" "KANAŁ / INSTALACJA"
 
   for line in "${avail_lines[@]}"; do
     IFS=$'\t' read -r sfx b cand <<<"${line}"
@@ -105,11 +104,9 @@ hm_php_print_installable_newer() {
     else
       channel="${C_YELLOW}${channel}${C_RESET} → update-php ${b}"
     fi
-    printf '  %-12s %-18s %b\n' \
-      "lsphp${sfx}" \
-      "${cand_clean}" \
-      "${channel}"
+    hm_table_row "lsphp${sfx}" "${cand_clean}" "${channel}"
   done
+  hm_table_print
   echo
   echo "  ${C_DIM}Instalacja nowej gałęzi: update-php <ver> (to samo repo LiteSpeed). Po instalacji: php set <ver> na stronie.${C_RESET}"
 }
@@ -297,9 +294,8 @@ hm_list_available_php() {
     fi
     hm_progress_done
 
-    printf '  %s%-28s %-14s %-14s %s%s\n' \
-      "${C_DIM}" "LSPHP" "ZAINSTALOWANA" "NAJNOWSZA" "STATUS" "${C_RESET}"
-    printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..72})" "${C_RESET}"
+    hm_table_begin
+    hm_table_row LSPHP ZAINSTALOWANA NAJNOWSZA STATUS "ŚCIEŻKA"
 
     local path
     for row in "${rows[@]}"; do
@@ -324,14 +320,9 @@ hm_list_available_php() {
           status="${C_GREEN}aktualna${C_RESET}"
         fi
       fi
-      # ASCII "-" zamiast "—" — wielobajtowy em dash psuje printf %-Ns
-      printf '  %-28s %-14s %-14s %b\n' \
-        "$(basename "${path}")" \
-        "${ver}" \
-        "${latest}" \
-        "${status}"
-      printf '  %s%s%s\n' "${C_DIM}" "${path}" "${C_RESET}"
+      hm_table_row "$(basename "${path}")" "${ver}" "${latest}" "${status}" "${path}"
     done
+    hm_table_print
     echo
     echo "  ${C_DIM}Źródło: php.net (cache ~1h). Domyślnie użyj: php (repo lokalne)${C_RESET}"
   else
@@ -356,9 +347,8 @@ hm_list_available_php() {
     done
     hm_progress_done
 
-    printf '  %s%-12s %-15s %-18s %s%s\n' \
-      "${C_DIM}" "LSPHP" "ZAINSTALOWANA" "W REPO (UPDATE)" "STATUS" "${C_RESET}"
-    printf '  %s%s%s\n' "${C_DIM}" "$(printf '%.0s─' {1..76})" "${C_RESET}"
+    hm_table_begin
+    hm_table_row LSPHP ZAINSTALOWANA "W REPO (UPDATE)" STATUS "ŚCIEŻKA"
 
     for row in "${repo_rows[@]}"; do
       IFS=$'\t' read -r path ver branch inst_pkg cand_pkg cand_clean upg_count <<<"${row}"
@@ -394,13 +384,9 @@ hm_list_available_php() {
         fi
       fi
 
-      printf '  %-12s %-15s %-18s %b\n' \
-        "${base}" \
-        "${ver}" \
-        "${repo_col}" \
-        "${status}"
-      printf '  %s%s%s\n' "${C_DIM}" "${path}" "${C_RESET}"
+      hm_table_row "${base}" "${ver}" "${repo_col}" "${status}" "${path}"
     done
+    hm_table_print
     echo
     local age_info pm_label
     age_info="$(hm_pkg_cache_age_info)"

@@ -9,17 +9,18 @@ hm_backup_targets_list() {
   def="$(hm_backup_default_target_name)"
   echo "  Domyślny (RCLONE_REMOTE): ${RCLONE_REMOTE}  [name=${def}]"
   echo
-  printf '  %-16s %s\n' "NAME" "SPEC"
-  printf '  %-16s %s\n' "----" "----"
+  hm_table_begin
+  hm_table_row NAME SPEC
   while IFS= read -r name; do
     [[ -n "${name}" ]] || continue
     spec="$(hm_backup_target_spec "${name}" 2>/dev/null || echo "?")"
     if [[ "${name}" == "${def}" ]]; then
-      printf '  %-16s %s  %s\n' "${name}" "${spec}" "(default)"
+      hm_table_row "${name}" "${spec}  (default)"
     else
-      printf '  %-16s %s\n' "${name}" "${spec}"
+      hm_table_row "${name}" "${spec}"
     fi
   done < <(hm_backup_target_names)
+  hm_table_print
   echo
   hm_info "Dodaj: backup target add s3|b2|sftp|local --name <n> …"
   hm_info "Użyj:  backup site <d> --target <n>  |  backup full --targets a,b"

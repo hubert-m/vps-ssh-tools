@@ -14,7 +14,9 @@ hm_list_sites() {
   local total="${#HM_SITES_LIST[@]}"
   local i=0 shown=0 domain row root docroot logs vhost php rest status size ssl
   local size_bytes=0 total_bytes=0
-  local -a table_rows=()
+
+  hm_table_begin LLLLRL
+  hm_table_row "#" DOMAIN PHP SSL SIZE STATUS
 
   for domain in "${HM_SITES_LIST[@]}"; do
     i=$((i + 1))
@@ -54,8 +56,7 @@ hm_list_sites() {
     else
       size="?"
     fi
-    table_rows+=("$(printf '%-4s %-36s %-8s %-5s %-12s %s' \
-      "${i}" "${domain}" "${php:-?}" "${ssl}" "${size}" "${status}")")
+    hm_table_row "${i}" "${domain}" "${php:-?}" "${ssl}" "${size}" "${status}"
   done
   hm_progress_done
 
@@ -64,9 +65,8 @@ hm_list_sites() {
     return 0
   fi
 
-  printf '%-4s %-36s %-8s %-5s %-12s %s\n' "#" "DOMAIN" "PHP" "SSL" "SIZE" "STATUS"
-  printf '%-4s %-36s %-8s %-5s %-12s %s\n' "---" "------" "---" "---" "----" "------"
-  printf '%s\n' "${table_rows[@]}"
+  hm_table_print
+
   echo
   if [[ "${quick}" != "1" ]]; then
     local sum_label="${total} serwisów"
