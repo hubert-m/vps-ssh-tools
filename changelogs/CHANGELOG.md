@@ -14,7 +14,11 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ---
 
-## [Unreleased] / [v0.1.11]
+## [Unreleased] / [v0.1.12]
+
+- Test: `test-site-create` — asercja placeholdera `index.html` (HTTP 200 na żywym OLS)
+
+## [v0.1.11]
 
 - Fix: `backup` child — wyjątek DB z tar (nie forgeable manif.); archive childa z CP bez vhRoot → docroot childa / ODMOWA
 - Feat: `node` — nvm/npm per serwis (katalogi `.nvm`/`.npm`), porównanie z najnowszą wersją, `update nvm|npm`; alias `node` odpięty od `pm2`

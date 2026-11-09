@@ -306,6 +306,18 @@ else
   fail=1
 fi
 
+# placeholder HTTP (treść pod docroot — kryterium HTTP 200 wymaga żywego OLS)
+ph_doc="${tmpdir}/ph/public_html"
+hm_sc_write_placeholder "${ph_doc}" "placeholder.test"
+if [[ -f "${ph_doc}/index.html" ]] \
+  && grep -q 'placeholder.test' "${ph_doc}/index.html" \
+  && grep -qi 'hmtools' "${ph_doc}/index.html"; then
+  echo "OK   placeholder-index"
+else
+  echo "FAIL placeholder-index"
+  fail=1
+fi
+
 if [[ "${fail}" -eq 0 ]]; then
   echo "ALL PASSED"
   exit 0

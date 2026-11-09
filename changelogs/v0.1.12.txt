@@ -1,0 +1,3 @@
+# hmtools v0.1.12
+
+- Test: `test-site-create` — asercja placeholdera `index.html` (HTTP 200 wymaga żywego OLS)
