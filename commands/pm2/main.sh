@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# pm2 / node / apps — procesy Node/React/Next pod PM2 + porty + powiązanie ze stronami
+# pm2 / apps — procesy Node/React/Next pod PM2 + porty + powiązanie ze stronami
+# Wersje nvm/npm serwisów: komenda `node` (nie alias pm2).
 
 
 _hm_cmd_help pm2 <<'EOF'
 Użycie:
-  pm2 | node | apps              Lista + porty + mapa proxy OLS
+  pm2 | apps                     Lista + porty + mapa proxy OLS
   pm2 all                        Wszystkie procesy (bez filtra kontekstu)
   pm2 proxy | site | ports | raw Jak wcześniej
   pm2 restart|reload|stop|start <nazwa|id|all>
@@ -15,6 +16,7 @@ Akcje uruchamiane jako właściciel PM2_HOME (runuser/sudo -u),
 nie jako root z binarką z NVM użytkownika.
 
 W kontekście strony: filtr listy + PM2_HOME użytkownika strony.
+Wersje nvm/npm (katalogi .nvm / .npm): komenda `node`.
 EOF
 
 hm_pm2_unix_home() {
@@ -717,7 +719,6 @@ hm_pm2_logs() {
   fi
 }
 
-cmd_node() { cmd_pm2 "$@"; }
 cmd_apps() { cmd_pm2 "$@"; }
 
-_hm_cmd_register pm2 cmd_pm2 0 node apps
+_hm_cmd_register pm2 cmd_pm2 0 apps

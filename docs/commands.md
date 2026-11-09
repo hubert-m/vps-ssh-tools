@@ -41,7 +41,8 @@
 | `renew-ssl [domena]` | Odnów Let's Encrypt (z potwierdzeniem) |
 | `mysql` / `dbs` | Lista baz; `heavy [--min-size X]` (bazy/tabele ≥ X, domyślnie 1G); `dump`/`dump-local`/`import`/`cli`/`top`/`optimize`/`create` |
 | `cron` / `crons` | Crony systemowe / users / strony; `cron edit` |
-| `pm2` / `node` / `apps` | PM2: lista, proxy, `restart`/`reload`/`logs`/`save` |
+| `pm2` / `apps` | PM2: lista, proxy, `restart`/`reload`/`logs`/`save` |
+| `node` | Serwisy z `.nvm` / `.npm` (obok `public_html`): wersje nvm i npm vs najnowsze; `node update nvm\|npm` |
 | `php` | LSPHP: lista vs repo + nowsze gałęzie do instalacji (`--refresh` / `--phpnet`), `set`/`ext`/`ini`/`restart`/`ps` |
 | `update-php <ver>` | Aktualizacja / instalacja LSPHP (np. `8.4`, `8.6`) z potwierdzeniem |
 | `health` [`--ram`] [`--cpu`] [`--count N`] [`--live`] [`--interval N`] | Przegląd; top RAM/CPU; `--live` (min. 2 s, q/Ctrl+C) |
@@ -75,6 +76,7 @@
 | `logs system …` / `logs clean …` | Logi systemowe (jak globalnie) |
 | `cron` | Crony użytkownika strony (+ heurystyka w `/etc`) |
 | `pm2` | Procesy strony; `restart`/`reload`/`logs` jako user strony |
+| `node` | nvm/npm tego serwisu (`.nvm`/`.npm`); `node update nvm\|npm` |
 | `limits …` | Limity CPU/RAM/IO (slice) / dysk (quota); `set`/`clear`/`check` |
 | `suspend` / `unsuspend` | Zawieszenie 503 (+ maintenance/`--allow-ip`); odwieszenie |
 | `openbasedir status\|on\|off` | `php_admin_value open_basedir` w vhconf (blok hmtools) |
@@ -127,6 +129,6 @@ hmtools> use app.pl
 [app.pl]> pm2 logs 100
 ```
 
-Aliasy: `node`, `apps`. Pomoc: `help pm2`.
+Alias: `apps`. Wersje nvm/npm: `node` (`help node`). Pomoc procesów: `help pm2`.
 
 ← [README](../README.md) · [Szybki start](quickstart.md)

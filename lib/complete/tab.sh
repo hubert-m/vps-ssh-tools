@@ -41,8 +41,8 @@ hm_tab_complete() {
   local re_backup_site='backup[[:space:]]+(site|restore|list)[[:space:]]'
   local re_cron_site='cron[[:space:]]+site[[:space:]]'
   local re_cron_user='cron[[:space:]]+(user|edit)[[:space:]]'
-  local re_pm2_site='(pm2|node|apps)[[:space:]]+site[[:space:]]'
-  local re_pm2_action='(pm2|node|apps)[[:space:]]+(restart|reload|stop|start|delete|del|logs|log)[[:space:]]'
+  local re_pm2_site='(pm2|apps)[[:space:]]+site[[:space:]]'
+  local re_pm2_action='(pm2|apps)[[:space:]]+(restart|reload|stop|start|delete|del|logs|log)[[:space:]]'
   local re_sup_action='supervisor[[:space:]]+(start|stop|restart|logs|log|tail)[[:space:]]'
   local re_mysql_db='(mysql|dbs|db)[[:space:]]+(dump|dump-local|local-dump|import|cli|console|shell|optimize|optimise)[[:space:]]'
   local re_mysql_dump_flags='(mysql|dbs|db)[[:space:]]+dump[[:space:]]+[^[:space:]]+[[:space:]]'
@@ -642,7 +642,23 @@ hm_tab_complete() {
           done
         fi
         ;;
-      pm2|node|apps)
+      node)
+        if [[ "${prefix}" =~ node[[:space:]]+update[[:space:]]+(nvm|npm)[[:space:]] ]]; then
+          for m in --yes; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+          hm_complete_push_sites "${partial}"
+        elif [[ "${prefix}" =~ node[[:space:]]+update[[:space:]] ]]; then
+          for m in nvm npm --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in sites list update help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
+      pm2|apps)
         if [[ "${prefix}" =~ $re_pm2_site ]]; then
           hm_complete_push_sites "${partial}"
         elif [[ "${prefix}" =~ $re_pm2_action ]]; then

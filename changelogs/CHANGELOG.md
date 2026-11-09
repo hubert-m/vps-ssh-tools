@@ -16,6 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [v0.1.11]
 
+- Feat: `node` — nvm/npm per serwis (katalogi `.nvm`/`.npm`), porównanie z najnowszą wersją, `update nvm|npm`; alias `node` odpięty od `pm2`
 - Feat: `wp cli-info` / `wp cli-update` — phar w `lib/wp-cli/` (SHA-512); instalator pobiera go tylko gdy pliku nie ma, `cli-update` jest jedyną podmianą
 - Fix: `backup restore` child po archive — wyjątek DB z manif. `databases_from_site_config` / wp-config w tar (live DOCROOT po archive znika)
 - Fix: `hm_detect_docker` — bez stdout (psuje `$(find_site)`); regresja w `test-docker-map.sh`
