@@ -91,12 +91,28 @@ hm_file_log_ui() {
   hm_file_log "$@"
 }
 
+# Defense in depth: linia z hasłem nie trafia do applog jawnie (gdy ktoś użyje echo).
+# Dopasowanie literałem (nie [ł] w klasie znaków — sed traktuje UTF-8 jako bajty).
+hm_log_redact_secrets() {
+  local line="$1" low
+  low="$(printf '%s' "${line}" | tr '[:upper:]' '[:lower:]')"
+  case "${low}" in
+    *hasło:*|*haslo:*|*password:*)
+      printf '%s' "${line}" | sed -E 's/(Hasło:|Haslo:|hasło:|haslo:|Password:|password:).*/\1 ***/'
+      ;;
+    *)
+      printf '%s' "${line}"
+      ;;
+  esac
+}
+
 hm_log_stream_to_file() {
   # stdin → linie w logu z prefiksem tag (OUT|ERR|RUN_OUT|…)
   local tag="${1:-OUT}"
   local level="${2:-INFO}"
   local line ts ctx
   while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="$(hm_log_redact_secrets "${line}")"
     ts="$(date '+%Y-%m-%d %H:%M:%S')"
     ctx=""
     [[ -n "${HM_SITE_DOMAIN:-}" ]] && ctx=" site=${HM_SITE_DOMAIN}"

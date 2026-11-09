@@ -452,10 +452,10 @@ EOF
   fi
   rm -f "${passf}" "${php_f}"
   hm_ok "Konto ${login} gotowe."
-  echo
-  echo "  ${C_BOLD}Login:${C_RESET} ${login}"
-  echo "  ${C_BOLD}Hasło:${C_RESET} ${pass}"
-  echo "  ${C_DIM}Zapisz hasło — nie będzie ponownie pokazane.${C_RESET}"
+  hm_print_secret "" \
+    "  ${C_BOLD}Login:${C_RESET} ${login}" \
+    "  ${C_BOLD}Hasło:${C_RESET} ${pass}" \
+    "  ${C_DIM}Zapisz hasło — nie będzie ponownie pokazane.${C_RESET}"
 }
 
 hm_wp_cache_flush() {
@@ -534,9 +534,10 @@ hm_wp_install() {
     fi
   fi
   hm_ok "WordPress zainstalowany na ${domain}."
-  echo "  ${C_BOLD}Admin:${C_RESET} admin"
-  echo "  ${C_BOLD}Hasło:${C_RESET} ${pass}"
-  echo "  ${C_DIM}Zapisz hasło — nie będzie ponownie pokazane.${C_RESET}"
+  hm_print_secret "" \
+    "  ${C_BOLD}Admin:${C_RESET} admin" \
+    "  ${C_BOLD}Hasło:${C_RESET} ${pass}" \
+    "  ${C_DIM}Zapisz hasło — nie będzie ponownie pokazane.${C_RESET}"
 }
 
 cmd_wp() {

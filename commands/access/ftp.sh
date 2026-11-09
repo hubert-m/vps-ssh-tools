@@ -301,11 +301,11 @@ hm_access_ftp_add() {
   esac
 
   hm_ok "Konto FTP utworzone: ${ftp_user}"
-  echo
-  echo "  ${C_BOLD}FTP user:${C_RESET} ${ftp_user}"
-  echo "  ${C_BOLD}Hasło:${C_RESET}    ${pass}"
-  echo "  ${C_BOLD}Path:${C_RESET}     ${path} → ${chroot_abs}"
-  echo "  ${C_DIM}Zapisz hasło — nie będzie ponownie pokazane.${C_RESET}"
+  hm_print_secret "" \
+    "  ${C_BOLD}FTP user:${C_RESET} ${ftp_user}" \
+    "  ${C_BOLD}Hasło:${C_RESET}    ${pass}" \
+    "  ${C_BOLD}Path:${C_RESET}     ${path} → ${chroot_abs}" \
+    "  ${C_DIM}Zapisz hasło — nie będzie ponownie pokazane.${C_RESET}"
 }
 
 hm_access_ftp_passwd() {
@@ -372,9 +372,9 @@ hm_access_ftp_passwd() {
   esac
 
   hm_ok "Hasło FTP ustawione: ${ftp_user}"
-  echo
-  echo "  ${C_BOLD}FTP user:${C_RESET} ${ftp_user}"
-  echo "  ${C_BOLD}Hasło:${C_RESET}    ${pass}"
+  hm_print_secret "" \
+    "  ${C_BOLD}FTP user:${C_RESET} ${ftp_user}" \
+    "  ${C_BOLD}Hasło:${C_RESET}    ${pass}"
 }
 
 hm_access_ftp_delete() {

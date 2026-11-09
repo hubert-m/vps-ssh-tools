@@ -133,11 +133,36 @@ hm_backup_db_is_nonempty() {
 
 # Czy import DB zagraża żywej innej domenie (np. bazy mastera w starym snapshocie childa).
 # Przy restore childa: DB z website_id=master blokuj, chyba że config DOCROOT childa ją wskazuje.
-# DB z wp-config/.env snapshota.
-# Najpierw files.tar.gz (nie da się „podrobić” samym manifesem); potem pole manifestu.
+# Czy ścieżka w tarze to config w korzeniu docroot (nie zagnieżdżona kopia).
+# Tar z `tar -C docroot` → plik w korzeniu. Stary tar HOME mastera → public_html/<domena-child>/.
+# public_html/wp-config.php mastera i vendor/.../wp-config.php nie liczą się.
+hm_backup_snap_config_member_ok() {
+  local member="$1" domain="${2:-}" p base parent
+  p="${member}"
+  while [[ "${p}" == ./* ]]; do p="${p#./}"; done
+  p="${p#/}"
+  [[ -n "${p}" && "${p}" != *..* ]] || return 1
+  base="${p##*/}"
+  case "${base}" in
+    wp-config.php|.env|configuration.php) ;;
+    *) return 1 ;;
+  esac
+  [[ "${p}" != */* ]] && return 0
+  parent="${p%/*}"
+  if [[ -n "${domain}" && "${domain}" != */* && "${domain}" != *..* \
+        && "${parent}" == "public_html/${domain}" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+# DB z wp-config/.env snapshota (tylko korzeń docroot).
+# Gdy jest files.tar.gz — tylko on (manifest da się podrobić, także gdy tar nie ma configu).
+# $2 = domena restore (child: public_html/<domena>/…).
 hm_backup_snap_site_config_dbs() {
-  local remote_base="$1"
-  local json raw name work member members tmp has_tar=0 found=0
+  local remote_base="$1" domain="${2:-}"
+  local json raw name work member tmp tarball has_tar=0
+  local -a ok_members=()
   [[ -n "${remote_base}" ]] || return 0
 
   if [[ "${remote_base}" == /* ]]; then
@@ -147,22 +172,27 @@ hm_backup_snap_site_config_dbs() {
   fi
   if [[ "${has_tar}" -eq 1 ]]; then
     work="$(mktemp -d "${TMP_DIR:-/tmp}/hmtools-snapcfg.XXXXXX")"
-    members="$(hm_backup_r_cat "${remote_base}/files.tar.gz" 2>/dev/null \
-      | tar -tzf - 2>/dev/null \
-      | grep -E '(^|/)(wp-config\.php|\.env|configuration\.php)$' \
-      | head -n 20 || true)"
-    if [[ -n "${members}" ]]; then
-      # shellcheck disable=SC2086
-      hm_backup_r_cat "${remote_base}/files.tar.gz" 2>/dev/null \
-        | tar -xzf - -C "${work}" ${members} 2>/dev/null || true
+    tarball="$(mktemp "${TMP_DIR:-/tmp}/hmtools-snapcfg.XXXXXX")"
+    if ! hm_backup_r_cat "${remote_base}/files.tar.gz" > "${tarball}" 2>/dev/null; then
+      rm -rf "${work}" "${tarball}" 2>/dev/null || true
+      return 0
+    fi
+    while IFS= read -r member; do
+      [[ -n "${member}" ]] || continue
+      hm_backup_snap_config_member_ok "${member}" "${domain}" || continue
+      ok_members+=("${member}")
+      if [[ "${#ok_members[@]}" -ge 20 ]]; then
+        break
+      fi
+    done < <(tar -tzf "${tarball}" 2>/dev/null || true)
+    if [[ "${#ok_members[@]}" -gt 0 ]]; then
+      tar -xzf "${tarball}" -C "${work}" -- "${ok_members[@]}" 2>/dev/null || true
       while IFS= read -r name; do
         [[ -n "${name}" ]] || continue
         printf '%s\n' "${name}"
-        found=1
       done < <(
         {
-          while IFS= read -r member; do
-            [[ -n "${member}" ]] || continue
+          for member in "${ok_members[@]}"; do
             tmp="${work}/${member#./}"
             [[ -f "${tmp}" ]] || continue
             case "${member}" in
@@ -170,13 +200,14 @@ hm_backup_snap_site_config_dbs() {
               *.env) hm_extract_db_from_file "${tmp}" env ;;
               *configuration.php) hm_extract_db_from_file "${tmp}" joomla ;;
             esac
-          done <<< "${members}"
+          done
         } | awk -F'\t' 'NF && !seen[$1]++ { print $1 }'
       )
     fi
-    rm -rf "${work}" 2>/dev/null || true
-    # Tar jest źródłem prawdy — nie łącz z forgeable databases_from_site_config
-    [[ "${found}" -eq 1 ]] && return 0
+    rm -rf "${work}" "${tarball}" 2>/dev/null || true
+    # Tar jest źródłem prawdy — brak configu w korzeniu docroot = brak wyjątku
+    # (nie schodzimy do forgeable databases_from_site_config).
+    return 0
   fi
 
   json="$(hm_backup_cat_manifest "${remote_base}" 2>/dev/null || true)"
@@ -238,7 +269,7 @@ LIMIT 1;
     if [[ -n "${remote_base}" ]]; then
       while IFS= read -r hname; do
         [[ "${hname}" == "${dbname}" ]] && return 1
-      done < <(hm_backup_snap_site_config_dbs "${remote_base}")
+      done < <(hm_backup_snap_site_config_dbs "${remote_base}" "${skip_domain}")
     fi
     return 0 # child restore + DB mastera (nie z configu childa)
   fi

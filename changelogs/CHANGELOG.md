@@ -16,6 +16,9 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [v0.1.12]
 
+- Fix: `node sites` — wersje nvm/npm z plików (bez source `nvm.sh` i bez `npm --version` jako root); aktualizacja nvm bez `git -c safe.directory`
+- Fix: `access ssh/ftp passwd`, `wp admin-reset` / `wp install` — hasło przez `hm_print_secret` (nie echo do applog); redakcja linii `Hasło:` w `hm_log_stream_to_file`
+- Fix: `backup restore` child — wyjątek DB tylko z configu w korzeniu docroot tara (nie z zagnieżdżonego `wp-config` mastera); tar bez tego configu nie używa `databases_from_site_config`
 - Test: `test-site-create` — asercja placeholdera `index.html` (HTTP 200 na żywym OLS)
 
 ## [v0.1.11]

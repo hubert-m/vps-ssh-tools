@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# Regresja: hasło access ssh/ftp i wp nie trafia na stdout/applog (hm_print_secret + redakcja Hasło:).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export HMTOOLS_ROOT="$PWD"
+# shellcheck disable=SC1091
+source lib/common/ui.sh
+# shellcheck disable=SC1091
+source lib/logging.sh
+hm_file_log_ui() { :; }
+
+fail=0
+PASS='GenPass12xYzAb99'
+assert_no_secret() {
+  local name="$1" blob="$2"
+  if printf '%s' "${blob}" | grep -F -q "${PASS}"; then
+    echo "FAIL ${name} (hasło w wyjściu)"
+    fail=1
+    return
+  fi
+  echo "OK   ${name}"
+}
+
+# --- redakcja linii Hasło: w applog ---
+logdir="$(mktemp -d "${TMPDIR:-/tmp}/hmtools-seclog.XXXXXX")"
+trap 'rm -rf "${logdir}"' EXIT
+LOG_DIR="${logdir}"
+LOG_ENABLED=1
+printf '%s\n' "  Hasło: ${PASS}" "zwykła linia" | hm_log_stream_to_file OUT INFO
+logf="$(hm_log_file_path)"
+if grep -F -q "${PASS}" "${logf}"; then
+  echo "FAIL log-redact-haslo (jawne hasło)"
+  fail=1
+elif grep -q 'Hasło: \*\*\*' "${logf}" && grep -q 'zwykła linia' "${logf}"; then
+  echo "OK   log-redact-haslo"
+else
+  echo "FAIL log-redact-haslo (brak redakcji lub zgubiona linia)"
+  cat "${logf}" || true
+  fail=1
+fi
+
+hm_confirm_plan() { return 0; }
+hm_gen_password() { printf '%s' "${PASS}"; }
+hm_have_cmd() { [[ "${1:-}" == "cyberpanel" ]] && return 0; return 1; }
+hm_is_valid_domain() { [[ "${1:-}" == *.* ]]; }
+hm_run() { return 0; }
+hm_mktemp() { mktemp "${TMPDIR:-/tmp}/hm.XXXXXX${1:-}"; }
+C_BOLD="" C_RESET="" C_DIM=""
+
+# shellcheck disable=SC1091
+source commands/access/ssh.sh
+# shellcheck disable=SC1091
+source commands/access/ftp.sh
+
+hm_access_resolve_site() {
+  HM_SITE_DOMAIN="example.pl"
+  HM_SITE_USER="$(id -un)"
+  HM_SITE_ROOT="${logdir}"
+  return 0
+}
+hm_access_require_site_user() { printf '%s\n' "$(id -un)"; }
+chpasswd() { return 0; }
+hm_access_cp_ftp_exists() { return 1; }
+hm_access_cp_ftp_create() { return 0; }
+hm_access_cp_ftp_actual_user() { printf '%s\n' "${2:-$1}"; }
+hm_access_cp_ftp_belongs_to_domain() { return 0; }
+hm_access_cp_ftp_set_password() { return 0; }
+mkdir -p "${logdir}"
+
+out="$(hm_access_ssh_passwd example.pl 2>&1 || true)"
+assert_no_secret "ssh-passwd-stdout" "${out}"
+
+out="$(hm_access_ftp_add ftpuser / 2>&1 || true)"
+assert_no_secret "ftp-add-stdout" "${out}"
+
+out="$(hm_access_ftp_passwd ftpuser 2>&1 || true)"
+assert_no_secret "ftp-passwd-stdout" "${out}"
+
+_hm_cmd_help() { :; }
+_hm_cmd_register() { :; }
+_hm_cmd_register_site() { :; }
+# shellcheck disable=SC1091
+source commands/wp/main.sh
+hm_wp_require_site() { HM_SITE_DOMAIN="example.pl"; return 0; }
+hm_wp_run() { return 0; }
+hm_confirm_plan() { return 0; }
+hm_gen_password() { printf '%s' "${PASS}"; }
+hm_run() { return 0; }
+
+out="$(hm_wp_admin_reset admin 2>&1 || true)"
+assert_no_secret "wp-admin-reset-stdout" "${out}"
+
+out="$(hm_wp_install example.pl --title T --admin-email a@example.pl --yes 2>&1 || true)"
+assert_no_secret "wp-install-stdout" "${out}"
+
+# sekret idzie na fd 3 (TTY logów), nie do strumienia łapanego jako applog
+secretf="${logdir}/tty"
+: > "${secretf}"
+exec 3>>"${secretf}"
+HM_LOG_TTY_FDS=1
+out="$(hm_access_ssh_passwd example.pl 2>&1 || true)"
+assert_no_secret "ssh-passwd-stdout-with-ttyfd" "${out}"
+if grep -F -q "${PASS}" "${secretf}"; then
+  echo "OK   ssh-passwd-on-tty-fd"
+else
+  echo "FAIL ssh-passwd-on-tty-fd"
+  fail=1
+fi
+
+if [[ "${fail}" -ne 0 ]]; then
+  echo "FAILED"
+  exit 1
+fi
+echo "ALL OK"
+exit 0

@@ -32,17 +32,25 @@ D="${tmpdir}/d"
 mkdir -p "${A}/public_html" "${B}/public_html" "${C}/public_html" "${D}/public_html/.nvm" "${D}/public_html/.npm"
 mkdir -p "${A}/.nvm/versions/node/v20.10.0/bin" "${A}/.nvm/alias" "${A}/.npm" "${B}/.npm"
 printf '%s\n' 'v20.10.0' > "${A}/.nvm/alias/default"
-cat > "${A}/.nvm/nvm.sh" <<'EOF'
-nvm() { [ "$1" = "--version" ] && echo 0.39.7; }
+printf '%s\n' '{ "name": "nvm", "version": "0.39.7" }' > "${A}/.nvm/package.json"
+mkdir -p "${A}/.nvm/versions/node/v20.10.0/lib/node_modules/npm"
+printf '%s\n' '{ "name": "npm", "version": "10.2.0" }' > "${A}/.nvm/versions/node/v20.10.0/lib/node_modules/npm/package.json"
+# złośliwe skrypty — listowanie nie może ich uruchomić
+MARKER="${tmpdir}/pwned"
+cat > "${A}/.nvm/nvm.sh" <<EOF
+echo nvm.sh SOURCED >> "${MARKER}"
 EOF
-cat > "${A}/.nvm/versions/node/v20.10.0/bin/npm" <<'EOF'
+cat > "${A}/.nvm/versions/node/v20.10.0/bin/npm" <<EOF
 #!/bin/sh
+echo npm EXECUTED >> "${MARKER}"
 echo 10.2.0
 EOF
 chmod +x "${A}/.nvm/versions/node/v20.10.0/bin/npm"
-mkdir -p "${tmpdir}/bin"
-cat > "${tmpdir}/bin/npm" <<'EOF'
+mkdir -p "${tmpdir}/bin" "${tmpdir}/lib/node_modules/npm"
+printf '%s\n' '{ "name": "npm", "version": "9.0.0" }' > "${tmpdir}/lib/node_modules/npm/package.json"
+cat > "${tmpdir}/bin/npm" <<EOF
 #!/bin/sh
+echo npm EXECUTED >> "${MARKER}"
 echo 9.0.0
 EOF
 chmod +x "${tmpdir}/bin/npm"
@@ -91,6 +99,13 @@ else
   echo "OK   list-not-inside-docroot"
 fi
 echo "${out}" | grep -q '0.39.7' && echo "OK   nvm-ver" || { echo "FAIL nvm-ver"; echo "${out}"; fail=1; }
+if [[ -s "${MARKER}" ]]; then
+  echo "FAIL probe-no-exec"
+  cat "${MARKER}"
+  fail=1
+else
+  echo "OK   probe-no-exec"
+fi
 echo "${out}" | grep 'a.test' | grep -q 'nvm npm' && echo "OK   update-both" || { echo "FAIL update-both"; echo "${out}"; fail=1; }
 echo "${out}" | grep 'b.test' | grep -q '9.0.0' && echo "OK   npm-only-ver" || { echo "FAIL npm-only-ver"; echo "${out}"; fail=1; }
 
@@ -115,9 +130,7 @@ fi
 
 # już aktualne — bez apply
 applied=0
-cat > "${A}/.nvm/nvm.sh" <<'EOF'
-nvm() { [ "$1" = "--version" ] && echo 0.40.1; }
-EOF
+printf '%s\n' '{ "name": "nvm", "version": "0.40.1" }' > "${A}/.nvm/package.json"
 hm_confirm_plan() { echo CONFIRM-SHOULD-NOT; return 0; }
 up="$(hm_node_update_nvm a.test 0 2>&1 || true)"
 if [[ "${up}" == *"aktualne"* && "${up}" != *CONFIRM-SHOULD-NOT* && "${applied}" -eq 0 ]]; then

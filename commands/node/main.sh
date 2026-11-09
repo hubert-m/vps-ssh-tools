@@ -93,17 +93,28 @@ hm_node_run_as_user() {
   return 1
 }
 
+# Wersja z package.json — odczyt pliku, bez uruchamiania kodu.
+hm_node_read_pkg_version() {
+  local file="$1" raw
+  [[ -f "${file}" && ! -L "${file}" ]] || return 1
+  raw="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${file}" | head -1)"
+  raw="$(hm_node_semver "${raw}")"
+  [[ -n "${raw}" ]] || return 1
+  printf '%s' "${raw}"
+}
+
+# Wersja nvm z plików (package.json, potem literał w nvm.sh). Bez source i bez git -c safe.directory.
 hm_node_nvm_version() {
-  local dir="$1" v=""
+  local dir="$1" v="" line=""
   [[ -d "${dir}" ]] || return 1
-  if [[ -d "${dir}/.git" ]] && hm_have_cmd git; then
-    v="$(git -c "safe.directory=${dir}" -C "${dir}" describe --tags --exact-match 2>/dev/null || true)"
-    [[ -n "${v}" ]] || v="$(git -c "safe.directory=${dir}" -C "${dir}" describe --tags --abbrev=0 2>/dev/null || true)"
+  if [[ -f "${dir}/package.json" && ! -L "${dir}/package.json" ]]; then
+    v="$(hm_node_read_pkg_version "${dir}/package.json" 2>/dev/null || true)"
   fi
-  v="$(hm_node_semver "${v}")"
-  if [[ -z "${v}" && -f "${dir}/nvm.sh" ]]; then
-    v="$(bash -c 'export NVM_DIR="$1"; . "$1/nvm.sh" >/dev/null 2>&1 || true; nvm --version 2>/dev/null' bash "${dir}" 2>/dev/null || true)"
-    v="$(hm_node_semver "${v}")"
+  if [[ -z "${v}" && -f "${dir}/nvm.sh" && ! -L "${dir}/nvm.sh" ]]; then
+    line="$(grep -E -m1 \
+      'nvm_echo[[:space:]]+"[0-9]+\.[0-9]+\.[0-9]+"|NVM_VERSION[=[:space:]]+"?[0-9]+\.[0-9]+\.[0-9]+' \
+      "${dir}/nvm.sh" 2>/dev/null || true)"
+    v="$(hm_node_semver "${line}")"
   fi
   [[ -n "${v}" ]] || return 1
   printf '%s' "${v}"
@@ -144,16 +155,14 @@ hm_node_npm_bin() {
   return 1
 }
 
+# Wersja npm z package.json obok binarki (…/lib/node_modules/npm). Bez uruchamiania npm.
 hm_node_npm_version() {
-  local bin="$1" v
-  [[ -n "${bin}" && -x "${bin}" ]] || return 1
-  if hm_have_cmd timeout; then
-    v="$(timeout 20 "${bin}" --version 2>/dev/null || true)"
-  else
-    v="$("${bin}" --version 2>/dev/null || true)"
-  fi
-  v="$(hm_node_semver "${v}")"
-  [[ -n "${v}" ]] || return 1
+  local bin="$1" prefix pkg v
+  [[ -n "${bin}" ]] || return 1
+  prefix="$(cd "$(dirname "${bin}")/.." 2>/dev/null && pwd)" || return 1
+  pkg="${prefix}/lib/node_modules/npm/package.json"
+  [[ -f "${pkg}" && ! -L "${pkg}" ]] || return 1
+  v="$(hm_node_read_pkg_version "${pkg}")" || return 1
   printf '%s' "${v}"
 }
 
@@ -323,10 +332,11 @@ hm_node_resolve_domain() {
 hm_node_apply_nvm_update() {
   local home="$1" user="$2" tag="$3" dir="${1}/.nvm" tmp
   if [[ -d "${dir}/.git" ]] && hm_have_cmd git; then
+    # jako właściciel repo — bez -c safe.directory (nie omijamy ochrony git)
     hm_node_run_as_user "${user}" "${home}" \
-      git -c "safe.directory=${dir}" -C "${dir}" fetch --tags origin || return 1
+      git -C "${dir}" fetch --tags origin || return 1
     hm_node_run_as_user "${user}" "${home}" \
-      git -c "safe.directory=${dir}" -C "${dir}" checkout "${tag}" || return 1
+      git -C "${dir}" checkout "${tag}" || return 1
     return 0
   fi
   tmp="$(hm_mktemp .nvm-install.sh)"

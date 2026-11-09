@@ -259,10 +259,10 @@ hm_access_ssh_passwd() {
     return 1
   fi
   hm_ok "Hasło Unix ustawione dla ${user}."
-  echo
-  echo "  ${C_BOLD}Użytkownik:${C_RESET} ${user}"
-  echo "  ${C_BOLD}Hasło:${C_RESET}      ${pass}"
-  echo "  ${C_DIM}Zapisz hasło — nie będzie ponownie pokazane.${C_RESET}"
+  hm_print_secret "" \
+    "  ${C_BOLD}Użytkownik:${C_RESET} ${user}" \
+    "  ${C_BOLD}Hasło:${C_RESET}      ${pass}" \
+    "  ${C_DIM}Zapisz hasło — nie będzie ponownie pokazane.${C_RESET}"
 }
 
 hm_access_ssh_shell() {
