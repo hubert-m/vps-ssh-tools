@@ -16,19 +16,20 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [v0.1.11]
 
+- Fix: `backup` child — wyjątek DB z tar (nie forgeable manif.); archive childa z CP bez vhRoot → docroot childa / ODMOWA
 - Feat: `node` — nvm/npm per serwis (katalogi `.nvm`/`.npm`), porównanie z najnowszą wersją, `update nvm|npm`; alias `node` odpięty od `pm2`
 - Feat: `wp cli-info` / `wp cli-update` — phar w `lib/wp-cli/` (SHA-512); instalator pobiera go tylko gdy pliku nie ma, `cli-update` jest jedyną podmianą
 - Fix: `backup restore` child po archive — wyjątek DB z manif. `databases_from_site_config` / wp-config w tar (live DOCROOT po archive znika)
 - Fix: `hm_detect_docker` — bez stdout (psuje `$(find_site)`); regresja w `test-docker-map.sh`
 - Fix: `dns add TXT` — SPF `-all` nie jest flagą; strip cudzysłowów; DKIM check wymaga v=DKIM1+p=
-- Fix: `mail add|passwd` — hasło poza applog (`hm_print_secret`); CyberCP python czyta plik 0600 (bez argv)
-- Fix: `deploy rollback` — rsync --delete ze snapshu (pliki dodane przez deploy znikają)
+- Fix: `mail add|passwd` — `hm_print_secret`; CyberCP python + plik 0600; bez fallbacku `cyberpanel --password` (ps)
+- Fix: `deploy rollback` — rsync --delete --checksum (1:1 treści; nie pomija przy tym samym size+mtime)
 - Fix: `mail queue delete` — walidacja QID + obecność w kolejce; `mail check` bez dig → „pominięto”
 - Fix: `waf whitelist` — exclusions po confirm + rollback; zachowanie `--uri`; ID poza CRS; `--yes`
 - Fix: `malware quarantine` — unikalne ID (mktemp), bez nadpisywania manifestu; rc≠0 gdy nic nie przeniesiono
 - Fix: `alias remove` — nie usuwa domeny głównej / obcego aliasu; mapa OLS chroni token mastera
 - Fix: `services` — stan failed bez doklejania `unknown` (kolor + tabela)
-- Fix: `backup --targets` fallback przy awarii 1. celu; `inc restore` ścieżki absolutne; confirm_critical domain-first
+- Fix: `backup --targets` fallback + `rc≠0` gdy 1. cel padł (mimo OK fallback); `inc restore` abs; confirm domain-first
 - Fix: `notify setup` — `printf %q` + twardsza walidacja URL; curl -K; dedup clear po udanym backup
 - Fix: `limits set` — limity OLS extprocessor gdy lsphp poza user.slice; WARN dla --cpu/--io na OLS
 - Fix: `security ssh set port` — rollback 120 s przez `systemd-run` / `setsid` (SIGHUP-safe); stuby testów firewall/ip-valid; `test-services-logs` bash -n

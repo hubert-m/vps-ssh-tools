@@ -310,7 +310,8 @@ hm_backup_run_on_targets() {
     if [[ "${rc_fb}" -eq 0 ]] && hm_backup_verify_snapshot "${root}" "${rel}"; then
       report+=("OK  ${name} (${root}) [fallback direct]")
       source_root="${root}"
-      overall=0
+      # Awaria któregokolwiek celu (tu: primary) → overall ≠ 0, mimo udanego fallbacku
+      overall=1
     else
       report+=("FAIL ${name} (${root}) rc=${rc_fb} [fallback]")
       overall=1

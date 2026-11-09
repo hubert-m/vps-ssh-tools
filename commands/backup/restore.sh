@@ -133,11 +133,52 @@ hm_backup_db_is_nonempty() {
 
 # Czy import DB zagraża żywej innej domenie (np. bazy mastera w starym snapshocie childa).
 # Przy restore childa: DB z website_id=master blokuj, chyba że config DOCROOT childa ją wskazuje.
-# DB z wp-config/.env snapshota: pole manifestu (nowe archive) albo files.tar.gz (stare).
+# DB z wp-config/.env snapshota.
+# Najpierw files.tar.gz (nie da się „podrobić” samym manifesem); potem pole manifestu.
 hm_backup_snap_site_config_dbs() {
   local remote_base="$1"
-  local json raw name work member members tmp
+  local json raw name work member members tmp has_tar=0 found=0
   [[ -n "${remote_base}" ]] || return 0
+
+  if [[ "${remote_base}" == /* ]]; then
+    [[ -f "${remote_base}/files.tar.gz" && -s "${remote_base}/files.tar.gz" ]] && has_tar=1
+  elif rclone ls "${remote_base}/files.tar.gz" >/dev/null 2>&1; then
+    has_tar=1
+  fi
+  if [[ "${has_tar}" -eq 1 ]]; then
+    work="$(mktemp -d "${TMP_DIR:-/tmp}/hmtools-snapcfg.XXXXXX")"
+    members="$(hm_backup_r_cat "${remote_base}/files.tar.gz" 2>/dev/null \
+      | tar -tzf - 2>/dev/null \
+      | grep -E '(^|/)(wp-config\.php|\.env|configuration\.php)$' \
+      | head -n 20 || true)"
+    if [[ -n "${members}" ]]; then
+      # shellcheck disable=SC2086
+      hm_backup_r_cat "${remote_base}/files.tar.gz" 2>/dev/null \
+        | tar -xzf - -C "${work}" ${members} 2>/dev/null || true
+      while IFS= read -r name; do
+        [[ -n "${name}" ]] || continue
+        printf '%s\n' "${name}"
+        found=1
+      done < <(
+        {
+          while IFS= read -r member; do
+            [[ -n "${member}" ]] || continue
+            tmp="${work}/${member#./}"
+            [[ -f "${tmp}" ]] || continue
+            case "${member}" in
+              *wp-config.php) hm_extract_db_from_file "${tmp}" wp ;;
+              *.env) hm_extract_db_from_file "${tmp}" env ;;
+              *configuration.php) hm_extract_db_from_file "${tmp}" joomla ;;
+            esac
+          done <<< "${members}"
+        } | awk -F'\t' 'NF && !seen[$1]++ { print $1 }'
+      )
+    fi
+    rm -rf "${work}" 2>/dev/null || true
+    # Tar jest źródłem prawdy — nie łącz z forgeable databases_from_site_config
+    [[ "${found}" -eq 1 ]] && return 0
+  fi
+
   json="$(hm_backup_cat_manifest "${remote_base}" 2>/dev/null || true)"
   raw="$(hm_backup_json_arr "${json}" "databases_from_site_config")"
   raw="${raw//\"/}"
@@ -147,41 +188,7 @@ hm_backup_snap_site_config_dbs() {
     for name in "${_cfg_arr[@]}"; do
       [[ -n "${name}" ]] && printf '%s\n' "${name}"
     done
-    return 0
   fi
-  # Fallback: config w archiwum plików (po archive live docroot nie istnieje)
-  local has_tar=0
-  if [[ "${remote_base}" == /* ]]; then
-    [[ -f "${remote_base}/files.tar.gz" && -s "${remote_base}/files.tar.gz" ]] && has_tar=1
-  elif rclone ls "${remote_base}/files.tar.gz" >/dev/null 2>&1; then
-    has_tar=1
-  fi
-  [[ "${has_tar}" -eq 1 ]] || return 0
-  work="$(mktemp -d "${TMP_DIR:-/tmp}/hmtools-snapcfg.XXXXXX")"
-  members="$(hm_backup_r_cat "${remote_base}/files.tar.gz" 2>/dev/null \
-    | tar -tzf - 2>/dev/null \
-    | grep -E '(^|/)(wp-config\.php|\.env|configuration\.php)$' \
-    | head -n 20 || true)"
-  if [[ -z "${members}" ]]; then
-    rm -rf "${work}" 2>/dev/null || true
-    return 0
-  fi
-  # shellcheck disable=SC2086
-  hm_backup_r_cat "${remote_base}/files.tar.gz" 2>/dev/null \
-    | tar -xzf - -C "${work}" ${members} 2>/dev/null || true
-  {
-    while IFS= read -r member; do
-      [[ -n "${member}" ]] || continue
-      tmp="${work}/${member#./}"
-      [[ -f "${tmp}" ]] || continue
-      case "${member}" in
-        *wp-config.php) hm_extract_db_from_file "${tmp}" wp ;;
-        *.env) hm_extract_db_from_file "${tmp}" env ;;
-        *configuration.php) hm_extract_db_from_file "${tmp}" joomla ;;
-      esac
-    done <<< "${members}"
-  } | awk -F'\t' 'NF && !seen[$1]++ { print $1 }'
-  rm -rf "${work}" 2>/dev/null || true
 }
 
 # return 0 = odmowa (cudza DB); return 1 = OK do importu

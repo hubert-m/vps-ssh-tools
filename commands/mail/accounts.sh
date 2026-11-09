@@ -31,12 +31,37 @@ hm_mail_passfile_write() {
   printf '%s' "${f}"
 }
 
-# createEmail / changeEmailPassword bez hasła w argv (CyberCP python czyta plik 0600).
+# Binarka CyberCP do createEmail/changePassword — hasło TYLKO z pliku 0600, nigdy w argv.
+hm_mail_cp_python() {
+  local p
+  for p in \
+    "${HM_CYBERCP_PYTHON:-}" \
+    /usr/local/CyberCP/bin/python \
+    /usr/local/CyberCP/bin/python3; do
+    [[ -n "${p}" && -x "${p}" ]] || continue
+    printf '%s' "${p}"
+    return 0
+  done
+  return 1
+}
+
+hm_mail_cp_require_python() {
+  if hm_mail_cp_python >/dev/null; then
+    return 0
+  fi
+  hm_err "Brak /usr/local/CyberCP/bin/python — mail add/passwd nie woła cyberpanel --password (wyciek w ps)."
+  hm_info "Wymagany CyberCP Python (hasło z pliku 0600). Fallback CLI z --password jest wyłączony."
+  return 1
+}
+
+# createEmail bez hasła w argv (CyberCP python czyta plik 0600).
 hm_mail_cp_create_email() {
-  local domain="$1" user="$2" passfile="$3"
-  local py="/usr/local/CyberCP/bin/python"
-  if [[ -x "${py}" && -d /usr/local/CyberCP ]]; then
-    hm_run "${py}" - "${domain}" "${user}" "${passfile}" <<'PY'
+  local domain="$1" user="$2" passfile="$3" py
+  py="$(hm_mail_cp_python)" || {
+    hm_mail_cp_require_python
+    return 1
+  }
+  hm_run "${py}" - "${domain}" "${user}" "${passfile}" <<'PY'
 import sys
 sys.path.insert(0, "/usr/local/CyberCP")
 domain, user, pf = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -56,22 +81,15 @@ except Exception:
         sys.exit(1)
 sys.exit(0 if ok else 1)
 PY
-    return $?
-  fi
-  # Fallback CLI — hasło chwilowo w argv cyberpanel (brak CyberCP python).
-  local pass
-  pass="$(tr -d '\n' < "${passfile}")"
-  hm_run cyberpanel createEmail \
-    --domainName "${domain}" \
-    --userName "${user}" \
-    --password "${pass}"
 }
 
 hm_mail_cp_change_password() {
-  local email="$1" passfile="$2"
-  local py="/usr/local/CyberCP/bin/python"
-  if [[ -x "${py}" && -d /usr/local/CyberCP ]]; then
-    hm_run "${py}" - "${email}" "${passfile}" <<'PY'
+  local email="$1" passfile="$2" py
+  py="$(hm_mail_cp_python)" || {
+    hm_mail_cp_require_python
+    return 1
+  }
+  hm_run "${py}" - "${email}" "${passfile}" <<'PY'
 import sys
 sys.path.insert(0, "/usr/local/CyberCP")
 email, pf = sys.argv[1], sys.argv[2]
@@ -88,17 +106,6 @@ except Exception:
         sys.exit(1)
 sys.exit(0)
 PY
-    return $?
-  fi
-  local pass
-  pass="$(tr -d '\n' < "${passfile}")"
-  if ! hm_run cyberpanel changeEmailPassword \
-    --email "${email}" \
-    --password "${pass}"; then
-    hm_run cyberpanel changeEmailPass \
-      --email "${email}" \
-      --password "${pass}"
-  fi
 }
 
 hm_mail_normalize_local() {

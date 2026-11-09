@@ -281,17 +281,44 @@ else
   fail=1
 fi
 
-# --- add calls createEmail via hm_run; hasło nie na stdout ---
+# --- bez CyberCP python: odmowa (NIGDY createEmail --password w argv) ---
+: > "${RUN_LOG}"
+unset HM_CYBERCP_PYTHON || true
+FAKE_USERS=()
+HM_SITE_DOMAIN="example.pl"
+if hm_mail_account_add biuro --yes >/dev/null 2>&1; then
+  echo "FAIL add-without-python-should-fail"
+  fail=1
+elif grep -qE -- '--password|createEmail' "${RUN_LOG}"; then
+  echo "FAIL add-without-python-leaked-cli"
+  cat "${RUN_LOG}"
+  fail=1
+else
+  echo "OK   add-without-python-refuse"
+fi
+
+# --- z CyberCP python: hm_run woła pythona + passfile; hasło nie w argv / stdout ---
+mkdir -p "${tmpdir}/CyberCP/bin"
+cat > "${tmpdir}/CyberCP/bin/python" <<'EOF'
+#!/bin/sh
+# mock: argv = domain user passfile  OR  email passfile
+echo "PY $*" >> "${RUN_LOG}"
+exit 0
+EOF
+chmod +x "${tmpdir}/CyberCP/bin/python"
+# hm_run w teście tylko loguje — podłączamy ścieżkę przez HM_CYBERCP_PYTHON
+export HM_CYBERCP_PYTHON="${tmpdir}/CyberCP/bin/python"
 : > "${RUN_LOG}"
 SECRET_FILE="${tmpdir}/secret.out"
 : > "${SECRET_FILE}"
 FAKE_USERS=()
 HM_SITE_DOMAIN="example.pl"
 add_out="$(hm_mail_account_add biuro --yes 2>&1)"
-if grep -q 'createEmail' "${RUN_LOG}" && grep -q -- '--password' "${RUN_LOG}"; then
-  echo "OK   add-createEmail"
+if grep -q "${HM_CYBERCP_PYTHON}" "${RUN_LOG}" && ! grep -qE -- '--password' "${RUN_LOG}" \
+  && ! grep -q 'GenPass12' "${RUN_LOG}"; then
+  echo "OK   add-cybercp-python-no-argv"
 else
-  echo "FAIL add-createEmail"
+  echo "FAIL add-cybercp-python-no-argv"
   cat "${RUN_LOG}"
   fail=1
 fi
@@ -306,6 +333,7 @@ else
   cat "${SECRET_FILE}" || true
   fail=1
 fi
+unset HM_CYBERCP_PYTHON
 
 # --- catchall ---
 hm_mail_catchall_set example.pl biuro@example.pl --yes >/dev/null

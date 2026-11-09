@@ -372,6 +372,49 @@ hm_site_collect_delete_inventory() {
     HM_DEL_CHILD_OF_SHARED=1
   fi
 
+  # Child w CP bez wspólnego vhRoot w OLS (fixture/brak vhost) — nie pakuj HOME mastera
+  if [[ "${HM_DEL_CHILD_OF_SHARED}" -eq 0 && "${PANEL:-}" == "cyberpanel" ]]; then
+    local cp_master="" mrow mroot mdoc child_guess
+    cp_master="$(hm_mysql_exec cyberpanel -e "
+SELECT w.domain FROM websiteFunctions_childdomains c
+INNER JOIN websiteFunctions_websites w ON c.master_id = w.id
+WHERE c.domain = $(hm_sql_quote "${domain}")
+LIMIT 1;
+" 2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ -n "${cp_master}" ]]; then
+      mrow="$(hm_resolve_site_paths "${cp_master}" 2>/dev/null || true)"
+      mroot=""; mdoc=""
+      if [[ -n "${mrow}" ]]; then
+        IFS=$'\t' read -r _ mroot mdoc _ <<<"${mrow}"
+        mroot="$(hm_tsv_unfield "${mroot}")"
+        mdoc="$(hm_tsv_unfield "${mdoc}")"
+      fi
+      [[ -z "${mdoc}" && -d "/home/${cp_master}/public_html" ]] && mdoc="/home/${cp_master}/public_html"
+      [[ -z "${mroot}" && -d "/home/${cp_master}" ]] && mroot="/home/${cp_master}"
+      child_guess=""
+      if [[ -n "${mdoc}" && -d "${mdoc}/${domain}" ]]; then
+        child_guess="${mdoc}/${domain}"
+      elif [[ -n "${mroot}" && -d "${mroot}/public_html/${domain}" ]]; then
+        child_guess="${mroot}/public_html/${domain}"
+      fi
+      if [[ -n "${child_guess}" ]]; then
+        child_guess="$(realpath -m "${child_guess}" 2>/dev/null || echo "${child_guess}")"
+        if ! hm_is_safe_site_root_to_delete "${child_guess}"; then
+          hm_err "Docroot child (CP) nie przeszedł kontroli bezpieczeństwa: ${child_guess}"
+          return 1
+        fi
+        hm_info "Child w CyberPanel (master=${cp_master}) — operacje na ${child_guess} (nie HOME mastera)."
+        HM_DEL_DOCROOT="${child_guess}"
+        HM_DEL_ROOT="${child_guess}"
+        HM_DEL_CHILD_OF_SHARED=1
+        HM_DEL_USER_SHARED=1
+      else
+        hm_err "ODMOWA: ${domain} jest childem ${cp_master} w CP, ale brak katalogu childa pod public_html — nie archiwizuję/nie usuwam HOME mastera."
+        return 1
+      fi
+    fi
+  fi
+
   # Ostrzeżenia / twarde bloki nachodzenia (po ewentualnym zawężeniu ROOT)
   for other in "${HM_SITES_LIST[@]}"; do
     [[ -n "${other}" ]] || continue

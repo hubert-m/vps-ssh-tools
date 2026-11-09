@@ -1,18 +1,19 @@
 # hmtools v0.1.11
 
+- Fix: `backup restore` child — wyjątek DB tylko z wp-config w `files.tar.gz` (nie z samego manif. `databases_from_site_config`); archive childa z CP bez wspólnego vhRoot zawęża do docroot childa / ODMOWA zamiast pakować mastera
 - Feat: `node` — lista serwisów z `.nvm`/`.npm` (obok `public_html`), wersja obecna vs najnowsza, `node update nvm|npm`; `node` nie jest już aliasem `pm2`
 - Feat: `wp cli-info` / `wp cli-update` — oficjalny `wp-cli.phar` w `lib/wp-cli/` (SHA-512); `install.sh` pobiera phar tylko gdy go nie ma (pierwsza instalacja i update), istniejącej paczki nie nadpisuje
 - Fix: `backup restore` child po archive — wyjątek DB z `databases_from_site_config` / wp-config w `files.tar.gz` (nie tylko live DOCROOT); `archive` zapisuje pole w manifeście
 - Fix: `hm_detect_docker` — bez `printf` na stdout (nie psuje `$(find_site)` / archive / restore); regresja w `test-docker-map.sh`
 - Fix: `dns add TXT` — wartość zbierana mimo `-all`; strip cudzysłowów; `dns check` DKIM wymaga v=DKIM1+p=
-- Fix: `mail add|passwd` — `hm_print_secret` (TTY/fd3, poza applog); hasło przez plik 0600 + CyberCP python (bez argv) / fallback CLI
-- Fix: `deploy rollback` — rsync --delete ze snapshu (usuwa pliki dodane przez deploy); 1:1 z tar
+- Fix: `mail add|passwd` — `hm_print_secret` (TTY/fd3); hasło tylko plik 0600 + CyberCP python (bez argv); fallback `cyberpanel --password` wyłączony (wyciek w ps)
+- Fix: `deploy rollback` — rsync --delete --checksum ze snapshu (1:1 treści; same size+mtime nie pomija pliku)
 - Fix: `mail queue delete` — walidacja QID (≥6 alfanum., nie ALL) + musi istnieć w kolejce; `mail check` bez dig → „pominięto”
 - Fix: `waf whitelist` — zapis exclusions dopiero po confirm; zachowanie `--uri`; ID 1xxx_xxx (poza CRS); `--yes`
 - Fix: `malware quarantine` — unikalne ID (mktemp), bez nadpisywania manifestu; rc≠0 gdy nic nie przeniesiono
 - Fix: `alias remove` — odmowa usunięcia domeny głównej / obcego aliasu (rc≠0); mapa OLS nie kasuje tokenu mastera
 - Fix: `services` — `is-active`/`is-enabled` bez `|| echo` (failed na czerwono, bez `failed⏎unknown`)
-- Fix: `backup --targets` — przy awarii 1. celu pełny fallback na kolejne (nie SKIP); `inc restore` → `--target /` + include abs; `confirm_critical` domain-first
+- Fix: `backup --targets` — fallback na kolejne cele; przy awarii 1. celu `rc≠0` nawet gdy fallback OK; `inc restore` `--target /`; `confirm_critical` domain-first
 - Fix: `notify setup` — walidacja webhook + zapis `printf %q` (bez injekcji do hmtools.conf); curl -K (URL poza argv); sukces backup czyści dedup
 - Fix: `limits set --mem/--tasks` — gdy lsphp poza `user.slice` (OLS), limity też w extprocessor vhconf; jasny WARN dla --cpu/--io; test OLS w `test-limits-parse.sh`
 - Fix: `security ssh set port` — auto-rollback 120 s przez `systemd-run` (fallback `setsid`/`nohup`), odporny na SIGHUP; `ssh confirm` stopuje timer

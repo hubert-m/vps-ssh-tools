@@ -630,7 +630,7 @@ hm_clone_deploy_rollback() {
   [[ -f "${dir}/db.name" ]] && dbname="$(tr -d '[:space:]' < "${dir}/db.name")"
 
   local -a plan=(
-    "Rozpakowanie ${dir}/files.tar.gz → tmp + rsync --delete → ${docroot} (1:1 ze snapshu)"
+    "Rozpakowanie ${dir}/files.tar.gz → tmp + rsync --delete --checksum → ${docroot} (1:1 ze snapshu)"
   )
   [[ -n "${dbname}" && -f "${dir}/db.sql.gz" ]] && plan+=("Import ${dir}/db.sql.gz → ${dbname}")
 
@@ -650,8 +650,9 @@ hm_clone_deploy_rollback() {
       rm -rf -- "${tmp_files}"
       return 1
     fi
-    # rsync --delete: usuwa pliki dodane przez deploy, przywraca stan snapshu
-    if ! rsync -aHAX --delete -- "${tmp_files}/" "${docroot}/"; then
+    # --delete: usuwa pliki dodane przez deploy
+    # --checksum: 1:1 treści (same size+mtime w tej samej sekundzie nie pomija pliku)
+    if ! rsync -aHAX --delete --checksum -- "${tmp_files}/" "${docroot}/"; then
       hm_err "rsync rollback nieudany."
       rm -rf -- "${tmp_files}"
       return 1

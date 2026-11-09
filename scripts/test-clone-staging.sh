@@ -65,11 +65,12 @@ trap 'rm -rf "${tmpdir}"' EXIT
 mkdir -p "${tmpdir}/bin"
 cat > "${tmpdir}/bin/rsync" <<'EOF'
 #!/bin/sh
-# minimal: skopiuj src/ → dst/; --delete usuwa pliki spoza src
+# minimal: skopiuj src/ → dst/; --delete usuwa pliki spoza src; --checksum wymusza treść
 src=""; dst=""; do_delete=0
 for a in "$@"; do
   case "$a" in
     --delete) do_delete=1 ;;
+    --checksum|-c|-I|--ignore-times) ;;
     -*) ;;
     *)
       if [ -z "$src" ]; then src=$a
@@ -82,12 +83,12 @@ src=${src%/}; dst=${dst%/}
 [ -d "$src" ] || exit 1
 mkdir -p "$dst"
 if [ "$do_delete" = 1 ]; then
-  # usuń w dst to, czego nie ma w src (tylko pliki/katalogi 1. poziomu + rekurencyjnie przez find)
   find "$dst" -mindepth 1 -print 2>/dev/null | sort -r | while read -r f; do
     rel=${f#"$dst"/}
     [ -e "$src/$rel" ] || rm -rf -- "$f"
   done
 fi
+# zawsze nadpisz treścią ze src (symulacja --checksum / pełnej synchronizacji)
 cp -R "$src"/. "$dst"/ 2>/dev/null || cp -a "$src"/. "$dst"/
 exit 0
 EOF
@@ -190,18 +191,20 @@ HM_SITE_ROOT="${FAKE_HOME}/example.pl"
 HM_SITE_DOCROOT="${prod_doc}"
 HM_SITE_USER="siteuser"
 stamp="$(hm_clone_snap_prod example.pl)"
-printf 'v2-staging' > "${prod_doc}/index.php"
+# ten sam ROZMIAR co v1 (2 B) — regresja: bez --checksum rsync mógłby pominąć przy tym samym mtime
+printf 'v2' > "${prod_doc}/index.php"
+touch -r "${prod_doc}/index.php" "${prod_doc}/index.php" 2>/dev/null || true
 printf 'staging-debug' > "${prod_doc}/debug-staging.php"
 rm -f "${prod_doc}/a.txt"
 hm_clone_deploy_rollback "${stamp}" --yes >/dev/null 2>&1 || true
-if [[ "$(cat "${prod_doc}/index.php")" == "v1" ]] \
+idx="$(cat "${prod_doc}/index.php" 2>/dev/null || true)"
+if [[ "${idx}" == "v1" ]] \
   && [[ "$(cat "${prod_doc}/a.txt")" == "keep" ]] \
   && [[ ! -f "${prod_doc}/debug-staging.php" ]]; then
   echo "OK   deploy-rollback-1to1"
 else
-  echo "FAIL deploy-rollback-1to1"
+  echo "FAIL deploy-rollback-1to1 idx=${idx}"
   ls -la "${prod_doc}" || true
-  cat "${prod_doc}/index.php" 2>/dev/null || true
   fail=1
 fi
 

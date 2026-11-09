@@ -165,12 +165,24 @@ else
   echo "OK   no-secrets-in-conf"
 fi
 
-# multi-target: fallback direct zamiast SKIP gdy brak source
+# multi-target: fallback direct zamiast SKIP; udany fallback NIE zeruje overall
 if grep -q 'fallback direct' lib/rclone_targets.sh \
   && ! grep -q 'SKIP.*brak kompletnego źródła' lib/rclone_targets.sh; then
   echo "OK   multi-target-fallback"
 else
   echo "FAIL multi-target-fallback"
+  fail=1
+fi
+# po OK fallback: overall=1 (primary padł) — nie overall=0
+if awk '
+  /\[fallback direct\]/ { in_fb=1 }
+  in_fb && /overall=0/ { exit 1 }
+  in_fb && /overall=1/ { exit 0 }
+  /^}/ && in_fb { exit 1 }
+' lib/rclone_targets.sh; then
+  echo "OK   multi-target-fallback-rc"
+else
+  echo "FAIL multi-target-fallback-rc"
   fail=1
 fi
 
