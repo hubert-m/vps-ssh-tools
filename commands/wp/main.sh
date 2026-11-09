@@ -8,7 +8,9 @@ Użycie (globalnie, bez kontekstu strony):
   wp cli-info                      ścieżka i `wp --info` (bundled phar lub systemowy wp)
   wp cli-update                    pobierz oficjalny wp-cli.phar → lib/wp-cli/ (SHA-512)
 
-WP-CLI: <hmtools>/lib/wp-cli/wp-cli.phar (dociągany przez update-hmtools / wp cli-update).
+WP-CLI: <hmtools>/lib/wp-cli/wp-cli.phar
+Instalator (pierwsza instalacja i update) pobiera phar tylko, gdy pliku jeszcze nie ma.
+Podmiana istniejącej paczki: wyłącznie wp cli-update.
 Gdy brak bundled — używany jest /usr/local/bin/wp lub /usr/bin/wp.
 
 Użycie (kontekst [domena]>):
@@ -64,7 +66,7 @@ hm_wp_ensure_cli() {
   fi
   hm_err "Brak WP-CLI (lib/wp-cli/wp-cli.phar ani /usr/bin/wp, /usr/local/bin/wp)."
   hm_info "Pobierz oficjalny phar (SHA-512):  wp cli-update"
-  hm_info "Albo zaktualizuj hmtools:          update-hmtools  (instalator dociąga phar)"
+  hm_info "Pierwsza instalacja / update-hmtools dociąga phar tylko, gdy pliku jeszcze nie ma."
   return 1
 }
 

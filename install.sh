@@ -474,13 +474,16 @@ install_tree() {
 
 install_tree "${SRC}"
 
-if ! install_wp_cli; then
-  if [[ -n "${WPCLI_KEEP}" && -s "${WPCLI_KEEP}" ]]; then
-    mkdir -p "${DEST}/lib/wp-cli"
-    "${HM_CP[@]}" -a "${WPCLI_KEEP}" "${DEST}/lib/wp-cli/wp-cli.phar"
-    chmod 755 "${DEST}/lib/wp-cli/wp-cli.phar" 2>/dev/null || true
-    echo "Przywrócono poprzedni lib/wp-cli/wp-cli.phar" >&2
-  fi
+# install_tree kasuje lib/. Istniejący phar wraca bez ponownego pobrania.
+# Ściąganie tylko gdy pliku nie było (pierwsza instalacja albo brak paczki).
+if [[ -n "${WPCLI_KEEP}" && -s "${WPCLI_KEEP}" ]]; then
+  mkdir -p "${DEST}/lib/wp-cli"
+  "${HM_CP[@]}" -a "${WPCLI_KEEP}" "${DEST}/lib/wp-cli/wp-cli.phar"
+  chmod 755 "${DEST}/lib/wp-cli/wp-cli.phar" 2>/dev/null || true
+  echo "WP-CLI: zostawiam istniejący lib/wp-cli/wp-cli.phar (podmiana: wp cli-update)."
+else
+  echo "Brak lib/wp-cli/wp-cli.phar — pobieram WP-CLI."
+  install_wp_cli || true
 fi
 rm -f "${WPCLI_KEEP}"
 
