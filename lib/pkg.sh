@@ -136,6 +136,11 @@ _hm_pkg_do_upgrade_security() { hm_err "pkg: brak adaptera (upgrade_security)"; 
 _hm_pkg_do_upgrade_all() { hm_err "pkg: brak adaptera (upgrade_all)"; return 1; }
 _hm_pkg_do_auto_security_status() { printf 'unknown\n'; }
 _hm_pkg_do_auto_security_set() { hm_err "pkg: brak adaptera (auto_security)"; return 1; }
+_hm_pkg_do_php_repo_label() { printf 'php'; }
+_hm_pkg_do_php_repo_add() { hm_err "pkg: brak adaptera (php repo)"; return 1; }
+_hm_pkg_do_php_package_names() { hm_err "pkg: brak adaptera (php packages)"; return 1; }
+_hm_pkg_do_php_pool_dir() { printf '%s/etc/php/%s/fpm/pool.d' "${HM_PKG_ROOT:-}" "${1:-}"; }
+_hm_pkg_do_php_fpm_check() { return 0; }
 
 # --- Publiczne API -----------------------------------------------------------
 
@@ -231,4 +236,32 @@ hm_pkg_auto_security_status() {
 hm_pkg_auto_security_set() {
   hm_pkg_bind || return 1
   _hm_pkg_do_auto_security_set "$@"
+}
+
+hm_pkg_php_repo_label() {
+  hm_pkg_bind || return 1
+  _hm_pkg_do_php_repo_label "$@"
+}
+
+# $1 = gałąź X.Y (dla Remi). Zapis klucza do keyrings, bez apt-key.
+hm_pkg_php_repo_add() {
+  hm_pkg_bind || return 1
+  _hm_pkg_do_php_repo_add "$@"
+}
+
+# $1=X.Y $2=fpm|lsphp  reszta: nazwy rozszerzeń. Stdout: paczki, jedna na linię.
+hm_pkg_php_package_names() {
+  hm_pkg_bind || return 1
+  _hm_pkg_do_php_package_names "$@"
+}
+
+hm_pkg_php_pool_dir() {
+  hm_pkg_bind || return 1
+  _hm_pkg_do_php_pool_dir "$@"
+}
+
+# $1=X.Y $2=plik puli. 0 gdy php-fpm -t przechodzi.
+hm_pkg_php_fpm_check() {
+  hm_pkg_bind || return 1
+  _hm_pkg_do_php_fpm_check "$@"
 }

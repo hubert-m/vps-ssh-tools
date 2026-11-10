@@ -8,6 +8,19 @@
 | `webs delete <d>` / `delete-site` | Całkowite usunięcie serwisu (`yes` + nazwa domeny) |
 | `webs archive <d>` / `backup archive` | Archiwum Drive → verify → usunięcie z VPS |
 | `site create <d> --php <ver> […]` / `site-create` / `create-site` | Nowa strona (CyberPanel CLI lub OLS); `--ssl`/`--dkim`/`--no-open-basedir` |
+| `site new <d> --db mysql\|postgres\|sqlite [--redis] [--yes]` | Baza + `shared/.env` (0600); hasło tylko na TTY |
+| `site new <d> --runtime node --node 24,22 --process pm2\|systemd` | nvm z tagu i SHA-256, corepack, port tylko na 127.0.0.1 |
+| `site new <d> --php 8.4 --php-preset laravel` | FPM per serwis, repo PHP dopiero po zgodzie, Composer ze SHA-384 |
+| `site new <d> --webserver nginx\|apache\|ols --proxy-port auto` | Vhost z szablonu, port tylko na 127.0.0.1, reload po walidacji |
+| `site new <d> --preset laravel\|next\|static` | Preflight, user, katalogi `shared/logs/releases`, alias `www` |
+| `site new <d> --from profil.json` / `--resume` / `--rollback` | Manifest 0600 bez haseł, journal z cofaniem, drugie uruchomienie pomija istniejące kroki |
+| `site manifest <d>` | Podgląd manifestu serwisu |
+| `site new` / `site new <d> --dry-run` | Kreator kroków albo sam plan, bez zmian na dysku |
+| `openvpn install --yes` / `--dry-run` | PKI, `hm.conf` z tls-crypt i AES-256-GCM, NAT bez ruszania SSH |
+| `report weekly [--send] [--json] [--html]` | Tygodniowy raport; brak sekcji jest pominięty, webhook dostaje JSON |
+| `openvpn client add\|export\|list\|show` | Profil `.ovpn` inline (0600), tabela klientów, sekret tylko na TTY |
+| `openvpn client revoke\|renew` / `openvpn crl update` / `openvpn check --notify` | Unieważnienie, CRL 0644, cron i alarm z deduplikacją |
+| `site env list\|set\|unset\|show` | Sekrety serwisu, wartości na liście zamaskowane |
 | `site create <child> --child-of <master> --php <ver>` | Child domain (`--path`, `--ssl`) |
 | `clone <a> <b>` | Kopia strony (pliki+DB); staging.* → noindex; też w kontekście `clone <cel>` |
 | `mail …` | Skrzynki CP (`add`/`passwd`/`delete`/`forward`/`catchall`) + diag (`queue`/`log`/`check`/`dkim`/`blacklist`) |

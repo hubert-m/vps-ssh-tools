@@ -682,9 +682,14 @@ ORDER BY data_free DESC LIMIT 10;
 }
 
 hm_mysql_create() {
+  # Trzeci argument „quiet” albo HM_MYSQL_CREATE_QUIET=1:
+  # bez potwierdzenia i bez wypisywania hasła. Hasło wraca w HM_MYSQL_CREATE_PASS.
   local dbname="$1"
   local dbuser="${2:-}"
-  local pass
+  local mode="${3:-}"
+  local pass quiet=0
+  HM_MYSQL_CREATE_PASS=""
+  [[ "${mode}" == "quiet" || "${HM_MYSQL_CREATE_QUIET:-0}" == "1" ]] && quiet=1
   hm_is_valid_db_name "${dbname}" || { hm_err "Nieprawidłowa nazwa bazy: ${dbname}"; return 1; }
   if hm_mysql_db_exists "${dbname}"; then
     hm_err "Baza już istnieje: ${dbname}"
@@ -698,16 +703,19 @@ hm_mysql_create() {
     hm_err "Nieprawidłowa nazwa użytkownika DB: ${dbuser}"
     return 1
   fi
+
+  if [[ "${quiet}" -eq 0 ]]; then
+    if ! hm_confirm_plan "mysql create — ${dbname}" \
+      "Hasło użytkownika zostanie pokazane tylko na terminalu." \
+      "Utworzenie bazy danych \`${dbname}\` (utf8mb4_unicode_ci)" \
+      "Utworzenie użytkownika '${dbuser}'@'localhost' z wygenerowanym hasłem" \
+      "Nadanie pełnych uprawnień (GRANT ALL PRIVILEGES) do \`${dbname}\`.* i FLUSH PRIVILEGES"; then
+      return 0
+    fi
+  fi
+
   pass="$(hm_gen_password)"
   [[ -n "${pass}" && ${#pass} -ge 12 ]] || { hm_err "Nie udało się wygenerować hasła."; return 1; }
-
-  if ! hm_confirm_plan "mysql create — ${dbname}" \
-    "Hasło użytkownika zostanie wyświetlone po utworzeniu." \
-    "Utworzenie bazy danych \`${dbname}\` (utf8mb4_unicode_ci)" \
-    "Utworzenie użytkownika '${dbuser}'@'localhost' z wygenerowanym hasłem" \
-    "Nadanie pełnych uprawnień (GRANT ALL PRIVILEGES) do \`${dbname}\`.* i FLUSH PRIVILEGES"; then
-    return 0
-  fi
 
   # nazwy już na białej liście — backtick / quote bezpieczne
   # Hasło NIE przez mysql -e (widoczne w ps/cmdline) — SQL przez plik tymczasowy 600 + stdin
@@ -732,10 +740,16 @@ hm_mysql_create() {
     return 1
   }
 
+  HM_MYSQL_CREATE_PASS="${pass}"
+  if [[ "${quiet}" -eq 1 ]]; then
+    return 0
+  fi
+
   hm_ok "Utworzono bazę ${dbname} + użytkownika ${dbuser}@localhost"
   echo
-  echo "  ${C_BOLD}Hasło (zapisz — nie będzie pokazane ponownie):${C_RESET}"
-  echo "  ${pass}"
+  hm_print_secret \
+    "  ${C_BOLD:-}Hasło (zapisz — nie będzie pokazane ponownie):${C_RESET:-}" \
+    "  ${pass}"
   echo
   if [[ "${PANEL:-}" == "cyberpanel" ]]; then
     hm_warn "CyberPanel może nie widzieć tej bazy w panelu — ewentualnie dodaj ją też w CP."

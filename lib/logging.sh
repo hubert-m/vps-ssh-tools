@@ -100,6 +100,9 @@ hm_log_redact_secrets() {
     *hasło:*|*haslo:*|*password:*)
       printf '%s' "${line}" | sed -E 's/(Hasło:|Haslo:|hasło:|haslo:|Password:|password:).*/\1 ***/'
       ;;
+    *database_url=*|*db_password=*|*redis_password=*|*redis_url=*|*secret_key=*|*app_key=*|*jwt_secret=*|*nextauth_secret=*|*connectionstrings__default=*)
+      printf '%s' "${line}" | sed -E 's/(DATABASE_URL|DB_PASSWORD|REDIS_PASSWORD|REDIS_URL|SECRET_KEY|APP_KEY|JWT_SECRET|NEXTAUTH_SECRET|ConnectionStrings__Default)=.*/\1=****/I'
+      ;;
     *)
       printf '%s' "${line}"
       ;;

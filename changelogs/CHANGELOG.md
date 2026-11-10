@@ -20,6 +20,18 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Feat: `chrome disk` / `clean` — stare buildy Puppeteer (zostaje działająca binarka), cache profilu i śmieci w /tmp; domyślnie dry-run, `--execute` kasuje po potwierdzeniu
 - Feat: `chrome ps` / `restart` / `log` / `cdp` — proces, nasłuch portu, restart znanych unitów headless, journal i metadane protokołu
 - Feat: listy wielokolumnowe (`wp sites`, `webs`, `node`, `ssl`, `mail`, `dns`, `docker`, `pm2`, `php`, `health`, `security`, `backup`, `chrome tabs`) — szerokość kolumn z treści, długa domena nie spycha kolejnych pól
+- Feat: `site new` — MySQL/MariaDB, PostgreSQL, Redis, SQLite oraz sekrety w `shared/.env` (0600); `site env` maskuje wartości
+- Fix: `mysql create` — hasło przez `hm_print_secret` (tryb quiet zwraca je do zmiennej i nic nie wypisuje)
+- Feat: `site new` — runtime Node.js (nvm z tagu i sumą SHA-256, corepack, PM2 albo systemd, nasłuch 127.0.0.1)
+- Feat: `site new` — runtime PHP (lista wersji, repo sury/ondrej/remi po zgodzie, pula FPM per serwis, Composer SHA-384)
+- Feat: `site new` — vhost OLS/nginx/apache z szablonu, rejestr portów i reload dopiero po walidacji
+- Feat: `site new` — preflight OS, domena i aliasy, user systemowy, układ katalogów (umask tylko w kroku)
+- Feat: `site new` — manifest serwisu bez haseł, journal z `--resume`/`--rollback`, profile JSON/YAML
+- Feat: `lib/wizard.sh` — kroki kreatora (wstecz, anuluj, podsumowanie, `--dry-run`, tryb bez TTY)
+- Feat: `openvpn client revoke` / `renew`, `crl update`, `check --notify`, cron ważności certyfikatów
+- Feat: `openvpn client add` / `export` / `list` / `show` — profil `.ovpn` bez klucza w logu
+- Feat: `openvpn install` — PKI, `hm.conf` (tls-crypt, AES-256-GCM), NAT; brak tun albo obca konfiguracja zatrzymuje start
+- Feat: `report weekly` — raport stanu mailem i JSON na webhook, bez sekretów
 
 ## [v0.1.12]
 

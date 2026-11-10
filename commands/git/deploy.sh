@@ -104,6 +104,8 @@ hm_deploy_build_line_ok() {
         ;;
       pnpm\ *|pnpm)
         ;;
+      bun\ *|bun)
+        ;;
       php\ artisan*|php)
         ;;
       npx\ *)

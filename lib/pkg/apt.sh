@@ -263,3 +263,92 @@ _hm_pkg_do_auto_security_set() {
       ;;
   esac
 }
+
+_hm_pkg_do_php_repo_label() {
+  if [[ "${OS_ID:-}" == "ubuntu" ]]; then
+    printf 'ondrej'
+  else
+    printf 'sury'
+  fi
+}
+
+_hm_pkg_do_php_repo_add() {
+  local label root keydir keyfile
+  label="$(_hm_pkg_do_php_repo_label)"
+  root="${HM_PKG_ROOT:-}"
+  keydir="${root}/etc/apt/keyrings"
+  mkdir -p "${keydir}" "${root}/etc/apt/sources.list.d"
+  keyfile="${keydir}/hmtools-${label}.gpg"
+  if [[ -n "${HM_PKG_PHP_KEY_FILE:-}" ]]; then
+    cp "${HM_PKG_PHP_KEY_FILE}" "${keyfile}"
+  else
+    local keyurl
+    case "${label}" in
+      ondrej) keyurl="https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x4f4ea0aae5267a6c" ;;
+      *) keyurl="https://packages.sury.org/php/apt.gpg" ;;
+    esac
+    hm_have_cmd curl || { hm_err "Brak curl — nie pobieram klucza PHP."; return 1; }
+    hm_have_cmd gpg || { hm_err "Brak gpg — nie składam klucza PHP."; return 1; }
+    curl -fsSL --max-time 60 "${keyurl}" | gpg --dearmor -o "${keyfile}"
+  fi
+  case "${label}" in
+    ondrej)
+      printf 'deb [signed-by=%s] https://ppa.launchpadcontent.net/ondrej/php/ubuntu %s main\n' \
+        "${keyfile}" "${HM_OS_CODENAME:-noble}" \
+        > "${root}/etc/apt/sources.list.d/hmtools-php.list"
+      ;;
+    *)
+      printf 'deb [signed-by=%s] https://packages.sury.org/php/ %s main\n' \
+        "${keyfile}" "${HM_OS_CODENAME:-bookworm}" \
+        > "${root}/etc/apt/sources.list.d/hmtools-php.list"
+      ;;
+  esac
+  if [[ -n "${HM_PKG_PHP_LOG:-}" ]]; then
+    printf 'repo-add %s\n' "${label}" >> "${HM_PKG_PHP_LOG}"
+  fi
+}
+
+_hm_pkg_do_php_package_names() {
+  local ver="$1" sapi="$2" ext sfx
+  shift 2 || return 1
+  if [[ "${sapi}" == "lsphp" ]]; then
+    sfx="${ver//./}"
+    printf 'lsphp%s\n' "${sfx}"
+    for ext in "$@"; do
+      [[ -n "${ext}" ]] || continue
+      printf 'lsphp%s-%s\n' "${sfx}" "${ext}"
+    done
+    return 0
+  fi
+  printf 'php%s-fpm\n' "${ver}"
+  printf 'php%s-cli\n' "${ver}"
+  for ext in "$@"; do
+    [[ -n "${ext}" ]] || continue
+    case "${ext}" in
+      ctype|iconv|tokenizer|mbstring) continue ;;
+      pdo_mysql) printf 'php%s-mysql\n' "${ver}" ;;
+      pdo_pgsql) printf 'php%s-pgsql\n' "${ver}" ;;
+      *) printf 'php%s-%s\n' "${ver}" "${ext}" ;;
+    esac
+  done
+}
+
+_hm_pkg_do_php_pool_dir() {
+  printf '%s/etc/php/%s/fpm/pool.d' "${HM_PKG_ROOT:-}" "${1:-}"
+}
+
+_hm_pkg_do_php_fpm_check() {
+  local ver="$1"
+  if [[ "${HM_SITE_PHP_FPM_TEST:-}" == "fail" ]]; then
+    return 1
+  fi
+  if [[ "${HM_SITE_PHP_FPM_TEST:-}" == "ok" || -n "${HM_PKG_ROOT:-}" ]]; then
+    return 0
+  fi
+  local bin="php-fpm${ver}"
+  if ! hm_have_cmd "${bin}"; then
+    bin="php-fpm"
+  fi
+  hm_have_cmd "${bin}" || { hm_err "Brak ${bin}."; return 1; }
+  "${bin}" -t
+}

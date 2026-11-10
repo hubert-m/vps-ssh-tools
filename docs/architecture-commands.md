@@ -48,4 +48,10 @@ Hyphen w nazwie katalogu (`update-hmtools`) → funkcja zwykle `cmd_update_hmtoo
 | Kontekst strony | `commands/site/` |
 | Infra (pkg, OS, OLS API, DB) | `lib/` |
 
+## Kreator (`lib/wizard.sh`)
+
+`hm_wiz_step <id> <tytuł> <pytanie> [walidacja] [warunek]` rejestruje krok. Pytanie woła `hm_wiz_input_text|choice|multi|yesno|secret|port`. `<` / `wstecz` cofa, `?` pokazuje `hm_wiz_help`, `!` stan, `q` anuluje. Ctrl+C sprząta `HM_WIZ_TMP_DIR` (domyślnie `/var/lib/hmtools/tmp`).
+
+`hm_wiz_flag <id> --flaga` wiąże odpowiedź z trybem bez TTY. Brak wartości daje `Brak --flaga (wymagane w trybie nieinteraktywnym)` i kod ≠ 0, bez `read`. `HM_WIZ_DRY=1` albo `site new --dry-run` wypisuje plan i nic nie zmienia. Sekrety nie wchodzą do podsumowania, serializacji (`hm_wiz_serialize`) ani logu. Testy podają stdin przy `HM_WIZ_FORCE_PROMPT=1`.
+
 ← [structure.md](structure.md)

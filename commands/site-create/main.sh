@@ -6,9 +6,13 @@ Użycie:
   site create <domena> --php <ver> [--owner admin] [--package Default]
                [--email a@b.c] [--ssl] [--dkim] [--no-open-basedir] [--yes]
   site create <child> --child-of <master> [--path PATH] --php <ver> [--ssl] [--yes]
-  site-create … / create-site …   (aliasy tej samej komendy)
+  site new <domena> [--runtime node|php] [--db mysql|postgres|sqlite|none]
+            [--pg-version N] [--redis [cache|queue]] [--yes]
+  site env list|set|unset|show
+  site-create … / create-site …   (aliasy site create)
 
 Tworzy stronę (HTTP placeholder), child domain albo (w kontekście) alias.
+site new zapisuje sekrety w shared/.env (0600). Hasła nie idą do logów ani manifestu.
 Kolizja domeny/katalogu/usera → odmowa. Nieudany krok → rollback.
 CyberPanel: cyberpanel createWebsite|createChild; alias przez virtualHostUtilities.py.
 Bez panelu: vhost OLS + map w httpd_config (jak restore).
@@ -21,6 +25,9 @@ EOF
 _hm_cmd_help create-site <<'EOF'
 Alias: site create … — zobacz: help site
 EOF
+
+# shellcheck source=wizard-db.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/wizard-db.sh"
 
 _hm_cmd_help alias <<'EOF'
 Użycie (kontekst strony):
@@ -945,6 +952,15 @@ cmd_site() {
   case "${sub}" in
     create)
       cmd_site_create "$@"
+      ;;
+    new)
+      cmd_site_new "$@"
+      ;;
+    env)
+      cmd_site_env "$@"
+      ;;
+    manifest)
+      cmd_site_manifest "$@"
       ;;
     help|-h|--help|"")
       hm_help_topic site

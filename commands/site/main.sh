@@ -574,4 +574,5 @@ _hm_cmd_register_site ssl cmd_site_ssl
 _hm_cmd_register_site logs cmd_site_logs log
 _hm_cmd_register_site clean cmd_site_clean
 _hm_cmd_register_site perms cmd_site_perms perm
+_hm_cmd_register_site env cmd_site_env
 # site backup / php / htaccess / proxy / supervisor handled in dispatch (shared with global tools)

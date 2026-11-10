@@ -319,18 +319,22 @@ hm_progress_done() {
 hm_print_secret() {
   local line fd
   fd="$(hm_ui_tty_fd 2>/dev/null)" || fd=""
-  if [[ -n "${fd}" ]]; then
+  if [[ "${HMTOOLS_TEST:-0}" == "1" && "${HMTOOLS_TEST_NO_TTY:-0}" == "1" ]]; then
+    fd=""
+  elif [[ -n "${fd}" ]]; then
     for line in "$@"; do
       # shellcheck disable=SC2086
       printf '%s\n' "${line}" >&"${fd}"
     done
     return 0
   fi
-  if [[ -e /dev/tty ]] && { true >/dev/tty; } 2>/dev/null; then
-    for line in "$@"; do
-      printf '%s\n' "${line}" >/dev/tty
-    done
-    return 0
+  if [[ "${HMTOOLS_TEST:-0}" != "1" || "${HMTOOLS_TEST_NO_TTY:-0}" != "1" ]]; then
+    if [[ -e /dev/tty ]] && { true >/dev/tty; } 2>/dev/null; then
+      for line in "$@"; do
+        printf '%s\n' "${line}" >/dev/tty
+      done
+      return 0
+    fi
   fi
   # Bez TTY (testy/pipe): nie pisz sekretu na stdout przechwytywany do logu.
   hm_warn "Brak TTY — sekret nie został wypisany (bezpieczeństwo logów)."

@@ -31,6 +31,22 @@ source "${HMTOOLS_ROOT}/lib/size.sh"
 # shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/db.sh"
 # shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/site/env.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/site/base.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/site/tx.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/wizard.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/site/db.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/site/web.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/site/node.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/site/php.sh"
+# shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/ols.sh"
 # shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/rclone_drive.sh"

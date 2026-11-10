@@ -107,6 +107,40 @@ else
   fail=1
 fi
 
+# mysql create: hasło nie na stdout; quiet zwraca je tylko w zmiennej.
+# shellcheck disable=SC1091
+source lib/db.sh
+hm_mysql_db_exists() { return 1; }
+hm_mysql_exec() {
+  printf '%s\n' "$*" >> "${logdir}/mysql-argv"
+  cat >/dev/null || true
+  return 0
+}
+hm_confirm_plan() { return 0; }
+hm_gen_password() { printf '%s' "${PASS}"; }
+export TMP_DIR="${logdir}"
+: > "${logdir}/mysql-argv"
+out="$(hm_mysql_create shopdb shopuser 2>&1 || true)"
+assert_no_secret "mysql-create-stdout" "${out}"
+assert_no_secret "mysql-create-argv" "$(cat "${logdir}/mysql-argv")"
+if find "${logdir}" -name 'hmtools-create-user*.sql' | grep -q .; then
+  echo "FAIL mysql-create-sql-leftover"
+  fail=1
+else
+  echo "OK   mysql-create-sql-leftover"
+fi
+HM_MYSQL_CREATE_PASS=""
+qout="${logdir}/mysql-quiet.out"
+hm_mysql_create shopdb2 shopuser2 quiet >"${qout}" 2>&1 || true
+out="$(cat "${qout}")"
+assert_no_secret "mysql-create-quiet-stdout" "${out}"
+if [[ "${HM_MYSQL_CREATE_PASS}" == "${PASS}" ]]; then
+  echo "OK   mysql-create-quiet-var"
+else
+  echo "FAIL mysql-create-quiet-var"
+  fail=1
+fi
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"
   exit 1

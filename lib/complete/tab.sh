@@ -357,6 +357,36 @@ hm_tab_complete() {
           [[ -n "${m}" ]] && matches+=("${m}")
         done < <(hm_complete_filter_sites "${partial}")
         ;;
+      report)
+        if [[ "${prefix}" =~ report[[:space:]]+schedule ]]; then
+          for m in enable disable status; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in weekly schedule; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
+      openvpn)
+        if [[ "${prefix}" =~ openvpn[[:space:]]+client ]]; then
+          for m in add export list show revoke renew; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ openvpn[[:space:]]+crl ]]; then
+          for m in update status; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ openvpn[[:space:]]+schedule ]]; then
+          for m in install status disable; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in install client crl check schedule server; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
       site|site-create|create-site)
         local re_site_child='--child-of[[:space:]]+'
         if [[ "${prefix}" =~ $re_site_child ]]; then
@@ -364,8 +394,16 @@ hm_tab_complete() {
           while IFS= read -r m; do
             [[ -n "${m}" ]] && matches+=("${m}")
           done < <(hm_complete_filter_sites "${partial}")
-        elif [[ "${cmd}" == "site" && ! "${prefix}" =~ site[[:space:]]+create ]]; then
-          for m in create help; do
+        elif [[ "${cmd}" == "site" && "${prefix}" =~ site[[:space:]]+env ]]; then
+          for m in list set unset show help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${cmd}" == "site" && "${prefix}" =~ site[[:space:]]+new ]]; then
+          for m in --runtime --db --pg-version --redis --framework --db-name --node --node-default --pkg --process --start --port --preset --php --php-preset --php-ext --php-sapi --php-skeleton --php-harden --no-composer --webserver --vhost-type --proxy-port --ssl --from --save-profile --resume --rollback --dry-run --yes; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${cmd}" == "site" && ! "${prefix}" =~ site[[:space:]]+(create|new|env) ]]; then
+          for m in create new env manifest help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         else

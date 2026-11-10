@@ -243,3 +243,52 @@ _hm_pkg_do_auto_security_set() {
       ;;
   esac
 }
+
+_hm_pkg_do_php_repo_label() {
+  printf 'remi'
+}
+
+_hm_pkg_do_php_repo_add() {
+  local ver="${1:-}" root cli rel
+  [[ "${ver}" =~ ^[0-9]+\.[0-9]+$ ]] || { hm_err "Zła gałąź Remi: ${ver}"; return 1; }
+  root="${HM_PKG_ROOT:-}"
+  if [[ -n "${root}" ]]; then
+    mkdir -p "${root}/etc/yum.repos.d"
+    printf 'php:remi-%s\n' "${ver}" > "${root}/etc/yum.repos.d/hmtools-remi.repo"
+  else
+    cli="$(_hm_pkg_rpm_cli)"
+    rel="$(rpm -E %rhel 2>/dev/null || echo 9)"
+    hm_run "${cli}" install -y "https://rpms.remirepo.net/enterprise/remi-release-${rel}.rpm" || return 1
+    hm_run "${cli}" module enable -y "php:remi-${ver}" || return 1
+  fi
+  if [[ -n "${HM_PKG_PHP_LOG:-}" ]]; then
+    printf 'dnf module enable php:remi-%s\n' "${ver}" >> "${HM_PKG_PHP_LOG}"
+  fi
+}
+
+_hm_pkg_do_php_package_names() {
+  local ver="$1" _sapi="$2" ext scl
+  shift 2 || return 1
+  scl="php${ver//./}"
+  printf '%s-php-fpm\n' "${scl}"
+  printf '%s-php-cli\n' "${scl}"
+  for ext in "$@"; do
+    [[ -n "${ext}" ]] || continue
+    case "${ext}" in
+      ctype|iconv|tokenizer|mbstring) continue ;;
+      *) printf '%s-php-%s\n' "${scl}" "${ext}" ;;
+    esac
+  done
+}
+
+_hm_pkg_do_php_pool_dir() {
+  local ver="${1:-}"
+  printf '%s/etc/opt/remi/php%s/php-fpm.d' "${HM_PKG_ROOT:-}" "${ver//./}"
+}
+
+_hm_pkg_do_php_fpm_check() {
+  if [[ "${HM_SITE_PHP_FPM_TEST:-}" == "fail" ]]; then
+    return 1
+  fi
+  return 0
+}
