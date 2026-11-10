@@ -23,6 +23,9 @@ Użycie:
   backup restore <domena> [stamp] [--files-only|--db-only]
                             [--overwrite-db] [--overwrite-files] [--adopt-existing-user]
                             [--target n]  Odtwórz z dowolnego celu / lokalnego root
+  backup verify [domena|full] [stamp] [--target n|--targets a,b] [--json] [--weekly]
+                            Próbny restore do katalogu 0700 i bazy hmtools_verify_* (nie żywej)
+  backup verify schedule enable|disable|status
   backup restore-full [stamp] [--system]
   backup prune [--days N] [--dry-run] [--yes]
   backup schedule [enable|disable|status]
@@ -93,6 +96,8 @@ source "${_HM_BACKUP_DIR}/targets.sh"
 source "${_HM_BACKUP_DIR}/local.sh"
 # shellcheck source=inc.sh
 source "${_HM_BACKUP_DIR}/inc.sh"
+# shellcheck source=verify.sh
+source "${_HM_BACKUP_DIR}/verify.sh"
 
 cmd_archive_site() {
   hm_backup_archive_site "$@"
@@ -155,6 +160,9 @@ cmd_backup() {
       ;;
     list|ls)
       hm_backup_list "${1:-}"
+      ;;
+    verify)
+      hm_backup_verify_cmd "$@"
       ;;
     restore)
       # opcjonalnie --target przed domeną

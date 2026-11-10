@@ -13,6 +13,7 @@ Panel i webserver **nie są hardcodowane** — przy starcie `detect` rozpoznaje 
 | Instalacja, update, odinstalowanie | [docs/install.md](docs/install.md) |
 | Szybki start | [docs/quickstart.md](docs/quickstart.md) |
 | Mapa komend (globalne / kontekst / PM2) | [docs/commands.md](docs/commands.md) |
+| Kreator serwisu `site new` | [docs/site-wizard.md](docs/site-wizard.md) |
 | Auto-detekcja panelu i stron | [docs/detection.md](docs/detection.md) |
 | Wsparcie dystrybucji (apt/dnf, restricted OS) | [docs/os-support.md](docs/os-support.md) |
 | Architektura pkg / OS_FAMILY | [docs/architecture-pkg.md](docs/architecture-pkg.md) |

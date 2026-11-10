@@ -141,6 +141,109 @@ else
   fail=1
 fi
 
+# redakcja „hasło (raz):” i zarejestrowanego sekretu bez etykiety
+: > "${logf}"
+printf '%s\n' "Basic auth: user=staging  hasło (raz): OtherPass99xx" | hm_log_stream_to_file OUT INFO
+if grep -F -q 'OtherPass99xx' "${logf}"; then
+  echo "FAIL log-redact-haslo-raz"
+  cat "${logf}" || true
+  fail=1
+elif grep -q 'hasło (raz): \*\*\*' "${logf}"; then
+  echo "OK   log-redact-haslo-raz"
+else
+  echo "FAIL log-redact-haslo-raz (wzorzec)"
+  cat "${logf}" || true
+  fail=1
+fi
+hm_secret_register "${PASS}"
+: > "${logf}"
+printf '%s\n' "linia ${PASS} koniec" | hm_log_stream_to_file OUT INFO
+if grep -F -q "${PASS}" "${logf}"; then
+  echo "FAIL log-redact-registered"
+  cat "${logf}" || true
+  fail=1
+elif grep -q '\*\*\*' "${logf}"; then
+  echo "OK   log-redact-registered"
+else
+  echo "FAIL log-redact-registered (brak maski)"
+  fail=1
+fi
+
+# bez TTY mysql create nie tworzy bazy; z --secret-file zapisuje hasło i nie loguje go
+export HMTOOLS_TEST=1
+export HMTOOLS_TEST_NO_TTY=1
+unset HM_SECRET_FILE
+: > "${logdir}/mysql-argv"
+rc=0
+hm_mysql_create shopdb3 shopuser3 >/dev/null 2>&1 || rc=$?
+if [[ "${rc}" -eq 0 ]]; then
+  echo "FAIL mysql-create-notty-refused"
+  fail=1
+elif grep -q 'CREATE' "${logdir}/mysql-argv"; then
+  echo "FAIL mysql-create-notty-still-ran"
+  fail=1
+else
+  echo "OK   mysql-create-notty-refused"
+fi
+export HM_SECRET_FILE="${logdir}/mysql.secret"
+: > "${logdir}/mysql-argv"
+out="$(hm_mysql_create shopdb4 shopuser4 2>&1 || true)"
+assert_no_secret "mysql-create-secret-file-stdout" "${out}"
+if [[ -f "${HM_SECRET_FILE}" ]] && grep -F -q "${PASS}" "${HM_SECRET_FILE}"; then
+  echo "OK   mysql-create-secret-file"
+else
+  echo "FAIL mysql-create-secret-file"
+  fail=1
+fi
+if grep -q 'CREATE DATABASE' "${logdir}/mysql-argv"; then
+  echo "OK   mysql-create-secret-file-ran"
+else
+  echo "FAIL mysql-create-secret-file-ran"
+  fail=1
+fi
+unset HM_SECRET_FILE
+
+# clone basic auth: bez TTY nie zapisuje htpasswd; z plikiem nie wstawia hasła do stdout
+_hm_cmd_help() { cat >/dev/null; }
+_hm_cmd_register() { :; }
+_hm_cmd_register_site() { :; }
+# shellcheck disable=SC1091
+source commands/clone/main.sh
+hm_have_cmd() { [[ "${1:-}" == "htpasswd" || "${1:-}" == "cyberpanel" ]]; }
+htpasswd() { printf '%s\n' "$2:hash"; }
+hm_gen_password() { printf '%s' "${PASS}"; }
+doc="${logdir}/docroot"
+mkdir -p "${doc}"
+rc=0
+out="$(hm_clone_apply_basic_auth staging.example.pl "${doc}" "$(id -un)" 2>&1)" || rc=$?
+assert_no_secret "clone-basic-notty-stdout" "${out}"
+if [[ "${rc}" -eq 0 || -f "${doc}/.htpasswd.hmtools" ]]; then
+  echo "FAIL clone-basic-notty-refused rc=${rc}"
+  fail=1
+else
+  echo "OK   clone-basic-notty-refused"
+fi
+export HM_SECRET_FILE="${logdir}/clone.secret"
+rm -f "${doc}/.htpasswd.hmtools" "${doc}/.htaccess"
+rc=0
+out="$(hm_clone_apply_basic_auth staging.example.pl "${doc}" "$(id -un)" 2>&1)" || rc=$?
+assert_no_secret "clone-basic-secret-file-stdout" "${out}"
+if [[ "${rc}" -eq 0 && -f "${doc}/.htpasswd.hmtools" && -f "${HM_SECRET_FILE}" ]] && grep -F -q "${PASS}" "${HM_SECRET_FILE}"; then
+  echo "OK   clone-basic-secret-file"
+else
+  echo "FAIL clone-basic-secret-file rc=${rc}"
+  printf '%s\n' "${out}"
+  fail=1
+fi
+if grep -F -q "${PASS}" "${logf}" 2>/dev/null; then
+  echo "FAIL clone-basic-applog"
+  fail=1
+else
+  echo "OK   clone-basic-applog"
+fi
+unset HM_SECRET_FILE
+unset HMTOOLS_TEST HMTOOLS_TEST_NO_TTY
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"
   exit 1

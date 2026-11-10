@@ -75,6 +75,44 @@ hm_tab_complete() {
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
         done
         ;;
+      monitor)
+        if [[ "${prefix}" =~ monitor[[:space:]]+http[[:space:]] ]]; then
+          for m in --keyword --expect --timeout --resolve --json --quiet; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ monitor[[:space:]]+watch[[:space:]] ]]; then
+          for m in install status disable help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ monitor[[:space:]]+add[[:space:]] ]]; then
+          for m in --keyword --expect --timeout --max-ms --fails --url; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in http add remove list watch help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
+      stats)
+        if [[ "${prefix}" =~ stats[[:space:]]+collect[[:space:]] ]]; then
+          for m in install status disable run help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ stats[[:space:]]+top[[:space:]] ]]; then
+          for m in --since --metric --json; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ stats[[:space:]]+(day|week|month|at)[[:space:]] ]]; then
+          for m in --metric --site --json cpu ram swap load io net disk inodes; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in day week month top at collect help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
       health|status)
         if [[ "${prefix}" =~ health[[:space:]]+watch[[:space:]] ]]; then
           for m in install status disable help; do
@@ -225,6 +263,10 @@ hm_tab_complete() {
           for m in status install-clamav schedule scan-all help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
+        elif [[ "${prefix}" =~ (security|sec)[[:space:]]+audit[[:space:]] ]]; then
+          for m in --json --only --fix --yes ssh kernel fs services web php updates help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
         elif [[ "${prefix}" =~ (security|sec)[[:space:]]+events[[:space:]]+watch[[:space:]] ]]; then
           for m in install status disable run; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
@@ -242,7 +284,7 @@ hm_tab_complete() {
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         else
-          for m in status ports ssh events fail2ban ban unban scan malware waf help; do
+          for m in status ports ssh events audit fail2ban ban unban scan malware waf help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi
@@ -395,8 +437,9 @@ hm_tab_complete() {
           done
         fi
         ;;
-      site|site-create|create-site)
+      site|site-create|create-site|new-site)
         local re_site_child='--child-of[[:space:]]+'
+        local re_site_val='(^|[[:space:]])(--runtime|--php|--node|--dotnet|--python|--webserver|--db|--process)[[:space:]]+$'
         if [[ "${prefix}" =~ $re_site_child ]]; then
           hm_ensure_sites_cached
           while IFS= read -r m; do
@@ -406,12 +449,30 @@ hm_tab_complete() {
           for m in list set unset show help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
-        elif [[ "${cmd}" == "site" && "${prefix}" =~ site[[:space:]]+new ]]; then
-          for m in --runtime --db --pg-version --redis --framework --db-name --node --node-default --pkg --process --start --port --preset --php --php-preset --php-ext --php-sapi --php-skeleton --php-harden --no-composer --webserver --vhost-type --proxy-port --ssl --from --save-profile --resume --rollback --dry-run --yes; do
+        elif [[ "${cmd}" == "site" && "${prefix}" =~ site[[:space:]]+show ]]; then
+          for m in --json help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
-        elif [[ "${cmd}" == "site" && ! "${prefix}" =~ site[[:space:]]+(create|new|env) ]]; then
-          for m in create new env manifest help; do
+        elif [[ "${cmd}" == "site" && "${prefix}" =~ site[[:space:]]+runtime ]]; then
+          for m in php node python dotnet --yes help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${cmd}" == "site" && "${prefix}" =~ site[[:space:]]+doctor ]]; then
+          for m in help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${cmd}" == "new-site" || ( "${cmd}" == "site" && "${prefix}" =~ site[[:space:]]+new ) ]]; then
+          if [[ "${prefix}" =~ $re_site_val ]]; then
+            while IFS= read -r m; do
+              [[ -n "${m}" ]] && matches+=("${m}")
+            done < <(hm_complete_site_flag_values "${BASH_REMATCH[2]}" "${partial}")
+          else
+            for m in --runtime --db --pg-version --redis --framework --db-name --node --node-default --pkg --process --start --port --preset --php --php-preset --php-ext --php-sapi --php-skeleton --php-harden --no-composer --webserver --vhost-type --proxy-port --ssl --from --save-profile --resume --rollback --dry-run --json --cron --cron-cmd --worker --workers --logrotate --health-path --open-port --yes; do
+              [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+            done
+          fi
+        elif [[ "${cmd}" == "site" && ! "${prefix}" =~ site[[:space:]]+(create|new|env|show|manifest|runtime|doctor) ]]; then
+          for m in create new env manifest show runtime doctor help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         else
@@ -543,12 +604,16 @@ hm_tab_complete() {
             matches+=("full")
           fi
         else
-          for m in setup config path root show status targets target full site local inc archive list restore prune schedule test help; do
+          for m in setup config path root show status targets target full site local inc archive list restore verify prune schedule test help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi
         if [[ "${prefix}" =~ backup[[:space:]]+target[[:space:]] ]]; then
           for m in add help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ backup[[:space:]]+verify[[:space:]] ]]; then
+          for m in schedule enable disable status --json --weekly --target --targets --yes; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         elif [[ "${prefix}" =~ backup[[:space:]]+inc[[:space:]] ]]; then

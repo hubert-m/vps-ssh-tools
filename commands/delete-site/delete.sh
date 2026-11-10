@@ -29,6 +29,8 @@ declare -a HM_DEL_NESTED_CHILDREN=()
 declare -a HM_DEL_SKIP_DBS=()
 declare -a HM_DEL_PLAN_STEPS=()
 declare -a HM_DEL_PLAN_KEYS=()
+declare -a HM_DEL_WIZARD=()
+HM_DEL_KEEP_FILES=0
 
 hm_del_reset_inventory() {
   HM_DEL_DOMAIN=""
@@ -58,6 +60,8 @@ hm_del_reset_inventory() {
   HM_DEL_SKIP_DBS=()
   HM_DEL_PLAN_STEPS=()
   HM_DEL_PLAN_KEYS=()
+  HM_DEL_WIZARD=()
+  HM_DEL_KEEP_FILES=0
 }
 
 # Czy domena jest na liście childów kasowanych z --force-nested?
@@ -621,6 +625,10 @@ LIMIT 1;
     HM_DEL_CRON_NOTES+=("wpisy w /etc/crontab")
   fi
 
+  if declare -F hm_site_lifecycle_collect_delete >/dev/null 2>&1; then
+    hm_site_lifecycle_collect_delete || true
+  fi
+
   # SSL
   local sp
   for sp in \
@@ -640,6 +648,10 @@ hm_site_build_delete_plan() {
   HM_DEL_PLAN_STEPS=()
   HM_DEL_PLAN_KEYS=()
   local domain="${HM_DEL_DOMAIN}"
+
+  if declare -F hm_site_lifecycle_plan_delete >/dev/null 2>&1; then
+    hm_site_lifecycle_plan_delete
+  fi
 
   if [[ "${#HM_DEL_PM2[@]}" -gt 0 ]]; then
     local desc="" line
@@ -940,14 +952,23 @@ DELETE FROM websites_website WHERE domainName = ${dq};
           hm_ok "Usunięto ${sp}"
         done
         ;;
+      wizard)
+        hm_progress_bar "${i}" "${total}" "zasoby kreatora…"
+        if declare -F hm_site_lifecycle_execute_delete >/dev/null 2>&1; then
+          hm_site_lifecycle_execute_delete
+        fi
+        ;;
       files)
         hm_progress_bar "${i}" "${total}" "rm -rf katalog…"
-        if ! hm_is_safe_site_root_to_delete "${HM_DEL_ROOT}"; then
+        if [[ "${HM_DEL_KEEP_FILES:-0}" == "1" ]]; then
+          hm_ok "Katalog zachowany (--keep-files): ${HM_DEL_ROOT}"
+        elif ! hm_is_safe_site_root_to_delete "${HM_DEL_ROOT}"; then
           hm_err "Przerwano: ścieżka niebezpieczna przy egzekucji: ${HM_DEL_ROOT}"
           return 1
+        else
+          rm -rf -- "${HM_DEL_ROOT}"
+          hm_ok "Usunięto katalog ${HM_DEL_ROOT}"
         fi
-        rm -rf -- "${HM_DEL_ROOT}"
-        hm_ok "Usunięto katalog ${HM_DEL_ROOT}"
         ;;
       user)
         hm_progress_bar "${i}" "${total}" "userdel…"
@@ -977,17 +998,19 @@ DELETE FROM websites_website WHERE domainName = ${dq};
 hm_site_delete() {
   local domain="${1:-}"
   shift || true
-  local keep_db=0 keep_ssl=0 keep_user=0 force_nested=0
+  local keep_db=0 keep_ssl=0 keep_user=0 keep_files=0 force_nested=0 do_archive=0
   local a
   for a in "$@"; do
     case "${a}" in
       --keep-db) keep_db=1 ;;
       --keep-ssl) keep_ssl=1 ;;
       --keep-user) keep_user=1 ;;
+      --keep-files) keep_files=1 ;;
+      --archive) do_archive=1 ;;
       --force-nested) force_nested=1 ;;
       --help|-h)
         cat <<'EOF'
-Użycie: webs delete <numer|domena> [--keep-db] [--keep-ssl] [--keep-user] [--force-nested]
+Użycie: webs delete <numer|domena> [--keep-db] [--keep-ssl] [--keep-user] [--keep-files] [--archive] [--force-nested]
         delete-site <numer|domena> [...]
         (w kontekście) delete-site [--keep-db] [--keep-ssl] [--keep-user] [--force-nested]
 
@@ -1023,11 +1046,21 @@ EOF
 
   domain="$(hm_find_site_by_arg "${domain}")" || return 1
 
+  if [[ "${do_archive}" -eq 1 ]]; then
+    if ! declare -F hm_backup_archive_site >/dev/null 2>&1; then
+      hm_err "Brak webs archive."
+      return 1
+    fi
+    hm_backup_archive_site "${domain}"
+    return $?
+  fi
+
   hm_status_line "Inwentaryzacja zasobów ${domain}…"
   if ! hm_site_collect_delete_inventory "${domain}" "${keep_db}" "${keep_ssl}" "${keep_user}" "${force_nested}"; then
     hm_status_clear
     return 1
   fi
+  HM_DEL_KEEP_FILES="${keep_files}"
   hm_status_clear
 
   hm_site_print_delete_inventory

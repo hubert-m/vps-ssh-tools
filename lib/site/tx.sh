@@ -279,11 +279,62 @@ EOF
   hm_ok "Profil zapisany: ${dest}"
 }
 
+hm_site_manifest_redacted() {
+  sed -E 's/(password|secret|token)":"[^"]*"/\1":"****"/g' "$1"
+}
+
 cmd_site_manifest() {
   local domain="${1:-${HM_SITE_BASE_DOMAIN:-${HM_SITE_DOMAIN:-}}}" path
   [[ -n "${domain}" ]] || { hm_err "Użycie: site manifest <domena>"; return 1; }
   path="$(hm_site_manifest_path "${domain}")"
   [[ -f "${path}" ]] || { hm_err "Brak manifestu ${path}"; return 1; }
-  sed -E 's/(password|secret|token)":"[^"]*"/\1":"****"/g' "${path}"
+  hm_site_manifest_redacted "${path}"
   printf '\n'
+}
+
+cmd_site_show() {
+  local domain="" json=0 a path runtime web env
+  while [[ $# -gt 0 ]]; do
+    a="$1"
+    shift || true
+    case "${a}" in
+      --json) json=1 ;;
+      help|-h|--help)
+        echo "Użycie: site show <domena> [--json]"
+        return 0
+        ;;
+      -*)
+        hm_err "Nieznana flaga: ${a}"
+        return 1
+        ;;
+      *)
+        if [[ -z "${domain}" ]]; then
+          domain="${a}"
+        else
+          hm_err "Za dużo argumentów: ${a}"
+          return 1
+        fi
+        ;;
+    esac
+  done
+  [[ -n "${domain}" ]] || domain="${HM_SITE_BASE_DOMAIN:-${HM_SITE_DOMAIN:-}}"
+  [[ -n "${domain}" ]] || { hm_err "Użycie: site show <domena> [--json]"; return 1; }
+  path="$(hm_site_manifest_path "${domain}")"
+  [[ -f "${path}" ]] || { hm_err "Brak manifestu ${path}"; return 1; }
+  if [[ "${json}" -eq 1 ]]; then
+    hm_site_manifest_redacted "${path}"
+    printf '\n'
+    return 0
+  fi
+  if declare -F hm_site_show_table >/dev/null 2>&1; then
+    hm_site_show_table "${domain}" "${path}"
+    return $?
+  fi
+  runtime="$(sed -n 's/.*"runtime":{"type":"\([^"]*\)".*/\1/p' "${path}" | head -1)"
+  web="$(sed -n 's/.*"webserver":"\([^"]*\)".*/\1/p' "${path}" | head -1)"
+  env="$(sed -n 's/.*"env_file":"\([^"]*\)".*/\1/p' "${path}" | head -1)"
+  printf 'domena\t%s\n' "${domain}"
+  printf 'runtime\t%s\n' "${runtime:-brak}"
+  printf 'webserver\t%s\n' "${web:-brak}"
+  printf 'env\t%s\n' "${env:-brak}"
 }

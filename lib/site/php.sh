@@ -234,6 +234,9 @@ extprocessor ${user} {
   group                   ${user}
 }
 EOF
+    if declare -F hm_site_resource_add >/dev/null 2>&1; then
+      hm_site_resource_add "${domain}" fpm "${home}/.hmtools/extprocessor.conf" 0 || true
+    fi
     printf '%s' "${home}/.hmtools/extprocessor.conf"
     return 0
   fi
@@ -283,6 +286,9 @@ EOF
   fi
   rm -f "${bak}"
   chmod 0750 "${home}" 2>/dev/null || true
+  if declare -F hm_site_resource_add >/dev/null 2>&1; then
+    hm_site_resource_add "${domain}" fpm "${pool}" 0 || true
+  fi
   printf '%s' "${pool}"
 }
 

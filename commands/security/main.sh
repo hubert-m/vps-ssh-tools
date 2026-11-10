@@ -19,6 +19,8 @@ Użycie:
   security events [--since 24h] [--notify]
                            Logowania SSH, sudo/su, UID 0, authorized_keys
   security events watch install|status|disable|run
+  security audit [--json] [--only ssh|kernel|fs|services|web|php|updates]
+  security audit --fix <id>   sysctl tak; sshd tylko przez security ssh set (rollback)
 
 Zmiana portu SSH: otwarcie w firewall → sshd -t → restart → 120 s na confirm, inaczej rollback.
 password-auth no tylko gdy root (lub bieżący user) ma niepusty authorized_keys.
@@ -31,6 +33,8 @@ source "${_HM_SEC_DIR}/malware.sh"
 source "${_HM_SEC_DIR}/waf.sh"
 # shellcheck source=events.sh
 source "${_HM_SEC_DIR}/events.sh"
+# shellcheck source=audit.sh
+source "${_HM_SEC_DIR}/audit.sh"
 
 hm_is_valid_ip() {
   local ip="${1:-}"
@@ -148,6 +152,9 @@ cmd_security() {
       ;;
     events)
       cmd_security_events "$@"
+      ;;
+    audit)
+      cmd_security_audit "$@"
       ;;
     help|-h|--help)
       hm_help_topic security

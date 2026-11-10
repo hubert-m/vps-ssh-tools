@@ -336,8 +336,15 @@ hm_site_node_default_bin() {
   ver="$(tr -d '[:space:]' < "${home}/.nvm/alias/default")"
   [[ "${ver}" == v* ]] || ver="v${ver}"
   bin="${home}/.nvm/versions/node/${ver}/bin/node"
-  [[ -x "${bin}" ]] || return 1
-  printf '%s' "${bin}"
+  if [[ -x "${bin}" ]]; then
+    printf '%s' "${bin}"
+    return 0
+  fi
+  if [[ "${HM_SITE_NODE_MOCK:-}" == "1" && -f "${bin}" ]]; then
+    printf '%s' "${bin}"
+    return 0
+  fi
+  return 1
 }
 
 hm_site_node_package_manager_field() {
@@ -500,6 +507,9 @@ ReadWritePaths=${home}
 [Install]
 WantedBy=multi-user.target
 EOF
+  if declare -F hm_site_resource_add >/dev/null 2>&1; then
+    hm_site_resource_add "${domain}" unit "${dest}" 0 || true
+  fi
   if [[ "${HM_SITE_NODE_MOCK:-}" == "1" || "$(id -u)" -eq 0 ]]; then
     if [[ -n "${HM_SITE_NODE_LOG:-}" && "${HM_SITE_NODE_MOCK:-}" == "1" ]]; then
       printf 'systemctl daemon-reload\nsystemctl enable %s\n' "${name}" >> "${HM_SITE_NODE_LOG}"

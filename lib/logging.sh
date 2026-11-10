@@ -94,19 +94,24 @@ hm_file_log_ui() {
 # Defense in depth: linia z hasłem nie trafia do applog jawnie (gdy ktoś użyje echo).
 # Dopasowanie literałem (nie [ł] w klasie znaków — sed traktuje UTF-8 jako bajty).
 hm_log_redact_secrets() {
-  local line="$1" low
+  local line="$1" low s
   low="$(printf '%s' "${line}" | tr '[:upper:]' '[:lower:]')"
   case "${low}" in
-    *hasło:*|*haslo:*|*password:*)
-      printf '%s' "${line}" | sed -E 's/(Hasło:|Haslo:|hasło:|haslo:|Password:|password:).*/\1 ***/'
+    *hasło*:*|*haslo*:*|*password*:*)
+      # Ostatni dwukropek zamyka etykietę (także „hasło (raz):”). Bez sed — ł w klasie [^:] psuje UTF-8.
+      line="${line%:*}: ***"
       ;;
     *database_url=*|*db_password=*|*redis_password=*|*redis_url=*|*secret_key=*|*app_key=*|*jwt_secret=*|*nextauth_secret=*|*connectionstrings__default=*)
-      printf '%s' "${line}" | sed -E 's/(DATABASE_URL|DB_PASSWORD|REDIS_PASSWORD|REDIS_URL|SECRET_KEY|APP_KEY|JWT_SECRET|NEXTAUTH_SECRET|ConnectionStrings__Default)=.*/\1=****/I'
-      ;;
-    *)
-      printf '%s' "${line}"
+      line="$(printf '%s' "${line}" | sed -E 's/(DATABASE_URL|DB_PASSWORD|REDIS_PASSWORD|REDIS_URL|SECRET_KEY|APP_KEY|JWT_SECRET|NEXTAUTH_SECRET|ConnectionStrings__Default)=.*/\1=****/I')"
       ;;
   esac
+  if [[ -n "${HM_LOG_SECRETS+x}" ]]; then
+    for s in "${HM_LOG_SECRETS[@]}"; do
+      [[ ${#s} -ge 8 ]] || continue
+      line="${line//"${s}"/***}"
+    done
+  fi
+  printf '%s' "${line}"
 }
 
 hm_log_stream_to_file() {

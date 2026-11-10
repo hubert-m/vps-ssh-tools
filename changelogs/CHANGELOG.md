@@ -16,6 +16,9 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [vX.Y.Z]
 
+- Feat: `site new` — cron/timery, workery kolejek, logrotate, health i firewall bez publicznych portów aplikacji
+- Feat: `site runtime` / `site doctor` / `webs delete` — zmiana wersji z cofnięciem, dryf manifestu i usuwanie zasobów kreatora (współdzielone zostają)
+- Feat: `site new` — `--json` dla `--dry-run` i `site show`, alias `new-site`, testy mock i `docs/site-wizard.md`
 - Feat: `chrome tabs` / `open` / `tab close|activate` — karty CDP tylko na loopback (127.0.0.1, localhost, ::1); bez `webSocketDebuggerUrl` w wyjściu
 - Feat: `chrome disk` / `clean` — stare buildy Puppeteer (zostaje działająca binarka), cache profilu i śmieci w /tmp; domyślnie dry-run, `--execute` kasuje po potwierdzeniu
 - Feat: `chrome ps` / `restart` / `log` / `cdp` — proces, nasłuch portu, restart znanych unitów headless, journal i metadane protokołu
@@ -36,6 +39,11 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Feat: `vuln os` / `wp` / `eol` — poprawki security, wtyczki i motywy WP oraz EOL; `--json` bez tokenu API w argv
 - Feat: `integrity wp` / `baseline` / `check` — checksumy WP jako user strony, baseline sha256 i raport zmian; `update` może odświeżyć baseline po potwierdzeniu
 - Feat: `security events` — alerty SSH, sudo/su, UID 0 i authorized_keys; każde zdarzenie raz, bez sekretów w treści
+- Feat: `security audit` — wynik 0–100 i komenda naprawy; `--fix` nie zapisuje sshd
+- Feat: `backup verify` — próbny restore do katalogu tymczasowego i bazy `hmtools_verify_*`; uszkodzony tar, pusty dump i zły klucz dają alert
+- Feat: `stats` — historia metryk hosta i stron (wykres, min/avg/max/p95); surowe 48 h, potem 15 min, retencja 90 dni
+- Feat: `monitor http` — kod, czas, keyword i pętla przekierowań; jeden alert i komunikat „wróciło”; hasło basic-auth nie wchodzi do logu
+- Fix: `mysql create` i `clone --basic-auth` — hasło przez `hm_print_secret`; bez TTY operacja staje przed zmianą albo idzie do `--secret-file`
 
 ## [v0.1.12]
 

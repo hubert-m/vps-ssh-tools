@@ -7,9 +7,15 @@ Użycie:
                [--email a@b.c] [--ssl] [--dkim] [--no-open-basedir] [--yes]
   site create <child> --child-of <master> [--path PATH] --php <ver> [--ssl] [--yes]
   site new <domena> [--runtime node|php] [--db mysql|postgres|sqlite|none]
-            [--pg-version N] [--redis [cache|queue]] [--yes]
+            [--pg-version N] [--redis [cache|queue]] [--dry-run] [--json] [--yes]
+            [--cron laravel|wp|django] [--cron-cmd "…"] [--worker queue|celery|node|dotnet]
+            [--workers N] [--logrotate] [--health-path /up] [--open-port N]
+  site show <domena> [--json]
+  site runtime php|node|python|dotnet <wersja> [domena] [--yes]
+  site doctor <domena>
   site env list|set|unset|show
   site-create … / create-site …   (aliasy site create)
+  new-site …                      (alias site new)
 
 Tworzy stronę (HTTP placeholder), child domain albo (w kontekście) alias.
 site new zapisuje sekrety w shared/.env (0600). Hasła nie idą do logów ani manifestu.
@@ -24,6 +30,10 @@ EOF
 
 _hm_cmd_help create-site <<'EOF'
 Alias: site create … — zobacz: help site
+EOF
+
+_hm_cmd_help new-site <<'EOF'
+Alias: site new … — zobacz: help site
 EOF
 
 # shellcheck source=wizard-db.sh
@@ -962,6 +972,15 @@ cmd_site() {
     manifest)
       cmd_site_manifest "$@"
       ;;
+    show)
+      cmd_site_show "$@"
+      ;;
+    runtime)
+      cmd_site_runtime "$@"
+      ;;
+    doctor)
+      cmd_site_doctor "$@"
+      ;;
     help|-h|--help|"")
       hm_help_topic site
       ;;
@@ -1198,7 +1217,12 @@ cmd_site_child() {
   esac
 }
 
+cmd_new_site() {
+  cmd_site_new "$@"
+}
+
 _hm_cmd_register site cmd_site 0
 _hm_cmd_register site-create cmd_site_create_entry 0 create-site
+_hm_cmd_register new-site cmd_new_site 0
 _hm_cmd_register_site alias cmd_site_alias
 _hm_cmd_register_site child cmd_site_child

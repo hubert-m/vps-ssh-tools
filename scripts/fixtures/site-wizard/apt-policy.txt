@@ -1,0 +1,9 @@
+php8.4-fpm:
+  Installed: 8.4.14-1+ubuntu24.04.1+deb.sury.org+1
+  Candidate: 8.4.14-1+ubuntu24.04.1+deb.sury.org+1
+php8.3-fpm:
+  Installed: (none)
+  Candidate: 8.3.26-1+ubuntu24.04.1+deb.sury.org+1
+php8.2-fpm:
+  Installed: (none)
+  Candidate: (none)

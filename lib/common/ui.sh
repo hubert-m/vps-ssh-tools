@@ -315,30 +315,120 @@ hm_progress_done() {
   fi
 }
 
-# Sekret na prawdziwym TTY (fd 3) — poza tee LOG_CAPTURE_OUTPUT / applog OUT.
-hm_print_secret() {
-  local line fd
-  fd="$(hm_ui_tty_fd 2>/dev/null)" || fd=""
+# Sekret na prawdziwym TTY (fd 3) albo w pliku 0600 (HM_SECRET_FILE / --secret-file).
+# Bez TTY i bez pliku: rc≠0, nic nie zmieniamy w wołającym kodzie — wołający ma sprawdzić wcześniej.
+hm_secret_tty_ok() {
   if [[ "${HMTOOLS_TEST:-0}" == "1" && "${HMTOOLS_TEST_NO_TTY:-0}" == "1" ]]; then
-    fd=""
-  elif [[ -n "${fd}" ]]; then
+    return 1
+  fi
+  if [[ "${HM_LOG_TTY_FDS:-0}" == "1" ]] && { true >&3; } 2>/dev/null; then
+    return 0
+  fi
+  if [[ -t 1 ]]; then
+    return 0
+  fi
+  if [[ -e /dev/tty ]] && { true >/dev/tty; } 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
+hm_secret_can_deliver() {
+  if [[ -n "${HM_SECRET_FILE:-}" ]]; then
+    mkdir -p "$(dirname "${HM_SECRET_FILE}")" 2>/dev/null || true
+    if : >> "${HM_SECRET_FILE}" 2>/dev/null; then
+      chmod 0600 "${HM_SECRET_FILE}" 2>/dev/null || true
+      return 0
+    fi
+    return 1
+  fi
+  hm_secret_tty_ok
+}
+
+hm_secret_require_delivery() {
+  if hm_secret_can_deliver; then
+    return 0
+  fi
+  hm_err "Brak TTY — sekret nie zostałby pokazany. Operacja przerwana przed zmianą hasła. Podaj --secret-file."
+  return 1
+}
+
+hm_secret_register() {
+  local s="${1:-}" existing
+  [[ ${#s} -ge 8 ]] || return 0
+  [[ -n "${HM_LOG_SECRETS+x}" ]] || HM_LOG_SECRETS=()
+  for existing in "${HM_LOG_SECRETS[@]:-}"; do
+    [[ "${existing}" == "${s}" ]] && return 0
+  done
+  HM_LOG_SECRETS+=("${s}")
+}
+
+hm_secret_note_line() {
+  local line="$1" low val
+  low="$(printf '%s' "${line}" | tr '[:upper:]' '[:lower:]')"
+  case "${low}" in
+    *hasło:*|*haslo:*|*password:*)
+      val="${line##*:}"
+      val="${val#"${val%%[![:space:]]*}"}"
+      val="${val%"${val##*[![:space:]]}"}"
+      hm_secret_register "${val}"
+      ;;
+  esac
+}
+
+hm_secret_write_file() {
+  local f="${HM_SECRET_FILE:-}" line
+  [[ -n "${f}" ]] || return 1
+  (
+    umask 077
     for line in "$@"; do
-      # shellcheck disable=SC2086
+      [[ -n "${line}" ]] || continue
+      printf '%s\n' "${line}" >> "${f}"
+    done
+  )
+  chmod 0600 "${f}" 2>/dev/null || true
+}
+
+hm_secret_write_tty() {
+  local line fd=""
+  if [[ "${HM_LOG_TTY_FDS:-0}" == "1" ]] && { true >&3; } 2>/dev/null; then
+    fd=3
+  elif [[ -t 1 ]]; then
+    fd=1
+  fi
+  if [[ -n "${fd}" ]]; then
+    for line in "$@"; do
       printf '%s\n' "${line}" >&"${fd}"
     done
     return 0
   fi
-  if [[ "${HMTOOLS_TEST:-0}" != "1" || "${HMTOOLS_TEST_NO_TTY:-0}" != "1" ]]; then
-    if [[ -e /dev/tty ]] && { true >/dev/tty; } 2>/dev/null; then
-      for line in "$@"; do
-        printf '%s\n' "${line}" >/dev/tty
-      done
-      return 0
-    fi
+  if [[ -e /dev/tty ]] && { true >/dev/tty; } 2>/dev/null; then
+    for line in "$@"; do
+      printf '%s\n' "${line}" >/dev/tty
+    done
+    return 0
   fi
-  # Bez TTY (testy/pipe): nie pisz sekretu na stdout przechwytywany do logu.
-  hm_warn "Brak TTY — sekret nie został wypisany (bezpieczeństwo logów)."
-  return 0
+  return 1
+}
+
+hm_print_secret() {
+  local line
+  for line in "$@"; do
+    hm_secret_note_line "${line}"
+  done
+  if [[ -n "${HM_SECRET_FILE:-}" ]]; then
+    hm_secret_write_file "$@" || return 1
+    if hm_secret_tty_ok; then
+      hm_secret_write_tty "$@" || true
+    fi
+    return 0
+  fi
+  if hm_secret_tty_ok; then
+    hm_secret_write_tty "$@"
+    return $?
+  fi
+  hm_err "Brak TTY — sekret nie został wypisany. Podaj --secret-file."
+  return 1
 }
 
 # --- tabele kolumnowe -------------------------------------------------------

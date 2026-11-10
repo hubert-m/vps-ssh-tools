@@ -14,15 +14,18 @@
 | `site new <d> --webserver nginx\|apache\|ols --proxy-port auto` | Vhost z szablonu, port tylko na 127.0.0.1, reload po walidacji |
 | `site new <d> --preset laravel\|next\|static` | Preflight, user, katalogi `shared/logs/releases`, alias `www` |
 | `site new <d> --from profil.json` / `--resume` / `--rollback` | Manifest 0600 bez haseł, journal z cofaniem, drugie uruchomienie pomija istniejące kroki |
-| `site manifest <d>` | Podgląd manifestu serwisu |
-| `site new` / `site new <d> --dry-run` | Kreator kroków albo sam plan, bez zmian na dysku |
+| `site manifest <d>` / `site show <d> [--json]` | Podgląd manifestu; `--json` maskuje hasła |
+| `site runtime php\|node\|python\|dotnet <ver>` | Zmiana wersji; błąd zostawia poprzednią. Wspólne runtime zostają |
+| `site doctor <d>` | Dryf: brak unitu, inny port, vhost bez domeny |
+| `site new <d> --cron laravel --worker queue --workers 2 --health-path /up [--open-port N]` | Timer, worker, logrotate; port aplikacji zostaje na 127.0.0.1 |
+| `site new` / `new-site` / `site new <d> --dry-run [--json]` | Kreator albo sam plan; `--json` to jeden obiekt, bez zmian na dysku |
 | `openvpn install --yes` / `--dry-run` | PKI, `hm.conf` z tls-crypt i AES-256-GCM, NAT bez ruszania SSH |
 | `report weekly [--send] [--json] [--html]` | Tygodniowy raport; brak sekcji jest pominięty, webhook dostaje JSON |
 | `openvpn client add\|export\|list\|show` | Profil `.ovpn` inline (0600), tabela klientów, sekret tylko na TTY |
 | `openvpn client revoke\|renew` / `openvpn crl update` / `openvpn check --notify` | Unieważnienie, CRL 0644, cron i alarm z deduplikacją |
 | `site env list\|set\|unset\|show` | Sekrety serwisu, wartości na liście zamaskowane |
 | `site create <child> --child-of <master> --php <ver>` | Child domain (`--path`, `--ssl`) |
-| `clone <a> <b>` | Kopia strony (pliki+DB); staging.* → noindex; też w kontekście `clone <cel>` |
+| `clone <a> <b>` | Kopia strony (pliki+DB); staging.* → noindex; `--basic-auth` i `--secret-file` |
 | `mail …` | Skrzynki CP (`add`/`passwd`/`delete`/`forward`/`catchall`) + diag (`queue`/`log`/`check`/`dkim`/`blacklist`) |
 | `dns` / `dns check <d>` | Strefy PowerDNS + diagnostyka A/AAAA/MX/SPF/DKIM/DMARC/CAA vs IP VPS |
 | `wp sites` / `wp install <d> …` | Lista instalacji WP; opcjonalnie `cyberpanel installWordPress` |
@@ -37,6 +40,7 @@
 | `backup inc …` | restic (init/site/list/restore/forget); hasło w `restic.pass` |
 | `backup list [domena\|full]` | Snapshoty + manifest |
 | `backup restore … [--target n]` | Odtwórz pliki/DB (rclone lub lokalnie) |
+| `backup verify …` | Próbny restore (katalog 0700, baza `hmtools_verify_*`, cron tygodniowy); nie rusza żywej strony |
 | `backup prune` / `schedule` | Retencja snapshotów / cron `/etc/cron.d/hmtools-backup` |
 | `backup test` | Test połączenia rclone / lokalnego root |
 | `update check` | Przegląd: pakiety / security / OLS / CyberPanel / reboot-required |
@@ -62,13 +66,15 @@
 | `php` | LSPHP: lista vs repo + nowsze gałęzie do instalacji (`--refresh` / `--phpnet`), `set`/`ext`/`ini`/`restart`/`ps` |
 | `update-php <ver>` | Aktualizacja / instalacja LSPHP (np. `8.4`, `8.6`) z potwierdzeniem |
 | `health` [`--ram`] [`--cpu`] [`--count N`] [`--live`] [`--interval N`] | Przegląd; top RAM/CPU; `--live` (min. 2 s, q/Ctrl+C) |
+| `stats` [`day\|week\|month`] | Historia CPU/RAM/swap/load/IO/sieć/dysk; `collect`, `top`, `at` |
+| `monitor http` | Uptime stron (kod, czas, keyword, TLS, pętla przekierowań) i alert `notify` |
 | `health --check` / `health watch` | Alert dysk/SSL/usługi (+ `--notify`); cron co 15 min |
 | `notify …` | Powiadomienia e-mail/webhook (`setup`/`test`/`status`); dedup 24h |
 | `services …` | Status/restart/enable usług stosu (lsws, MariaDB, Postfix, …); failed na czerwono |
 | `logs system …` | Logi mail/ftp/auth/cyberpanel/modsec/lsws/mysql (`--grep`/`--follow`/`--since`); `logs clean` |
 | `limits …` | Zużycie/limity per strona (cgroup CPU/RAM/IO, quota dysku); `check`/`set`/`clear` |
 | `firewall …` | Porty/reguły (ufw/firewalld/CSF): `allow`/`deny`/`remove`/`whitelist` |
-| `security …` | Audyt: `ports`, `ssh` (+ `set`/`confirm`), `events` (SSH, sudo, UID 0, authorized_keys), Fail2Ban `ban`/`unban`, `scan`, `malware`, `waf` |
+| `security …` | Audyt: `ports`, `ssh` (+ `set`/`confirm`), `audit` (wynik 0–100), `events`, Fail2Ban `ban`/`unban`, `scan`, `malware`, `waf` |
 | `access …` | SSH/FTP strony: `ssh` (passwd/shell/keys), `ftp` (list/add/passwd/delete) |
 | `redis …` | Redis: status/memory/dbs/clients/slowlog/sites; `config`/`flush*`/`restart`/`client kill` |
 | `docker …` | Kontenery: lista (+ domena OLS proxy), logs, start/stop/restart, compose ls/pull/up, prune (domyślnie dry-run) |

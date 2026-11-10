@@ -83,13 +83,14 @@ cmd_site_new() {
     hm_wiz_site_new
     return $?
   fi
-  local domain="" runtime="node" db="none" pg_ver="" framework="auto" yes=0 db_name="" dry=0
+  local domain="" runtime="node" db="none" pg_ver="" framework="auto" yes=0 db_name="" dry=0 json=0
   local node_spec="" node_default="" pkg="" process="" start="" port="" preset=""
   local instances="1" memory="300M"
   local php_ver="" php_preset="" php_ext="" php_skel="" php_sapi="fpm" php_composer="1" php_on=0 php_harden=0
   local webserver="" vhost_kind="" proxy_port="" web_ssl=0 web_on=0
   local preset_app="" site_user="" site_shell="nologin" child_of="" releases=0 no_www=0 continue_nossl=0
   local tx_resume=0 tx_rollback=0 profile_from="" save_profile=""
+  local ops_cron="" ops_cmd="" ops_worker="" ops_n="1" ops_health="" ops_port="" ops_on=0
   local -a redis_roles=()
   local a
   while [[ $# -gt 0 ]]; do
@@ -235,8 +236,36 @@ cmd_site_new() {
         releases=1 ;;
       --continue-without-ssl)
         continue_nossl=1 ;;
+      --cron)
+        ops_cron="${1:-}"; ops_on=1; shift || true ;;
+      --cron=*)
+        ops_cron="${a#*=}"; ops_on=1 ;;
+      --cron-cmd)
+        ops_cmd="${1:-}"; ops_on=1; shift || true ;;
+      --cron-cmd=*)
+        ops_cmd="${a#*=}"; ops_on=1 ;;
+      --worker)
+        ops_worker="${1:-}"; ops_on=1; shift || true ;;
+      --worker=*)
+        ops_worker="${a#*=}"; ops_on=1 ;;
+      --workers)
+        ops_n="${1:-1}"; ops_on=1; shift || true ;;
+      --workers=*)
+        ops_n="${a#*=}"; ops_on=1 ;;
+      --health-path)
+        ops_health="${1:-}"; ops_on=1; shift || true ;;
+      --health-path=*)
+        ops_health="${a#*=}"; ops_on=1 ;;
+      --open-port)
+        ops_port="${1:-}"; ops_on=1; shift || true ;;
+      --open-port=*)
+        ops_port="${a#*=}"; ops_on=1 ;;
+      --logrotate)
+        ops_on=1 ;;
       --dry-run)
         dry=1 ;;
+      --json)
+        json=1 ;;
       --resume)
         tx_resume=1 ;;
       --rollback)
@@ -251,7 +280,7 @@ cmd_site_new() {
         save_profile="${a#*=}" ;;
       --yes|-y) yes=1 ;;
       help|-h|--help)
-        echo "Użycie: site new <domena> [--runtime node|php] [--db mysql|postgres|sqlite|none] [--from profil.json] [--save-profile plik] [--resume] [--rollback] [--yes]"
+        echo "Użycie: site new <domena> [--runtime node|php] [--db mysql|postgres|sqlite|none] [--from profil.json] [--save-profile plik] [--resume] [--rollback] [--dry-run] [--json] [--yes]"
         return 0
         ;;
       -*)
@@ -289,6 +318,24 @@ cmd_site_new() {
   [[ -n "${domain}" ]] || { hm_err "Użycie: site new <domena> --db …"; return 1; }
   hm_is_valid_domain "${domain}" || { hm_err "Nieprawidłowa domena: ${domain}"; return 1; }
   if [[ "${dry}" -eq 1 ]]; then
+    if [[ "${json}" -eq 1 ]]; then
+      _hm_site_new_esc() {
+        local s="${1:-}"
+        s="${s//\\/\\\\}"
+        s="${s//\"/\\\"}"
+        printf '%s' "${s}"
+      }
+      printf '{"dry_run":true,"domain":"%s","runtime":"%s","db":"%s","php":"%s","webserver":"%s","preset":"%s","node":"%s","process":"%s"}\n' \
+        "$(_hm_site_new_esc "${domain}")" \
+        "$(_hm_site_new_esc "${runtime}")" \
+        "$(_hm_site_new_esc "${db}")" \
+        "$(_hm_site_new_esc "${php_ver}")" \
+        "$(_hm_site_new_esc "${webserver}")" \
+        "$(_hm_site_new_esc "${preset_app}")" \
+        "$(_hm_site_new_esc "${node_spec}")" \
+        "$(_hm_site_new_esc "${process}")"
+      return 0
+    fi
     hm_info "dry-run: brak zmian w systemie"
     printf 'plan: domena %s, runtime %s, baza %s\n' "${domain}" "${runtime}" "${db}"
     return 0
@@ -407,6 +454,9 @@ cmd_site_new() {
   fi
   if [[ -n "${save_profile}" ]]; then
     hm_site_profile_save "${save_profile}" "${domain}" "${preset_app}" "${runtime}" "${db}" "${webserver}" || return 1
+  fi
+  if [[ "${ops_on}" -eq 1 ]] && declare -F hm_site_ops_apply >/dev/null 2>&1; then
+    hm_site_ops_apply "${domain}" "${ops_cron}" "${ops_cmd}" "${ops_worker}" "${ops_n}" "${ops_health}" "${ops_port}" || return 1
   fi
   return 0
 }

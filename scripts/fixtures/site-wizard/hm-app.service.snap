@@ -1,0 +1,19 @@
+[Unit]
+Description=hmtools app.example
+After=network.target
+
+[Service]
+User=app
+WorkingDirectory=HOME/app
+EnvironmentFile=-HOME/shared/.env
+Environment=HOST=127.0.0.1
+Environment=PORT=3001
+Environment=PATH=HOME/.nvm/versions/node/v22.14.0/bin:/usr/bin
+ExecStart=HOME/.nvm/versions/node/v22.14.0/bin/node server.js
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=HOME
+
+[Install]
+WantedBy=multi-user.target

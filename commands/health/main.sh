@@ -429,6 +429,13 @@ hm_health_check() {
       [[ -n "${u}" ]] || continue
       alerts+=("service:failed:${u}")
     done < <(hm_health_failed_services)
+    if declare -F hm_site_ops_health_alerts >/dev/null 2>&1; then
+      local site_alert
+      while IFS= read -r site_alert; do
+        [[ -n "${site_alert}" ]] || continue
+        alerts+=("${site_alert}")
+      done < <(hm_site_ops_health_alerts)
+    fi
   fi
 
   local rc=0

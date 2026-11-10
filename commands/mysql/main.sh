@@ -125,9 +125,34 @@ cmd_mysql() {
       hm_mysql_optimize "${db}"
       ;;
     create)
-      local db="${1:-}" user="${2:-}"
-      [[ -n "${db}" ]] || { hm_err "Użycie: mysql create <db> [user]"; return 1; }
-      hm_mysql_create "${db}" "${user}"
+      local db="" user="" secret_file="" a
+      while [[ $# -gt 0 ]]; do
+        a="$1"
+        shift
+        case "${a}" in
+          --secret-file)
+            secret_file="${1:-}"
+            shift || true
+            ;;
+          --secret-file=*) secret_file="${a#--secret-file=}" ;;
+          *)
+            if [[ -z "${db}" ]]; then
+              db="${a}"
+            elif [[ -z "${user}" ]]; then
+              user="${a}"
+            else
+              hm_err "Użycie: mysql create <db> [user] [--secret-file plik]"
+              return 1
+            fi
+            ;;
+        esac
+      done
+      [[ -n "${db}" ]] || { hm_err "Użycie: mysql create <db> [user] [--secret-file plik]"; return 1; }
+      if [[ -n "${secret_file}" ]]; then
+        HM_SECRET_FILE="${secret_file}" hm_mysql_create "${db}" "${user}"
+      else
+        hm_mysql_create "${db}" "${user}"
+      fi
       ;;
     help|-h|--help)
       hm_help_topic mysql

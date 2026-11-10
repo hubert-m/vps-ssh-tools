@@ -48,6 +48,10 @@ fix    chown user:user wewnątrz public_html; docroot user:<web_group> 750;
 EOF
 
 cmd_site_info() {
+  if [[ "${1:-}" == "--manifest" ]]; then
+    cmd_site_show "${HM_SITE_DOMAIN}"
+    return $?
+  fi
   hm_print_site_info "${HM_SITE_DOMAIN}"
 }
 

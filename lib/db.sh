@@ -706,12 +706,13 @@ hm_mysql_create() {
 
   if [[ "${quiet}" -eq 0 ]]; then
     if ! hm_confirm_plan "mysql create — ${dbname}" \
-      "Hasło użytkownika zostanie pokazane tylko na terminalu." \
+      "Hasło użytkownika zostanie pokazane tylko na terminalu albo w --secret-file." \
       "Utworzenie bazy danych \`${dbname}\` (utf8mb4_unicode_ci)" \
       "Utworzenie użytkownika '${dbuser}'@'localhost' z wygenerowanym hasłem" \
       "Nadanie pełnych uprawnień (GRANT ALL PRIVILEGES) do \`${dbname}\`.* i FLUSH PRIVILEGES"; then
       return 0
     fi
+    hm_secret_require_delivery || return 1
   fi
 
   pass="$(hm_gen_password)"
@@ -745,12 +746,11 @@ hm_mysql_create() {
     return 0
   fi
 
+  if ! hm_print_secret "Hasło: ${pass}"; then
+    hm_err "Baza ${dbname} powstała, ale hasła nie udało się przekazać."
+    return 1
+  fi
   hm_ok "Utworzono bazę ${dbname} + użytkownika ${dbuser}@localhost"
-  echo
-  hm_print_secret \
-    "  ${C_BOLD:-}Hasło (zapisz — nie będzie pokazane ponownie):${C_RESET:-}" \
-    "  ${pass}"
-  echo
   if [[ "${PANEL:-}" == "cyberpanel" ]]; then
     hm_warn "CyberPanel może nie widzieć tej bazy w panelu — ewentualnie dodaj ją też w CP."
   fi

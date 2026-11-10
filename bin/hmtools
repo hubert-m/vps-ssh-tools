@@ -47,6 +47,12 @@ source "${HMTOOLS_ROOT}/lib/site/node.sh"
 # shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/site/php.sh"
 # shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/site/catalog.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/site/lifecycle.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/site/ops.sh"
+# shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/ols.sh"
 # shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/rclone_drive.sh"

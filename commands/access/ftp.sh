@@ -272,6 +272,7 @@ hm_access_ftp_add() {
     "Katalog strony (root): ${home_path}"; then
     return 1
   fi
+  hm_secret_require_delivery || return 1
 
   case "${backend}" in
     cyberpanel)
@@ -304,12 +305,15 @@ hm_access_ftp_add() {
       ;;
   esac
 
-  hm_ok "Konto FTP utworzone: ${ftp_user}"
-  hm_print_secret "" \
+  if ! hm_print_secret "" \
     "  ${C_BOLD}FTP user:${C_RESET} ${ftp_user}" \
     "  ${C_BOLD}Hasło:${C_RESET}    ${pass}" \
     "  ${C_BOLD}Path:${C_RESET}     ${path} → ${chroot_abs}" \
-    "  ${C_DIM}Zapisz hasło — nie będzie ponownie pokazane.${C_RESET}"
+    "  ${C_DIM}Zapisz hasło — nie będzie ponownie pokazane.${C_RESET}"; then
+    hm_err "Konto FTP powstało, ale hasła nie udało się przekazać."
+    return 1
+  fi
+  hm_ok "Konto FTP utworzone: ${ftp_user}"
 }
 
 hm_access_ftp_passwd() {
@@ -359,6 +363,7 @@ hm_access_ftp_passwd() {
     "Zmiana hasła konta FTP '${ftp_user}' (domena ${domain})"; then
     return 1
   fi
+  hm_secret_require_delivery || return 1
 
   case "${backend}" in
     cyberpanel)
@@ -375,10 +380,13 @@ hm_access_ftp_passwd() {
       ;;
   esac
 
-  hm_ok "Hasło FTP ustawione: ${ftp_user}"
-  hm_print_secret "" \
+  if ! hm_print_secret "" \
     "  ${C_BOLD}FTP user:${C_RESET} ${ftp_user}" \
-    "  ${C_BOLD}Hasło:${C_RESET}    ${pass}"
+    "  ${C_BOLD}Hasło:${C_RESET}    ${pass}"; then
+    hm_err "Hasło FTP zostało ustawione, ale nie udało się go przekazać."
+    return 1
+  fi
+  hm_ok "Hasło FTP ustawione: ${ftp_user}"
 }
 
 hm_access_ftp_delete() {

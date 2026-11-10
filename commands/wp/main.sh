@@ -408,6 +408,7 @@ hm_wp_admin_reset() {
     "Plik hasła 0600 + shred"; then
     return 1
   fi
+  hm_secret_require_delivery || return 1
 
   if ! [[ "${login}" =~ ^[A-Za-z0-9._@-]+$ ]]; then
     hm_err "Nieprawidłowy login (dozwolone: A-Za-z0-9._@-)."
@@ -453,11 +454,14 @@ EOF
     return 1
   fi
   rm -f "${passf}" "${php_f}"
-  hm_ok "Konto ${login} gotowe."
-  hm_print_secret "" \
+  if ! hm_print_secret "" \
     "  ${C_BOLD}Login:${C_RESET} ${login}" \
     "  ${C_BOLD}Hasło:${C_RESET} ${pass}" \
-    "  ${C_DIM}Zapisz hasło — nie będzie ponownie pokazane.${C_RESET}"
+    "  ${C_DIM}Zapisz hasło — nie będzie ponownie pokazane.${C_RESET}"; then
+    hm_err "Hasło WP zostało ustawione, ale nie udało się go przekazać."
+    return 1
+  fi
+  hm_ok "Konto ${login} gotowe."
 }
 
 hm_wp_cache_flush() {
@@ -517,6 +521,7 @@ hm_wp_install() {
   else
     hm_confirm_plan "wp install — ${domain}" "" "${plan[@]}" || return 1
   fi
+  hm_secret_require_delivery || return 1
   # cyberpanel często: --domainName --email --userName --password --siteTitle
   if ! hm_run cyberpanel installWordPress \
     --domainName "${domain}" \
@@ -535,11 +540,14 @@ hm_wp_install() {
       return 1
     fi
   fi
-  hm_ok "WordPress zainstalowany na ${domain}."
-  hm_print_secret "" \
+  if ! hm_print_secret "" \
     "  ${C_BOLD}Admin:${C_RESET} admin" \
     "  ${C_BOLD}Hasło:${C_RESET} ${pass}" \
-    "  ${C_DIM}Zapisz hasło — nie będzie ponownie pokazane.${C_RESET}"
+    "  ${C_DIM}Zapisz hasło — nie będzie ponownie pokazane.${C_RESET}"; then
+    hm_err "WordPress został zainstalowany, ale hasła nie udało się przekazać."
+    return 1
+  fi
+  hm_ok "WordPress zainstalowany na ${domain}."
 }
 
 cmd_wp() {

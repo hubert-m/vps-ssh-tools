@@ -345,8 +345,9 @@ hm_site_env_attach_systemd() {
 
 # Stub PM2 bez wartości sekretów — tylko ścieżka env_file.
 hm_site_env_write_pm2_stub() {
-  local dest="$1" envpath="$2"
+  local dest="$1" envpath="$2" saved
   [[ -e "${dest}" ]] && return 0
+  saved="$(umask)"
   umask 022
   cat > "${dest}" <<EOF
 // Sekrety czytane z env_file. Nie wpisuj haseł w tym pliku.
@@ -357,5 +358,6 @@ module.exports = {
   }]
 }
 EOF
+  umask "${saved}"
   chmod 0644 "${dest}"
 }

@@ -250,6 +250,7 @@ hm_access_ssh_passwd() {
     "Ustawienie hasła przez chpasswd dla ${user}"; then
     return 1
   fi
+  hm_secret_require_delivery || return 1
 
   pass="$(hm_gen_password)"
   [[ -n "${pass}" && ${#pass} -ge 12 ]] || { hm_err "Nie udało się wygenerować hasła."; return 1; }
@@ -258,11 +259,14 @@ hm_access_ssh_passwd() {
     hm_err "chpasswd nieudany dla ${user}."
     return 1
   fi
-  hm_ok "Hasło Unix ustawione dla ${user}."
-  hm_print_secret "" \
+  if ! hm_print_secret "" \
     "  ${C_BOLD}Użytkownik:${C_RESET} ${user}" \
     "  ${C_BOLD}Hasło:${C_RESET}      ${pass}" \
-    "  ${C_DIM}Zapisz hasło — nie będzie ponownie pokazane.${C_RESET}"
+    "  ${C_DIM}Zapisz hasło — nie będzie ponownie pokazane.${C_RESET}"; then
+    hm_err "Hasło Unix zostało ustawione, ale nie udało się go przekazać."
+    return 1
+  fi
+  hm_ok "Hasło Unix ustawione dla ${user}."
 }
 
 hm_access_ssh_shell() {

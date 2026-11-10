@@ -177,6 +177,65 @@ hm_complete_push_sites() {
   done < <(hm_complete_filter_sites "${partial}")
 }
 
+# Wartości flag site new / new-site. Wersje z pliku cache (kind version), inaczej skrót.
+hm_complete_site_flag_values() {
+  local flag="$1" partial="${2:-}" file k v
+  case "${flag}" in
+    --runtime)
+      for v in php node python dotnet static; do
+        [[ "${v}" == "${partial}"* ]] && printf '%s\n' "${v}"
+      done
+      ;;
+    --webserver)
+      for v in nginx apache ols; do
+        [[ "${v}" == "${partial}"* ]] && printf '%s\n' "${v}"
+      done
+      ;;
+    --db)
+      for v in mysql postgres sqlite none; do
+        [[ "${v}" == "${partial}"* ]] && printf '%s\n' "${v}"
+      done
+      ;;
+    --process)
+      for v in pm2 systemd; do
+        [[ "${v}" == "${partial}"* ]] && printf '%s\n' "${v}"
+      done
+      ;;
+    --php|--node|--dotnet|--python)
+      local kind="${flag#--}"
+      file="${HM_SITE_VERSION_CACHE:-/var/lib/hmtools/site-versions.cache}"
+      if [[ -f "${file}" ]]; then
+        while read -r k v _; do
+          [[ "${k}" == "${kind}" && "${v}" == "${partial}"* ]] && printf '%s\n' "${v}"
+        done < "${file}"
+        return 0
+      fi
+      case "${kind}" in
+        php)
+          for v in 8.4 8.3 8.2; do
+            [[ "${v}" == "${partial}"* ]] && printf '%s\n' "${v}"
+          done
+          ;;
+        node)
+          for v in 24 22 20; do
+            [[ "${v}" == "${partial}"* ]] && printf '%s\n' "${v}"
+          done
+          ;;
+        dotnet)
+          for v in 9 8; do
+            [[ "${v}" == "${partial}"* ]] && printf '%s\n' "${v}"
+          done
+          ;;
+        python)
+          for v in 3.13 3.12 3.11; do
+            [[ "${v}" == "${partial}"* ]] && printf '%s\n' "${v}"
+          done
+          ;;
+      esac
+      ;;
+  esac
+}
+
 hm_complete_commands() {
   local partial="$1"
   local -a cmds=()

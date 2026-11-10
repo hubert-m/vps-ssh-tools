@@ -3,7 +3,7 @@
 
 _hm_cmd_help clone <<'EOF'
 Użycie (globalnie):
-  clone <źródło> <cel> [--db-only|--files-only] [--no-index] [--basic-auth] [--yes]
+  clone <źródło> <cel> [--db-only|--files-only] [--no-index] [--basic-auth] [--secret-file plik] [--yes]
   clone help
 
 Użycie (kontekst [domena]>):
@@ -298,6 +298,7 @@ hm_clone_update_env_db() {
 hm_clone_apply_basic_auth() {
   local domain="$1" docroot="$2" user_site="${3:-}"
   local passfile htuser htpass
+  hm_secret_require_delivery || return 1
   htuser="staging"
   htpass="$(hm_gen_password | head -c 16)"
   passfile="${docroot}/.htpasswd.hmtools"
@@ -341,7 +342,11 @@ EOF
   else
     cp -a "${docroot}/.htaccess.hmtools-staging" "${docroot}/.htaccess"
   fi
-  hm_ok "Basic auth: user=${htuser}  hasło (raz): ${htpass}"
+  if ! hm_print_secret "Basic auth user=${htuser}  Hasło: ${htpass}"; then
+    hm_err "Basic auth zapisane, ale hasła nie udało się przekazać."
+    return 1
+  fi
+  hm_ok "Basic auth włączone (user=${htuser})."
   hm_info "Upewnij się, że vhost ma autoLoadHtaccess 1 (OLS)."
 }
 
@@ -396,7 +401,7 @@ hm_clone_ensure_target_site() {
 hm_clone_run() {
   local src="$1" dst="$2"
   shift 2 || true
-  local files=1 db=1 noindex=0 basic=0 yes=0 a
+  local files=1 db=1 noindex=0 basic=0 yes=0 a secret_file=""
   # staging.* domyślnie noindex
   hm_clone_is_staging_name "${src}" "${dst}" && noindex=1
 
@@ -407,6 +412,11 @@ hm_clone_run() {
       --files-only) files=1; db=0 ;;
       --no-index) noindex=1 ;;
       --basic-auth) basic=1 ;;
+      --secret-file)
+        secret_file="${1:-}"
+        shift || true
+        ;;
+      --secret-file=*) secret_file="${a#--secret-file=}" ;;
       --yes|-y) yes=1 ;;
       help|-h|--help) hm_help_topic clone; return 0 ;;
       -*) hm_err "Nieznana flaga: ${a}"; return 1 ;;
@@ -553,7 +563,11 @@ hm_clone_run() {
   fi
 
   if [[ "${basic}" -eq 1 ]]; then
-    hm_clone_apply_basic_auth "${dst}" "${dst_doc}" "${dst_user}"
+    if [[ -n "${secret_file}" ]]; then
+      HM_SECRET_FILE="${secret_file}" hm_clone_apply_basic_auth "${dst}" "${dst_doc}" "${dst_user}"
+    else
+      hm_clone_apply_basic_auth "${dst}" "${dst_doc}" "${dst_user}"
+    fi
   fi
 
   hm_clone_fix_ownership "${dst_root}" "${dst_user}" "${dst_doc}"

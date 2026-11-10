@@ -1,0 +1,7 @@
+{
+  "releases": [
+    { "version": "3.13", "status": "bugfix" },
+    { "version": "3.12", "status": "bugfix" },
+    { "version": "3.8", "status": "end-of-life" }
+  ]
+}
