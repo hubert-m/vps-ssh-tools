@@ -365,12 +365,158 @@ hm_detect_supervisor() {
   fi
 }
 
-# Lenive pobranie wersji Chrome (timeout 3s) — nie wołać przy każdym starcie hmtools.
+# uid, tryb (ostatnie 3+ cyfry) i nazwa właściciela. Jedna linia: "uid mode user".
+# HM_CHROME_STAT_FILE (test): linie uid<TAB>mode<TAB>user<TAB>ścieżka, ostatnia wygrywa.
+# Brak wpisu w pliku = ścieżka niezaufana (nie sięgamy do prawdziwego stat).
+hm_chrome_stat_owner_mode() {
+  local path="$1" uid="" mode="" user="" u m n p
+  [[ -n "${path}" ]] || return 1
+  if [[ -n "${HM_CHROME_STAT_FILE:-}" ]]; then
+    [[ -f "${HM_CHROME_STAT_FILE}" ]] || return 1
+    while IFS=$'\t' read -r u m n p || [[ -n "${u:-}" ]]; do
+      [[ "${p:-}" == "${path}" ]] || continue
+      uid="${u}"
+      mode="${m}"
+      user="${n}"
+    done < "${HM_CHROME_STAT_FILE}"
+    [[ -n "${uid}" && -n "${mode}" ]] || return 1
+    printf '%s %s %s' "${uid}" "${mode}" "${user}"
+    return 0
+  fi
+  if [[ ! -e "${path}" && ! -L "${path}" ]]; then
+    return 1
+  fi
+  uid="$(stat -c '%u' -- "${path}" 2>/dev/null || stat -f '%u' "${path}" 2>/dev/null || true)"
+  mode="$(stat -c '%a' -- "${path}" 2>/dev/null || stat -f '%OLp' "${path}" 2>/dev/null || true)"
+  user="$(stat -c '%U' -- "${path}" 2>/dev/null || true)"
+  [[ -n "${uid}" && -n "${mode}" ]] || return 1
+  printf '%s %s %s' "${uid}" "${mode}" "${user}"
+}
+
+# 0 = zapis dla grupy albo innych (niezaufane).
+hm_chrome_mode_group_or_other_write() {
+  local mode="$1" last="" group=""
+  mode="${mode//[^0-9]/}"
+  [[ -n "${mode}" ]] || return 0
+  last="${mode: -1}"
+  if [[ "${#mode}" -ge 2 ]]; then
+    group="${mode: -2:1}"
+  else
+    group="0"
+  fi
+  case "${group}${last}" in
+    *2*|*3*|*6*|*7*) return 0 ;;
+  esac
+  return 1
+}
+
+hm_chrome_component_trusted() {
+  local path="$1" pair="" uid="" rest="" mode=""
+  pair="$(hm_chrome_stat_owner_mode "${path}")" || return 1
+  uid="${pair%% *}"
+  rest="${pair#* }"
+  mode="${rest%% *}"
+  [[ "${uid}" == "0" ]] || return 1
+  if hm_chrome_mode_group_or_other_write "${mode}"; then
+    return 1
+  fi
+  return 0
+}
+
+hm_chrome_chain_trusted() {
+  local path="$1" cur=""
+  [[ "${path}" == /* ]] || return 1
+  cur="${path%/}"
+  [[ -n "${cur}" ]] || cur="/"
+  while [[ "${cur}" != "/" ]]; do
+    hm_chrome_component_trusted "${cur}" || return 1
+    cur="$(dirname "${cur}")"
+  done
+  hm_chrome_component_trusted "/"
+}
+
+# Plik i każdy katalog nadrzędny: właściciel root i brak zapisu grupy/innych.
+# To samo dla ścieżki po rozwiązaniu symlinków.
+hm_chrome_path_trusted() {
+  local path="$1" canon=""
+  [[ -n "${path}" ]] || return 1
+  hm_chrome_chain_trusted "${path}" || return 1
+  canon="$(readlink -f "${path}" 2>/dev/null || true)"
+  if [[ -n "${canon}" && "${canon}" != "${path}" ]]; then
+    hm_chrome_chain_trusted "${canon}" || return 1
+  fi
+  return 0
+}
+
+# Wersja bez uruchamiania binarki (katalog linux-<ver>, plik VERSION albo abi).
+hm_chrome_version_passive() {
+  local bin="$1" dir="" ver=""
+  [[ -n "${bin}" ]] || return 1
+  if [[ "${bin}" =~ /linux-([0-9][0-9A-Za-z._-]*)/chrome-linux(64)?/chrome$ ]]; then
+    printf 'Chrome %s' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  dir="$(dirname "${bin}")"
+  if [[ -f "${dir}/VERSION" && ! -L "${dir}/VERSION" ]]; then
+    ver="$(head -1 "${dir}/VERSION" 2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ "${ver}" =~ ^[0-9][0-9A-Za-z._-]*$ ]]; then
+      printf 'Chrome %s' "${ver}"
+      return 0
+    fi
+  fi
+  if [[ -f "${dir}/abi" && ! -L "${dir}/abi" ]]; then
+    ver="$(head -1 "${dir}/abi" 2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ "${ver}" =~ ^[0-9][0-9A-Za-z._-]*$ ]]; then
+      printf 'Chrome %s' "${ver}"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+# Niezaufaną binarkę uruchamiaj tylko jako jej właściciel (nigdy jako root).
+# Odmowa zrzucenia uprawnień: kod 126, bez exec.
+hm_chrome_run_as_owner() {
+  local bin="$1" pair="" uid="" rest="" mode="" user=""
+  shift
+  [[ -n "${bin}" && -x "${bin}" ]] || return 126
+  pair="$(hm_chrome_stat_owner_mode "${bin}")" || return 126
+  uid="${pair%% *}"
+  rest="${pair#* }"
+  mode="${rest%% *}"
+  user="${rest#* }"
+  [[ "${user}" != "${mode}" ]] || user=""
+  if [[ "$(id -u)" -ne 0 || -z "${user}" || "${user}" == "root" || "${uid}" == "0" ]]; then
+    return 126
+  fi
+  if hm_have_cmd runuser; then
+    runuser -u "${user}" -- "${bin}" "$@"
+    return $?
+  fi
+  if hm_have_cmd sudo; then
+    sudo -u "${user}" -- "${bin}" "$@"
+    return $?
+  fi
+  return 126
+}
+
+# Lenive pobranie wersji Chrome — nie wołać przy każdym starcie hmtools.
+# Ścieżka spoza roota (Puppeteer, unit usera): bez exec, wersja z katalogu albo CDP.
 hm_chrome_fetch_version() {
-  local bin="${1:-${CHROME_BIN:-}}"
+  local bin="${1:-${CHROME_BIN:-}}" ver=""
   CHROME_VERSION=""
-  [[ -n "${bin}" && -x "${bin}" ]] || return 1
-  local ver
+  [[ -n "${bin}" ]] || return 1
+  [[ -e "${bin}" || -L "${bin}" ]] || return 1
+  if ! hm_chrome_path_trusted "${bin}"; then
+    ver="$(hm_chrome_version_passive "${bin}" 2>/dev/null || true)"
+    if [[ -z "${ver}" && -n "${CHROME_CDP_BROWSER:-}" && "${CHROME_CDP_BROWSER}" != "yes" ]]; then
+      ver="${CHROME_CDP_BROWSER}"
+    fi
+    [[ -n "${ver}" ]] || return 1
+    CHROME_VERSION="${ver}"
+    return 0
+  fi
+  [[ -x "${bin}" ]] || return 1
   ver="$(hm_run_timeout 3 "${bin}" --version 2>/dev/null | head -1 | tr -s ' ' | sed 's/[[:space:]]*$//' || true)"
   CHROME_VERSION="${ver}"
   [[ -n "${ver}" ]]
@@ -406,14 +552,22 @@ hm_chrome_bin_from_systemd() {
 }
 
 # Najnowsza binarka Puppeteer pod /home/*/.cache/puppeteer/chrome/
+# HM_CHROME_HOME_ROOT — jeden katalog zamiast /home i /root (testy).
 hm_chrome_bin_from_puppeteer() {
-  local cand newest="" newest_mtime=0 mt
+  local cand newest="" newest_mtime=0 mt root
+  local -a roots=()
+  if [[ -n "${HM_CHROME_HOME_ROOT:-}" ]]; then
+    roots=("${HM_CHROME_HOME_ROOT}")
+  else
+    roots=(/home /root)
+  fi
   # typowe layouty Chrome for Testing (Puppeteer)
+  for root in "${roots[@]}"; do
   for cand in \
-    /home/*/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome \
-    /home/*/.cache/puppeteer/chrome/linux-*/chrome-linux/chrome \
-    /root/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome \
-    /root/.cache/puppeteer/chrome/linux-*/chrome-linux/chrome
+    "${root}"/*/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome \
+    "${root}"/*/.cache/puppeteer/chrome/linux-*/chrome-linux/chrome \
+    "${root}"/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome \
+    "${root}"/.cache/puppeteer/chrome/linux-*/chrome-linux/chrome
   do
     [[ -e "${cand}" ]] || continue
     [[ -x "${cand}" ]] || continue
@@ -422,6 +576,7 @@ hm_chrome_bin_from_puppeteer() {
       newest_mtime="${mt}"
       newest="${cand}"
     fi
+  done
   done
   [[ -n "${newest}" ]] || return 1
   printf '%s' "${newest}"

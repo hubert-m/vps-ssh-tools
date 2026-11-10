@@ -12,7 +12,7 @@
 | **DB** | socket MySQL + `mariadb`/`mysql` / unit systemd | `DB_ENGINE`, `MYSQL_SOCKET` |
 | **Supervisor** | `SUPERVISOR=yes` tylko przy `supervisorctl`; conf/unit bez ctl → `no` + `conf-only:` / `systemd-only:` | `SUPERVISOR`, `SUPERVISOR_CTL`, `SUPERVISOR_CONF`, `SUPERVISOR_SOURCE` |
 | **Docker** | `docker` CLI (+ opcjonalnie compose plugin / `docker-compose`); daemon sprawdzany przy komendzie | `DOCKER`, `DOCKER_BIN`, `DOCKER_COMPOSE`, `DOCKER_SOURCE` |
-| **Chrome** | PATH → ścieżki systemowe → **systemd** (`chrome-headless` / MainPID) → **Puppeteer** `/home/*/.cache/puppeteer/chrome/…/chrome` → **CDP** `:9222` (wersja leniwie / z CDP) | `CHROME`, `CHROME_BIN`, `CHROME_VERSION`, `CHROME_SOURCE`, `CHROME_SERVICE`, `CHROME_CDP_*` |
+| **Chrome** | PATH → ścieżki systemowe → **systemd** (`chrome-headless` / MainPID) → **Puppeteer** `/home/*/.cache/puppeteer/chrome/…/chrome` → **CDP** `:9222`. Wersja z `--version` tylko gdy plik i każdy katalog nadrzędny należą do roota i nie są zapisywalne dla grupy ani innych; inaczej z nazwy `linux-<ver>`, pliku `VERSION`/`abi` albo CDP — bez uruchamiania binarki jako root | `CHROME`, `CHROME_BIN`, `CHROME_VERSION`, `CHROME_SOURCE`, `CHROME_SERVICE`, `CHROME_CDP_*` |
 
 cPanel / Plesk: preferowany sygnał to obecność narzędzi API/CLI (UAPI, `plesk`), nie samo zgadywanie po layoutcie plików.
 

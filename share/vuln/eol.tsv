@@ -1,0 +1,24 @@
+# Tabela EOL hmtools. Aktualizacja razem z update-hmtools (plik w repozytorium).
+# kind	version	status	until
+php	8.3	security	2027-12-31
+php	8.2	security	2026-12-31
+php	8.1	eol	2025-12-31
+php	8.0	eol	2023-11-26
+php	7.4	eol	2022-11-28
+node	22	active	2027-04-30
+node	20	active	2026-04-30
+node	18	eol	2025-04-30
+node	16	eol	2023-09-11
+ols	1.8	active	2027-01-01
+ols	1.7	eol	2025-01-01
+mariadb	11.4	active	2029-05-29
+mariadb	10.11	security	2028-02-16
+mariadb	10.6	eol	2026-07-06
+mariadb	10.5	eol	2025-06-24
+os	ubuntu-24.04	active	2029-04-25
+os	ubuntu-22.04	security	2027-04-21
+os	ubuntu-20.04	eol	2025-05-31
+os	debian-12	active	2028-06-30
+os	debian-11	eol	2026-08-31
+os	almalinux-9	active	2032-05-31
+os	almalinux-8	security	2029-05-31

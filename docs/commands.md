@@ -40,6 +40,9 @@
 | `backup prune` / `schedule` | Retencja snapshotów / cron `/etc/cron.d/hmtools-backup` |
 | `backup test` | Test połączenia rclone / lokalnego root |
 | `update check` | Przegląd: pakiety / security / OLS / CyberPanel / reboot-required |
+| `vuln` [`os`\|`wp`\|`eol`] [`--json`] | CVE pakietów, wtyczki/motywy WP, EOL (PHP, Node, OLS, MariaDB, OS). Token API tylko z env albo pliku 0600 |
+| `integrity wp` [`--all`\|domena] | Checksumy core i wtyczek WP jako user strony |
+| `integrity baseline` / `check` / `schedule` | Baseline sha256 plików systemowych, diff (`--json`, `--notify`) i cron |
 | `update security\|packages\|ols\|cyberpanel` | Aktualizacje z potwierdzeniem; kopia przed CP; weryfikacja usług |
 | `update auto-security on\|off` | unattended-upgrades / dnf-automatic |
 | `update-hmtools [--force]` | Update z GitHuba + wypis „co nowego” |
@@ -65,11 +68,11 @@
 | `logs system …` | Logi mail/ftp/auth/cyberpanel/modsec/lsws/mysql (`--grep`/`--follow`/`--since`); `logs clean` |
 | `limits …` | Zużycie/limity per strona (cgroup CPU/RAM/IO, quota dysku); `check`/`set`/`clear` |
 | `firewall …` | Porty/reguły (ufw/firewalld/CSF): `allow`/`deny`/`remove`/`whitelist` |
-| `security …` | Audyt: `ports`, `ssh` (+ `set`/`confirm`), Fail2Ban `ban`/`unban`, `scan`, `malware`, `waf` (ModSecurity status/log/mode/rules) |
+| `security …` | Audyt: `ports`, `ssh` (+ `set`/`confirm`), `events` (SSH, sudo, UID 0, authorized_keys), Fail2Ban `ban`/`unban`, `scan`, `malware`, `waf` |
 | `access …` | SSH/FTP strony: `ssh` (passwd/shell/keys), `ftp` (list/add/passwd/delete) |
 | `redis …` | Redis: status/memory/dbs/clients/slowlog/sites; `config`/`flush*`/`restart`/`client kill` |
 | `docker …` | Kontenery: lista (+ domena OLS proxy), logs, start/stop/restart, compose ls/pull/up, prune (domyślnie dry-run) |
-| `chrome …` | Headless: info/wersja/test, karty CDP (`tabs`/`open`/`tab close`), `disk`/`clean` (dry-run), `ps`/`restart`/`log` |
+| `chrome …` | Headless: info/wersja/test, karty CDP (`tabs`/`open`/`tab close`), `disk`/`clean` (dry-run), `ps`/`restart`/`log`. Binarka z katalogu użytkownika nie jest uruchamiana jako root |
 | `git` / `deploy` | (w `use`) status/attach/klucz deploy; deploy pull+build+reload / rollback |
 | `detect` | Wypisz wykryty panel / webserver / DB |
 | `help [polecenie]` | Lista komend lub pomoc do wybranej (np. `help use`) |

@@ -24,6 +24,9 @@ Użycie:
 Aliasy: chromium, headless
 Detekcja: PATH → ścieżki systemowe → systemd (chrome-headless) →
   Puppeteer ~/.cache/puppeteer/chrome → CDP :9222
+Binarka z katalogu użytkownika (Puppeteer, unit) nie jest uruchamiana jako root.
+Wersja bierze się z nazwy katalogu linux-<ver>, pliku VERSION/abi albo CDP.
+--headless tylko dla ścieżki roota (brak zapisu grupy/innych) albo jako właściciel.
 Nadpisanie: FORCE_CHROME_BIN=/ścieżka  FORCE_CHROME_CDP=http://127.0.0.1:9222
 CDP (karty, open, close) tylko dla 127.0.0.1, localhost i ::1.
 Wyjście nie zawiera webSocketDebuggerUrl.
@@ -126,18 +129,51 @@ cmd_chrome_test() {
   hm_chrome_require_bin || return 1
   echo "${C_BOLD}Chrome headless smoke test${C_RESET}"
   echo "  Bin: ${CHROME_BIN}"
-  hm_status_line "Uruchamianie --headless --dump-dom about:blank..."
   local out rc=0
-  out="$(
-    hm_run_timeout 15 "${CHROME_BIN}" \
-      --headless \
-      --disable-gpu \
-      --no-sandbox \
-      --disable-dev-shm-usage \
-      --dump-dom \
-      about:blank \
-      2>/dev/null
-  )" || rc=$?
+  if hm_chrome_path_trusted "${CHROME_BIN}"; then
+    hm_status_line "Uruchamianie --headless --dump-dom about:blank..."
+    out="$(
+      hm_run_timeout 15 "${CHROME_BIN}" \
+        --headless \
+        --disable-gpu \
+        --no-sandbox \
+        --disable-dev-shm-usage \
+        --dump-dom \
+        about:blank \
+        2>/dev/null
+    )" || rc=$?
+  else
+    hm_status_line "Headless jako właściciel binarki (nie jako root)..."
+    if hm_have_cmd timeout; then
+      out="$(
+        hm_chrome_run_as_owner "${CHROME_BIN}" timeout 15 "${CHROME_BIN}" \
+          --headless \
+          --disable-gpu \
+          --no-sandbox \
+          --disable-dev-shm-usage \
+          --dump-dom \
+          about:blank \
+          2>/dev/null
+      )" || rc=$?
+    else
+      out="$(
+        hm_chrome_run_as_owner "${CHROME_BIN}" "${CHROME_BIN}" \
+          --headless \
+          --disable-gpu \
+          --no-sandbox \
+          --disable-dev-shm-usage \
+          --dump-dom \
+          about:blank \
+          2>/dev/null
+      )" || rc=$?
+    fi
+    if [[ "${rc}" -eq 126 ]]; then
+      hm_status_clear
+      hm_err "Nie uruchamiam --headless na binarce spoza zaufanej ścieżki jako root."
+      hm_info "Smoke tylko przez żywy CDP albo jako właściciel binarki (runuser)."
+      return 1
+    fi
+  fi
   hm_status_clear
   if [[ "${rc}" -eq 0 ]] && printf '%s' "${out}" | grep -qiE '<html|<!doctype'; then
     hm_ok "Headless OK (otrzymano DOM z about:blank)"
@@ -166,7 +202,15 @@ cmd_chrome() {
       ;;
     version|ver|-v|--version)
       hm_chrome_require || return 1
-      if [[ -n "${CHROME_BIN:-}" && -x "${CHROME_BIN}" ]]; then
+      if [[ -n "${CHROME_BIN:-}" && -e "${CHROME_BIN}" ]]; then
+        if ! hm_chrome_path_trusted "${CHROME_BIN}"; then
+          if hm_chrome_fetch_version "${CHROME_BIN}"; then
+            printf '%s\n' "${CHROME_VERSION}"
+            return 0
+          fi
+          hm_err "Nie uruchamiam niezaufanej binarki jako root i nie da się odczytać wersji z katalogu ani CDP."
+          return 1
+        fi
         # Nie: `if ! cmd; then rc=$?` — po `!` $? = 0 (sukces negacji), gubi 124.
         local vrc=0
         hm_run_timeout 3 "${CHROME_BIN}" --version || vrc=$?

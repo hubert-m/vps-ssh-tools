@@ -16,4 +16,8 @@
 - Feat: `openvpn client add` / `export` / `list` / `show` — profil `.ovpn` bez klucza w logu
 - Feat: `openvpn install` — PKI, `hm.conf` (tls-crypt, AES-256-GCM), NAT; brak tun albo obca konfiguracja zatrzymuje start
 - Feat: `report weekly` — raport stanu mailem i JSON na webhook, bez sekretów
+- Fix: `chrome` / `detect` — binarka z katalogu użytkownika (Puppeteer, unit) nie jest uruchamiana jako root; wersja z nazwy katalogu, pliku VERSION/abi albo CDP
+- Feat: `vuln os` / `wp` / `eol` — poprawki security, wtyczki i motywy WP oraz EOL; `--json` bez tokenu API w argv
+- Feat: `integrity wp` / `baseline` / `check` — checksumy WP jako user strony, baseline sha256 i raport zmian; `update` może odświeżyć baseline po potwierdzeniu
+- Feat: `security events` — alerty SSH, sudo/su, UID 0 i authorized_keys; każde zdarzenie raz, bez sekretów w treści
 

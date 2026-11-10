@@ -19,6 +19,7 @@ Rozróżnienie:
 
 Długie operacje: preferowany systemd-run --scope (zerwanie SSH nie przerywa).
 Kopie przed upgrade CyberPanel: /var/backups/hmtools/pre-update/<stamp>/
+Po udanym upgrade (security, packages, ols, cyberpanel) można odświeżyć baseline integrity.
 EOF
 
 HM_UPDATE_BACKUP_ROOT="/var/backups/hmtools/pre-update"
@@ -292,6 +293,7 @@ cmd_update_security() {
   local rb
   rb="$(hm_update_reboot_required)"
   [[ "${rb}" == "yes" ]] && hm_warn "Wymagany restart systemu (reboot-required)."
+  hm_update_refresh_integrity
   hm_ok "update security zakończone."
 }
 
@@ -339,6 +341,7 @@ cmd_update_packages() {
   hm_pkg_upgrade_all "${excludes[@]:-}" || return 1
   hm_update_verify_services
   [[ "$(hm_update_reboot_required)" == "yes" ]] && hm_warn "Wymagany restart systemu."
+  hm_update_refresh_integrity
   hm_ok "update packages zakończone."
 }
 
@@ -401,6 +404,7 @@ cmd_update_ols() {
     hm_err "lshttpd nie działa po upgrade — przywróć conf z ${snap}"
     return 1
   fi
+  hm_update_refresh_integrity
   hm_ok "update ols zakończone."
 }
 
@@ -475,8 +479,15 @@ cmd_update_cyberpanel() {
   fi
 
   hm_update_verify_services
+  hm_update_refresh_integrity
   hm_ok "CyberPanel po upgrade: $(hm_update_cyberpanel_local_version)"
   hm_ok "update cyberpanel zakończone. Kopia: ${snap}"
+}
+
+hm_update_refresh_integrity() {
+  if declare -F hm_integrity_after_update >/dev/null 2>&1; then
+    hm_integrity_after_update || true
+  fi
 }
 
 cmd_update_auto_security() {

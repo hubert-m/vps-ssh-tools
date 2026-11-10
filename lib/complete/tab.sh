@@ -225,6 +225,14 @@ hm_tab_complete() {
           for m in status install-clamav schedule scan-all help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
+        elif [[ "${prefix}" =~ (security|sec)[[:space:]]+events[[:space:]]+watch[[:space:]] ]]; then
+          for m in install status disable run; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ (security|sec)[[:space:]]+events[[:space:]] ]]; then
+          for m in watch --since --notify help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
         elif [[ "${prefix}" =~ (security|sec)[[:space:]]+ssh[[:space:]]+set[[:space:]] ]]; then
           for m in port password-auth root-login; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
@@ -234,7 +242,7 @@ hm_tab_complete() {
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         else
-          for m in status ports ssh fail2ban ban unban scan malware waf help; do
+          for m in status ports ssh events fail2ban ban unban scan malware waf help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi
@@ -750,6 +758,30 @@ hm_tab_complete() {
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi
+        ;;
+      integrity)
+        if [[ "${prefix}" =~ integrity[[:space:]]+baseline ]]; then
+          for m in create update; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ integrity[[:space:]]+schedule ]]; then
+          for m in enable disable status; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ integrity[[:space:]]+check ]]; then
+          for m in --json --since --notify; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        else
+          for m in wp baseline check schedule --all --json help; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        fi
+        ;;
+      vuln)
+        for m in os wp eol summary --json --all help; do
+          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+        done
         ;;
       update)
         if [[ "${prefix}" =~ update[[:space:]]+auto-security[[:space:]] ]]; then

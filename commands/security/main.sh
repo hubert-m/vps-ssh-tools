@@ -16,6 +16,9 @@ Użycie:
   (w use) malware scan|report|quarantine|restore
   security waf             ModSecurity: status/log/mode/rules; (w use) waf whitelist
   (w use) waf | waf whitelist <ruleId> [--uri …]
+  security events [--since 24h] [--notify]
+                           Logowania SSH, sudo/su, UID 0, authorized_keys
+  security events watch install|status|disable|run
 
 Zmiana portu SSH: otwarcie w firewall → sshd -t → restart → 120 s na confirm, inaczej rollback.
 password-auth no tylko gdy root (lub bieżący user) ma niepusty authorized_keys.
@@ -26,6 +29,8 @@ _HM_SEC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${_HM_SEC_DIR}/malware.sh"
 # shellcheck source=waf.sh
 source "${_HM_SEC_DIR}/waf.sh"
+# shellcheck source=events.sh
+source "${_HM_SEC_DIR}/events.sh"
 
 hm_is_valid_ip() {
   local ip="${1:-}"
@@ -141,6 +146,9 @@ cmd_security() {
     waf|modsec|modsecurity)
       cmd_security_waf "$@"
       ;;
+    events)
+      cmd_security_events "$@"
+      ;;
     help|-h|--help)
       hm_help_topic security
       ;;
@@ -172,7 +180,7 @@ cmd_security_status() {
 
   cmd_security_ports
   echo
-  echo "${C_DIM}Więcej: security ssh | security scan | security malware | security waf (w use: malware / waf)${C_RESET}"
+  echo "${C_DIM}Więcej: security ssh | security events | security scan | security malware | security waf${C_RESET}"
 }
 
 cmd_security_ports() {
