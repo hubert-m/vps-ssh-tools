@@ -16,6 +16,12 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [vX.Y.Z]
 
+- Fix: `chrome clean` kasuje zweryfikowaną ścieżkę; `chrome ps` obcina znaki sterujące i hasło proxy
+- Fix: `hm_visible_len` liczy znaki w C.UTF-8, a testy tabel ładują `ui.sh`
+- Feat: `config track` — lokalne repo, rollback pliku i pominięcie sekretów
+- Feat: `cron-run` i `cron monitor` — lock, timeout, redakcja stderr i alert braku
+- Feat: `dns expiry`/`drift`/`dnssec` — cache RDAP, diff rekordów i alert health
+- Feat: `cf` — token w pliku, real IP OLS, purge, DNS i Under Attack
 - Feat: `docker compose update` — zapis digestów, rollback i audyt restart/health
 - Feat: `traffic sites`/`spikes` — log strumieniowo, adres cf= i sekcja w report weekly
 - Feat: `memory oom`/`swap`/`sysctl` — mapa strony, fstab i rollback profilu

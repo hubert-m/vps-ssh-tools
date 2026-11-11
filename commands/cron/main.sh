@@ -11,6 +11,10 @@ Użycie:
   cron site <domena>   Crony powiązane ze stroną (user + heurystyka w /etc)
   cron user <name>     Crontab wybranego użytkownika
   cron edit [user]     Edycja crontab -e (w kontekście: user strony)
+  cron monitor add <nazwa> --every 1h [--grace 15m] [--user u]
+  cron monitor list|status|remove <nazwa>
+  cron monitor wrap <user> <linia>
+  cron-run <nazwa> [--timeout 1h] -- <komenda>
 
 Przykłady:
   hmtools> cron
@@ -310,6 +314,9 @@ cmd_cron() {
       fi
       hm_cron_edit_user "${who}"
       ;;
+    monitor)
+      hm_cron_monitor "$@"
+      ;;
     help|-h|--help)
       hm_help_topic cron
       ;;
@@ -323,5 +330,8 @@ cmd_cron() {
 cmd_crons() {
   cmd_cron "$@"
 }
+
+# shellcheck source=monitor.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/monitor.sh"
 
 _hm_cmd_register cron cmd_cron 0 crons

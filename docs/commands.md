@@ -33,6 +33,7 @@
 | `clone <a> <b>` | Kopia strony (pliki+DB); staging.* → noindex; `--basic-auth` i `--secret-file` |
 | `mail …` | Skrzynki CP (`add`/`passwd`/`delete`/`forward`/`catchall`) + diag (`queue`/`log`/`check`/`dkim`/`blacklist`) |
 | `dns` / `dns check <d>` | Strefy PowerDNS + diagnostyka A/AAAA/MX/SPF/DKIM/DMARC/CAA vs IP VPS |
+| `dns expiry` / `drift` / `dnssec` | Wygaśnięcie (RDAP, cache 24 h), diff rekordów i stan DNSSEC |
 | `wp sites` / `wp install <d> …` | Lista instalacji WP; opcjonalnie `cyberpanel installWordPress` |
 | `wp cli-info` / `wp cli-update` | Info bundled WP-CLI; `cli-update` podmienia `lib/wp-cli/wp-cli.phar` (SHA-512). Instalator hmtools pobiera phar tylko, gdy pliku nie ma |
 | `use <n\|domena>` | Wejście w kontekst (Tab uzupełnia domenę z listy) |
@@ -65,7 +66,8 @@
 | `ssl hostname` / `ssl mail` / `ssl self-signed` / `ssl diagnose` | Hostname panelu, poczta, awaryjny self-signed, diagnoza ACME |
 | `renew-ssl [domena]` | Odnów Let's Encrypt (z potwierdzeniem) |
 | `mysql` / `dbs` | Lista baz; `heavy [--min-size X]` (bazy/tabele ≥ X, domyślnie 1G); `dump`/`dump-local`/`import`/`cli`/`top`/`optimize`/`create` |
-| `cron` / `crons` | Crony systemowe / users / strony; `cron edit` |
+| `cron` / `crons` | Crony systemowe / users / strony; `cron edit`; `cron monitor` i `cron-run` |
+| `config track` / `log` / `diff` / `rollback` | Lokalne repo konfiguracji, bez sekretów i bez pusha |
 | `pm2` / `apps` | PM2: lista, proxy, `restart`/`reload`/`logs`/`save` |
 | `node` | Serwisy z `.nvm` / `.npm` (obok `public_html`): wersje nvm i npm vs najnowsze; `node update nvm\|npm` |
 | `php` | LSPHP: lista vs repo + nowsze gałęzie do instalacji (`--refresh` / `--phpnet`), `set`/`ext`/`ini`/`restart`/`ps` |
@@ -132,6 +134,18 @@
 | `redis …` | Status/memory/sites (filtr domeny); mutacje jak globalnie |
 | `docker …` | Kontenery powiązane z portami proxy tej strony |
 | `exit` | Wyjście z kontekstu |
+
+## Cloudflare
+
+```text
+hmtools> cf setup
+hmtools> cf realip apply
+hmtools> cf purge example.com --all
+hmtools> cf attack on example.com
+hmtools> cf status example.com
+```
+
+Token jest czytany ze stdin i ląduje w pliku 0600. Lista zakresów Cloudflare odrzuca `0.0.0.0/0`. Purge po deployu włącza `HM_CF_PURGE_ON_DEPLOY=1`.
 
 ## Traffic
 

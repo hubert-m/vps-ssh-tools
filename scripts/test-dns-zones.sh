@@ -3,6 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export HMTOOLS_ROOT="$PWD"
+# shellcheck source=lib/common/ui.sh
+source "${HMTOOLS_ROOT}/lib/common/ui.sh"
 
 hm_err() { echo "ERR: $*" >&2; }
 hm_warn() { echo "WARN: $*"; }

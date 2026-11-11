@@ -92,6 +92,9 @@ hm_confirm() {
 #   hm_confirm_plan "TYTUŁ" "OSTRZEŻENIE (opcjonalne)" "Krok 1..." "Krok 2..."
 #   hm_confirm_plan "TYTUŁ" "" --yes "Krok 1..." "Krok 2..."
 hm_confirm_plan() {
+  if declare -F hm_config_after >/dev/null 2>&1; then
+    hm_config_after || true
+  fi
   local title="${1:-Operacja}"
   local warning="${2:-}"
   shift 2 || true
@@ -124,6 +127,9 @@ hm_confirm_plan() {
     hm_file_log INFO "CONFIRM_PLAN: ${title} -> yes (--yes, ${i} steps)"
     echo "  ${C_DIM}(--yes: pomijam interaktywne potwierdzenie)${C_RESET}"
     echo
+    if declare -F hm_config_before >/dev/null 2>&1; then
+      hm_config_before "${title}" || true
+    fi
     return 0
   fi
 
@@ -138,6 +144,9 @@ hm_confirm_plan() {
   if [[ "${reply}" == "yes" ]]; then
     hm_file_log INFO "CONFIRM_PLAN: ${title} -> yes (${i} steps)"
     echo
+    if declare -F hm_config_before >/dev/null 2>&1; then
+      hm_config_before "${title}" || true
+    fi
     return 0
   fi
   hm_file_log INFO "CONFIRM_PLAN: ${title} -> aborted (reply=${reply:-empty})"
@@ -452,6 +461,7 @@ hm_visible_len() {
     fi
   done
   out+="${s}"
+  local LC_ALL=C.UTF-8
   printf '%s' "${#out}"
 }
 

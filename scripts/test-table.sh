@@ -33,6 +33,7 @@ col_at() {
     printf '%s' "-1"
     return
   fi
+  local LC_ALL=C.UTF-8
   printf '%s' "${#prefix}"
 }
 
@@ -95,6 +96,11 @@ mapfile -t lines < <(hm_table_print 2)
 ccol="$(col_at "${lines[0]}" "C")"
 dcol="$(col_at "${lines[2]}" "3")"
 [[ "${ccol}" == "${dcol}" && "${ccol}" != "-1" ]] && ok "empty-mid (${ccol})" || bad "empty-mid ${ccol} vs ${dcol}"
+
+n="$(LC_ALL=C hm_visible_len 'WYGASŁ')"
+[[ "${n}" == "6" ]] && ok "vis-locale-c (${n})" || bad "vis-locale-c=${n}"
+n="$(LC_ALL=C hm_visible_len 'żółć.pl')"
+[[ "${n}" == "7" ]] && ok "vis-locale-pl (${n})" || bad "vis-locale-pl=${n}"
 
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"

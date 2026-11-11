@@ -2,6 +2,8 @@
 # Regresja: hm_parse_size_bytes + hm_mysql_heavy (mock SQL)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=lib/common/ui.sh
+source "${ROOT}/lib/common/ui.sh"
 
 hm_err() { echo "ERR: $*" >&2; return 1; }
 hm_ok() { :; }

@@ -454,6 +454,14 @@ hm_health_check() {
     done < <(hm_health_openvpn_alerts)
   fi
 
+  if declare -F hm_health_dns_alerts >/dev/null 2>&1; then
+    local dns_alert
+    while IFS= read -r dns_alert; do
+      [[ -n "${dns_alert}" ]] || continue
+      alerts+=("${dns_alert}")
+    done < <(hm_health_dns_alerts)
+  fi
+
   local rc=0
   if [[ "${#alerts[@]}" -gt 0 ]]; then
     rc=1

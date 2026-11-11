@@ -159,7 +159,7 @@ hm_tab_complete() {
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         else
-          for m in check list add edit delete export help; do
+          for m in check list add edit delete export expiry drift dnssec help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi
@@ -769,7 +769,7 @@ hm_tab_complete() {
           # edit może dostać też domenę zamiast usera
           hm_complete_push_sites "${partial}"
         else
-          for m in list ls all global system users site user edit help; do
+          for m in list ls all global system users site user edit monitor help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi
@@ -990,6 +990,16 @@ hm_tab_complete() {
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi
+        ;;
+      config)
+        for m in track log diff rollback help; do
+          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+        done
+        ;;
+      cf|cloudflare)
+        for m in setup realip purge dns attack block status help; do
+          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+        done
         ;;
       docker)
         if [[ "${prefix}" =~ docker[[:space:]]+compose[[:space:]] ]]; then

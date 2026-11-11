@@ -6,6 +6,9 @@ _hm_cmd_help dns <<'EOF'
 Użycie (globalnie):
   dns                         Strefy lokalne + status pdns
   dns check <domena>          A/AAAA vs IP VPS, NS, MX, SPF, DKIM, DMARC, CAA, propagacja
+  dns expiry [domena|--all]   RDAP/WHOIS, cache 24 h, dni do wygaśnięcia
+  dns drift [domena|--all]    oczekiwane vs publiczne; baseline zapisuje wzorzec
+  dns dnssec <domena>         DS/DNSKEY i walidacja
 
 Użycie (kontekst [domena]>):
   dns | dns list [--type T]   Rekordy strefy (tylko lokalna)
@@ -21,6 +24,8 @@ EOF
 _HM_DNS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=check.sh
 source "${_HM_DNS_DIR}/check.sh"
+# shellcheck source=watch.sh
+source "${_HM_DNS_DIR}/watch.sh"
 
 # --- helpers ---------------------------------------------------------------
 
@@ -555,6 +560,18 @@ cmd_dns() {
   case "${sub}" in
     check|diag|diagnose)
       hm_dns_check_cmd "$@"
+      return $?
+      ;;
+    expiry)
+      hm_dns_expiry_cmd "$@"
+      return $?
+      ;;
+    drift)
+      hm_dns_drift_cmd "$@"
+      return $?
+      ;;
+    dnssec)
+      hm_dns_dnssec_cmd "$@"
       return $?
       ;;
     help|-h|--help)

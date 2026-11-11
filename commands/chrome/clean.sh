@@ -148,9 +148,60 @@ hm_chrome_cache_rel_ok() {
   esac
 }
 
+hm_chrome_owner_ok() {
+  local p="${1:-}" uid="" puid="" ppuid="" trust=""
+  puid="$(stat -c '%u' "${p}" 2>/dev/null || true)"
+  ppuid="$(stat -c '%u' "$(dirname "${p}")" 2>/dev/null || true)"
+  if [[ -z "${puid}" || -z "${ppuid}" ]]; then
+    [[ "${HMTOOLS_TEST:-}" == "1" ]] && return 0
+    return 1
+  fi
+  trust="${HM_CHROME_UID:-}"
+  if [[ -z "${trust}" ]]; then
+    local pup_root=""
+    pup_root="$(hm_chrome_puppeteer_root 2>/dev/null || true)"
+    if [[ -n "${pup_root}" && -d "${pup_root}" ]]; then
+      trust="$(stat -c '%u' "${pup_root}" 2>/dev/null || true)"
+    fi
+  fi
+  uid="$(id -u 2>/dev/null || echo "")"
+  hm_chrome_uid_allowed() {
+    local u="${1:-}"
+    [[ "${u}" == "0" ]] && return 0
+    [[ -n "${trust}" && "${u}" == "${trust}" ]] && return 0
+    [[ "${HMTOOLS_TEST:-}" == "1" && -n "${uid}" && "${u}" == "${uid}" ]] && return 0
+    return 1
+  }
+  hm_chrome_uid_allowed "${puid}" || return 1
+  hm_chrome_uid_allowed "${ppuid}" || return 1
+}
+
+hm_chrome_path_in_use() {
+  local p="${1:-}" f
+  if [[ -n "${HM_CHROME_BUSY:-}" ]] && grep -qxF -- "${p}" "${HM_CHROME_BUSY}" 2>/dev/null; then
+    return 0
+  fi
+  [[ "${HMTOOLS_TEST:-}" == "1" ]] && return 1
+  [[ -d /proc ]] || return 1
+  for f in /proc/[0-9]*/cmdline; do
+    [[ -r "${f}" ]] || continue
+    if tr '\0' '\n' < "${f}" 2>/dev/null | grep -Fxq -- "${p}"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+hm_chrome_old_enough() {
+  local hit=""
+  hit="$(find "${1:-}" -maxdepth 0 -mmin +1440 -print 2>/dev/null || true)"
+  [[ -n "${hit}" ]]
+}
+
 hm_chrome_deletable() {
   local kind="${1:-}" p="${2:-}" rp base root keep tmp data rel
   [[ -n "${p}" && -e "${p}" && ! -L "${p}" ]] || return 1
+  hm_chrome_owner_ok "${p}" || return 1
   rp="$(hm_chrome_realpath "${p}")" || return 1
   case "${rp}" in
     /|/tmp|/var|/var/tmp|/home|/root|/usr|/etc|/dev|/proc) return 1 ;;
@@ -175,6 +226,8 @@ hm_chrome_deletable() {
       base="$(basename "${rp}")"
       hm_chrome_tmp_name_ok "${base}" || return 1
       [[ "$(dirname "${rp}")" == "${tmp}" ]] || return 1
+      hm_chrome_path_in_use "${p}" && return 1
+      hm_chrome_old_enough "${p}" || return 1
       return 0
       ;;
     cache)
@@ -246,10 +299,25 @@ hm_chrome_clean_candidates() {
 }
 
 hm_chrome_rm_tree() {
-  local kind="${1:-}" p="${2:-}" rp
+  local kind="${1:-}" p="${2:-}" uid="" owner=""
   hm_chrome_deletable "${kind}" "${p}" || return 1
-  rp="$(hm_chrome_realpath "${p}")" || return 1
-  command rm -rf -- "${rp}"
+  [[ -e "${p}" && ! -L "${p}" ]] || return 1
+  if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+    command rm -rf -- "${p}"
+    return $?
+  fi
+  uid="$(stat -c '%u' "${p}" 2>/dev/null || echo 0)"
+  if [[ "${uid}" == "0" ]]; then
+    command rm -rf -- "${p}"
+    return $?
+  fi
+  owner="$(stat -c '%U' "${p}" 2>/dev/null || true)"
+  if [[ -n "${owner}" ]] && command -v runuser >/dev/null 2>&1; then
+    runuser -u "${owner}" -- rm -rf -- "${p}"
+    return $?
+  fi
+  hm_err "Brak runuser. Nie kasuję jako root: ${p}"
+  return 1
 }
 
 hm_chrome_bytes() {

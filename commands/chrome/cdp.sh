@@ -106,11 +106,26 @@ hm_chrome_cdp_path_ok() {
 }
 
 hm_chrome_one_line() {
-  local s="${1:-}" max="${2:-180}"
+  local s="${1:-}" max="${2:-180}" i c code out="" word redacted=""
   s="${s//$'\n'/ }"
   s="${s//$'\r'/ }"
   s="${s//$'\t'/ }"
-  s="${s//$'\033'/}"
+  local len="${#s}"
+  for ((i = 0; i < len; i++)); do
+    c="${s:i:1}"
+    printf -v code '%d' "'${c}" 2>/dev/null || code=32
+    if (( code < 32 || code == 127 || (code >= 128 && code <= 159) )); then
+      continue
+    fi
+    out+="${c}"
+  done
+  for word in ${out}; do
+    if [[ "${word}" == *:*@* ]]; then
+      word="[redacted]@${word##*@}"
+    fi
+    redacted+="${word} "
+  done
+  s="${redacted% }"
   if [[ "${#s}" -gt "${max}" ]]; then
     s="${s:0:${max}}…"
   fi

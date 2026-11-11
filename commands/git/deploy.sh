@@ -457,6 +457,9 @@ hm_deploy_run() {
   hm_deploy_reload_services
   hm_deploy_log_append "DEPLOY ok sha=${new_sha} prev=${cur_sha} branch=${branch}"
   hm_ok "Deploy OK: ${cur_sha:0:8} → ${new_sha:0:8} (${branch})"
+  if declare -F hm_cf_after_deploy >/dev/null 2>&1; then
+    hm_cf_after_deploy || true
+  fi
 }
 
 hm_deploy_rollback() {

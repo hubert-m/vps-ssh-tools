@@ -796,6 +796,9 @@ hm_clone_deploy() {
 
   hm_clone_fix_ownership "${pr_root}" "${pr_user}" "${pr_doc}"
   hm_ok "Deploy ${staging} → ${prod} OK. Rollback: use ${prod} → deploy rollback ${stamp}"
+  if declare -F hm_cf_after_deploy >/dev/null 2>&1; then
+    hm_cf_after_deploy || true
+  fi
 }
 
 # --- entrypoints -------------------------------------------------------------

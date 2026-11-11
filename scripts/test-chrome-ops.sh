@@ -2,6 +2,8 @@
 # Karty CDP (bez tokenu WS), polityka URL i czyszczenie cache — bez żywego Chrome.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=lib/common/ui.sh
+source "${ROOT}/lib/common/ui.sh"
 
 fail=0
 ok() { echo "OK   $*"; }
@@ -139,6 +141,10 @@ fi
 tmpd="${base}/tmp"
 mkdir -p "${tmpd}/.org.chromium.Chromium.abc"
 printf 'x\n' > "${tmpd}/.org.chromium.Chromium.abc/f"
+touch -d '2020-01-01 00:00:00' "${tmpd}/.org.chromium.Chromium.abc"
+mkdir -p "${tmpd}/.org.chromium.Chromium.fresh"
+mkdir -p "${tmpd}/.org.chromium.Chromium.busy"
+touch -d '2020-01-01 00:00:00' "${tmpd}/.org.chromium.Chromium.busy"
 have_tmp_link=0
 if ln -s /tmp "${tmpd}/.org.chromium.Chromium.link" 2>/dev/null && [[ -L "${tmpd}/.org.chromium.Chromium.link" ]]; then
   have_tmp_link=1
@@ -172,6 +178,13 @@ else
   ok "cand-link (ten system nie tworzy symlinku, pominięte)"
 fi
 [[ "${cands}" == *".org.chromium.Chromium.abc"* ]] && ok cand-tmp || bad cand-tmp
+[[ "${cands}" != *"Chromium.fresh"* ]] && ok cand-fresh || bad cand-fresh
+busyf="${base}/busy"
+printf '%s\n' "${tmpd}/.org.chromium.Chromium.busy" > "${busyf}"
+HM_CHROME_BUSY="${busyf}"
+candsb="$(hm_chrome_clean_candidates)"
+[[ "${candsb}" != *"Chromium.busy"* ]] && ok cand-busy || bad cand-busy
+unset HM_CHROME_BUSY
 if [[ "${have_tmp_link}" -eq 1 ]]; then
   [[ "${cands}" != *"Chromium.link"* ]] && ok cand-tmp-link || bad cand-tmp-link
 else
@@ -234,6 +247,37 @@ grep -q 'chrome tabs' "${ROOT}/commands/chrome/main.sh" && ok help-tabs || bad h
 grep -q 'webSocketDebuggerUrl' "${ROOT}/commands/chrome/main.sh" && ok help-ws || bad help-ws
 grep -q 'source "${_HM_CHROME_DIR}/cdp.sh"' "${ROOT}/commands/chrome/main.sh" && ok wired-cdp || bad wired-cdp
 grep -q -- '--execute' "${ROOT}/lib/complete/tab.sh" && ok tab-complete || bad tab-complete
+
+victim="${base}/victim"
+mkdir -p "${victim}"
+printf 'keep\n' > "${victim}/marker"
+nreal=0
+_hm_chrome_realpath_keep="$(declare -f hm_chrome_realpath)"
+eval "${_hm_chrome_realpath_keep/hm_chrome_realpath/_hm_chrome_realpath_orig}"
+HM_TOCTOU_PATH="${root}/linux-121.0.0.0"
+hm_chrome_realpath() {
+  local p="${1:-}"
+  if [[ "${p}" == "${HM_TOCTOU_PATH}" ]]; then
+    nreal=$((nreal + 1))
+    if [[ "${nreal}" -ge 2 ]]; then
+      printf '%s' "${victim}"
+      return 0
+    fi
+    printf '%s' "${p}"
+    return 0
+  fi
+  _hm_chrome_realpath_orig "${p}"
+}
+mkdir -p "${root}/linux-121.0.0.0"
+touch -d '2020-01-01 00:00:00' "${root}/linux-121.0.0.0"
+export CHROME_BIN="${keep}/chrome"
+hm_chrome_rm_tree puppeteer "${root}/linux-121.0.0.0" || true
+[[ -f "${victim}/marker" ]] && ok toctou-victim || bad toctou-victim
+[[ ! -d "${root}/linux-121.0.0.0" ]] && ok toctou-target || bad toctou-target
+
+line="$(hm_chrome_one_line $'--proxy-server=http://user:sekret@10.0.0.1:8080\n\033\x9b')"
+[[ "${line}" != *sekret* && "${line}" == *"[redacted]@10.0.0.1:8080"* ]] && ok redact-proxy || bad "redact=${line}"
+[[ "${line}" != *$'\033'* ]] && ok strip-ctrl || bad strip-ctrl
 
 if command -v python3 >/dev/null 2>&1; then
   pout="$(printf '%s' "${raw}" | hm_chrome_format_targets_py)"

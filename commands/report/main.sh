@@ -116,6 +116,13 @@ hm_report_collect() {
       hm_report_push "Ruch" "${traffic}"
     fi
   fi
+  if declare -F hm_dns_watch_summary >/dev/null 2>&1; then
+    local domains
+    domains="$(hm_dns_watch_summary || true)"
+    if [[ -n "${domains}" ]]; then
+      hm_report_push "Domeny" "${domains}"
+    fi
+  fi
 }
 
 hm_report_text() {
