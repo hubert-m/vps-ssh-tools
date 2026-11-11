@@ -47,6 +47,10 @@ source "${HMTOOLS_ROOT}/lib/site/node.sh"
 # shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/site/php.sh"
 # shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/site/dotnet.sh"
+# shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/site/python.sh"
+# shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/site/catalog.sh"
 # shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/site/lifecycle.sh"

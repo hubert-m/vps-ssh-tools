@@ -25,6 +25,12 @@ hm_site_resource_add() {
   [[ "${shared}" == "1" || "${shared}" == "true" ]] && flag="true"
   file="$(hm_site_resources_path "${domain}")"
   mkdir -p "$(dirname "${file}")"
+  chmod 0700 "$(dirname "${file}")" 2>/dev/null || true
+  if declare -F hm_site_path_has_symlink >/dev/null 2>&1 \
+    && { hm_site_path_has_symlink "${file}" || hm_site_path_has_symlink "$(dirname "${file}")"; }; then
+    hm_err "Odmowa zapisu listy zasobów przez symlink."
+    return 1
+  fi
   printf '{"kind":"%s","path":"%s","shared":%s}\n' \
     "$(hm_site_json_escape "${kind}")" \
     "$(hm_site_json_escape "${path}")" \
@@ -281,6 +287,11 @@ cmd_site_doctor() {
   [[ -n "${domain}" ]] || domain="${HM_SITE_DOMAIN:-}"
   [[ -n "${domain}" ]] || { hm_err "Użycie: site doctor <domena>"; return 1; }
   [[ -f "$(hm_site_manifest_path "${domain}")" ]] || { hm_err "Brak manifestu."; return 1; }
+  if declare -F hm_site_path_has_symlink >/dev/null 2>&1 \
+    && hm_site_path_has_symlink "$(hm_site_resources_path "${domain}")"; then
+    hm_err "Lista zasobów jest symlinkiem."
+    return 1
+  fi
   if [[ ! -f "$(hm_site_resources_path "${domain}")" ]]; then
     printf 'OK\tbrak listy zasobów\n'
     return 0
@@ -288,6 +299,11 @@ cmd_site_doctor() {
   while IFS= read -r line || [[ -n "${line}" ]]; do
     hm_site_resource_read "${line}" || continue
     [[ "${HM_SITE_RES_SHARED}" -eq 1 ]] && continue
+    if ! hm_site_doctor_readable "${HM_SITE_RES_PATH}" "${HM_SITE_RES_KIND}" "${domain}"; then
+      printf 'DRYF\todmowa %s %s\n' "${HM_SITE_RES_KIND}" "${HM_SITE_RES_PATH}"
+      drift=1
+      continue
+    fi
     if [[ ! -e "${HM_SITE_RES_PATH}" ]]; then
       printf 'DRYF\tbrak %s %s\n' "${HM_SITE_RES_KIND}" "${HM_SITE_RES_PATH}"
       drift=1
@@ -339,6 +355,14 @@ hm_site_lifecycle_plan_delete() {
     fi
   done
   HM_DEL_PLAN_KEYS+=("wizard")
+}
+
+hm_site_doctor_readable() {
+  local path="$1" kind="$2" domain="$3" home
+  hm_site_delete_path_allowed "${path}" "${kind}" "${domain}" || return 1
+  home="$(hm_site_home "${domain}" 2>/dev/null || true)"
+  [[ -n "${home}" && "${home}" != "/" && "${path}" == "${home}/"* ]] && return 1
+  return 0
 }
 
 hm_site_delete_path_allowed() {

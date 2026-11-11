@@ -116,11 +116,75 @@ hm_site_ops_health_alerts() {
   done
 }
 
+hm_site_ops_php_bin() {
+  local domain="$1" ver="" man
+  man="$(hm_site_manifest_path "${domain}" 2>/dev/null || true)"
+  if [[ -n "${man}" && -f "${man}" ]]; then
+    ver="$(sed -n 's/.*"type":"php","version":"\([^"]*\)".*/\1/p' "${man}" | head -1)"
+  fi
+  if [[ -n "${ver}" ]]; then
+    printf '/usr/bin/php%s' "${ver}"
+    return 0
+  fi
+  printf '/usr/bin/php'
+}
+
+hm_site_ops_node_bin() {
+  local home="$1" domain="$2" ver="" man
+  man="$(hm_site_manifest_path "${domain}" 2>/dev/null || true)"
+  if [[ -n "${man}" && -f "${man}" ]]; then
+    ver="$(sed -n 's/.*"type":"node","version":"\([^"]*\)".*/\1/p' "${man}" | head -1)"
+  fi
+  if [[ -z "${ver}" && -f "${home}/.nvmrc" ]]; then
+    ver="$(tr -d '[:space:]' < "${home}/.nvmrc")"
+  fi
+  ver="${ver#v}"
+  if [[ -n "${ver}" ]]; then
+    printf '%s/.nvm/versions/node/v%s/bin/node' "${home}" "${ver}"
+    return 0
+  fi
+  printf '/usr/bin/node'
+}
+
+hm_site_ops_env_file() {
+  local home="$1" domain="$2" envf line
+  envf="${home}/.env"
+  if [[ -f "${envf}" ]]; then
+    line="$(ls -ld -- "${envf}" 2>/dev/null || true)"
+    if [[ "${line}" != *"->"* ]]; then
+      printf '%s' "${envf}"
+      return 0
+    fi
+  fi
+  printf '%s' "$(hm_site_state_dir "${domain}")/app.env"
+}
+
+hm_site_ops_enable_now() {
+  local name
+  for name in "$@"; do
+    [[ -n "${name}" ]] || continue
+    if [[ -n "${HM_SITE_OPS_LOG:-}" ]]; then
+      printf 'enable %s\n' "${name}" >> "${HM_SITE_OPS_LOG}"
+    fi
+    if [[ -n "${HM_TX_JOURNAL:-}" && -f "${HM_TX_JOURNAL}" ]]; then
+      printf 'undo=systemd-unit\t%s\n' "${name}" >> "${HM_TX_JOURNAL}"
+    fi
+  done
+  [[ "${HMTOOLS_TEST:-}" == "1" ]] && return 0
+  declare -F hm_have_cmd >/dev/null 2>&1 && hm_have_cmd systemctl || return 0
+  systemctl daemon-reload || return 1
+  for name in "$@"; do
+    [[ -n "${name}" ]] || continue
+    systemctl enable --now "${name}" || return 1
+  done
+}
+
 hm_site_ops_cron_exec() {
-  local domain="$1" home="$2" kind="$3" cmd="$4"
+  local domain="$1" home="$2" kind="$3" cmd="$4" php
+  php="$(hm_site_ops_php_bin "${domain}")"
   case "${kind}" in
     laravel)
-      printf '/usr/bin/php %s/artisan schedule:run' "${home}"
+      printf '%s %s/artisan schedule:run' "${php}" "${home}"
       ;;
     wp)
       printf 'DISABLE_WP_CRON=true\n' | hm_site_write_nofollow "$(hm_site_state_dir "${domain}")/wp-cron.env" || return 1
@@ -136,11 +200,13 @@ hm_site_ops_cron_exec() {
 }
 
 hm_site_ops_worker_exec() {
-  local home="$1" kind="$2"
+  local home="$1" kind="$2" domain="$3" php node
+  php="$(hm_site_ops_php_bin "${domain}")"
+  node="$(hm_site_ops_node_bin "${home}" "${domain}")"
   case "${kind}" in
-    queue) printf '/usr/bin/php %s/artisan queue:work --tries=3' "${home}" ;;
+    queue) printf '%s %s/artisan queue:work --tries=3' "${php}" "${home}" ;;
     celery) printf '%s/.hmtools/venv/bin/celery -A app worker' "${home}" ;;
-    node) printf '/usr/bin/node %s/worker.js' "${home}" ;;
+    node) printf '%s %s/worker.js' "${node}" "${home}" ;;
     dotnet) printf '/usr/bin/dotnet %s/app.dll' "${home}" ;;
     *) return 1 ;;
   esac
@@ -149,8 +215,15 @@ hm_site_ops_worker_exec() {
 hm_site_ops_apply() {
   local domain="$1" cron_kind="${2:-}" cron_cmd="${3:-}" worker_kind="${4:-}"
   local workers="${5:-1}" health_path="${6:-}" open_port="${7:-}"
-  local home safe unitdir lrdir fwdir lr svc tmr wexec mem reg pub snip
+  local home safe unitdir lrdir fwdir lr svc tmr wexec mem reg pub snip envf
   local i exec created=""
+  local -a enable_units=()
+  if [[ -z "${cron_kind}" && -n "${cron_cmd}" ]]; then
+    cron_kind="cmd"
+  fi
+  case "${cron_cmd}" in
+    *$'\n'*|*$'\r'*) hm_err "Komenda crona zawiera niedozwolony znak."; return 1 ;;
+  esac
   home="$(hm_site_home "${domain}")"
   safe="$(hm_site_ops_safe "${domain}")"
   unitdir="${HM_SITE_SYSTEMD_DIR:-/etc/systemd/system}"
@@ -163,6 +236,10 @@ hm_site_ops_apply() {
     return 1
   fi
   mkdir -p "${home}/logs" "$(hm_site_state_dir "${domain}")" "${unitdir}" "${lrdir}" "${fwdir}"
+  chmod 0750 "${home}/logs" 2>/dev/null || true
+  if [[ "$(id -u)" -eq 0 && -n "${HM_SITE_USER:-}" ]]; then
+    chown "${HM_SITE_USER}:${HM_SITE_USER}" "${home}/logs" 2>/dev/null || true
+  fi
 
   lr="${lrdir}/hm-${safe}"
   cat > "${lr}" <<EOF
@@ -187,6 +264,7 @@ EOF
     exec="$(hm_site_ops_cron_exec "${domain}" "${home}" "${cron_kind}" "${cron_cmd}")"
     svc="${unitdir}/hm-cron-${safe}-schedule.service"
     tmr="${unitdir}/hm-cron-${safe}-schedule.timer"
+    envf="$(hm_site_ops_env_file "${home}" "${domain}")"
     cat > "${svc}" <<EOF
 [Unit]
 Description=hm cron ${domain}
@@ -194,6 +272,10 @@ Description=hm cron ${domain}
 [Service]
 Type=oneshot
 User=${HM_SITE_USER:-${safe}}
+WorkingDirectory=${home}
+EnvironmentFile=-${envf}
+NoNewPrivileges=true
+PrivateTmp=true
 ExecStart=${exec}
 EOF
     cat > "${tmr}" <<EOF
@@ -215,15 +297,17 @@ EOF
       hm_err "systemd-analyze odrzucił timer ${domain}."
       return 1
     fi
+    enable_units+=("hm-cron-${safe}-schedule.timer")
   fi
 
   if [[ -n "${worker_kind}" ]]; then
-    wexec="$(hm_site_ops_worker_exec "${home}" "${worker_kind}")" || {
+    wexec="$(hm_site_ops_worker_exec "${home}" "${worker_kind}" "${domain}")" || {
       hm_err "Nieznany worker: ${worker_kind}"
       hm_site_ops_rollback "${domain}"
       return 1
     }
     mem="${HM_SITE_MEMORY_MAX:-512M}"
+    envf="$(hm_site_ops_env_file "${home}" "${domain}")"
     svc="${unitdir}/hm-worker-${safe}@.service"
     cat > "${svc}" <<EOF
 [Unit]
@@ -232,6 +316,12 @@ Description=hm worker ${domain}
 [Service]
 Type=simple
 User=${HM_SITE_USER:-${safe}}
+WorkingDirectory=${home}
+EnvironmentFile=-${envf}
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true
+ReadWritePaths=${home}
 Restart=always
 MemoryMax=${mem}
 KillSignal=SIGTERM
@@ -253,14 +343,16 @@ EOF
     else
       reg="$(hm_site_state_dir "${domain}")/health.units"
     fi
-    if [[ -L "${reg}" ]]; then
+    {
+      for ((i = 1; i <= workers; i++)); do
+        printf 'hm-worker-%s@%s.service\n' "${safe}" "${i}"
+      done
+    } | hm_site_write_nofollow "${reg}" || {
       hm_site_ops_rollback "${domain}"
-      hm_err "Odmowa zapisu health.units przez symlink."
       return 1
-    fi
-    : > "${reg}"
+    }
     for ((i = 1; i <= workers; i++)); do
-      printf 'hm-worker-%s@%s.service\n' "${safe}" "${i}" >> "${reg}"
+      enable_units+=("hm-worker-${safe}@${i}.service")
     done
   fi
 
@@ -277,6 +369,23 @@ EOF
     printf '%s/tcp # hm:%s\n' "${open_port}" "${domain}" > "${snip}"
     hm_site_resource_add "${domain}" firewall "${snip}" 0
     created="${created} ${snip}"
+    if [[ -n "${HM_SITE_OPS_LOG:-}" ]]; then
+      printf 'firewall allow %s/tcp hm:%s\n' "${open_port}" "${domain}" >> "${HM_SITE_OPS_LOG}"
+    fi
+    if [[ "${HMTOOLS_TEST:-}" != "1" ]] && declare -F hm_os_firewall_allow >/dev/null 2>&1; then
+      hm_os_firewall_allow "${open_port}" tcp "" "hm:${domain}" || {
+        hm_site_ops_rollback "${domain}"
+        hm_err "Firewall nie przyjął portu ${open_port}."
+        return 1
+      }
+    fi
+  fi
+  if [[ "${#enable_units[@]}" -gt 0 ]]; then
+    hm_site_ops_enable_now "${enable_units[@]}" || {
+      hm_site_ops_rollback "${domain}"
+      hm_err "systemctl nie włączył jednostek ${domain}."
+      return 1
+    }
   fi
   if [[ "${HM_SITE_DOCKER:-}" == "1" ]]; then
     hm_warn "Docker omija UFW — porty kontenera mogą być publiczne."

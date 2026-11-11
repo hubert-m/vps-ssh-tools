@@ -94,5 +94,25 @@ grep -Eq 'dport 22|deny.*22|delete.*22' "${HM_OVPN_UFW_RULES}" "${HM_OVPN_ETC}/h
 second="$(cmd_openvpn install --yes --port 1194 --proto udp --subnet 10.8.0.0/24)"
 printf '%s\n' "${second}" | grep -q 'bez zmian' && ok idempotent || bad idempotent
 [[ "$(grep -c 'BEGIN hmtools-openvpn' "${HM_OVPN_UFW_RULES}")" -eq 1 ]] && ok nat-once || bad nat-once
+grep -q 'ca ' "${HM_OVPN_ETC}/hm.conf" && grep -q 'cert ' "${HM_OVPN_ETC}/hm.conf" && grep -q 'key ' "${HM_OVPN_ETC}/hm.conf" && ok conf-pki || bad conf-pki
+grep -q 'openvpn --genkey secret' "${HM_OVPN_CALL_LOG}" && ok genkey || bad genkey
+grep -q 'MASQUERADE' "${HM_OVPN_UFW_RULES}" && ok nat-rule || bad nat-rule
+grep -q "PKI=${HM_OVPN_ETC}/hm/pki" "${HM_OVPN_ETC}/hmtools.state" && ok pki-path || bad pki-path
+if cmd_openvpn install --yes --port 0 >"${root}/badport.out" 2>"${root}/badport.err"; then bad port-range; else ok port-range; fi
+grep -q 'Zły port' "${root}/badport.err" && ok port-msg || bad port-msg
+if cmd_openvpn install --yes --dns custom:nie-ip >"${root}/baddns.out" 2>"${root}/baddns.err"; then bad dns-rc; else ok dns-rc; fi
+
+saved_etc="${HM_OVPN_ETC}"
+saved_ufw="${HM_OVPN_UFW_RULES}"
+export HM_OVPN_ETC="${root}/etc-fail"
+export HM_OVPN_UFW_RULES="${root}/ufw-fail/before.rules"
+export HM_OVPN_SYSCTL_D="${root}/sysctl-fail"
+export HM_OVPN_SYSTEMCTL_FAIL=1
+mkdir -p "${HM_OVPN_ETC}"
+if cmd_openvpn install --yes --port 1194 --proto udp --endpoint vpn.fail --subnet 10.9.0.0/24 >"${root}/roll.out" 2>"${root}/roll.err"; then bad roll-rc; else ok roll-rc; fi
+[[ ! -f "${HM_OVPN_ETC}/hm.conf" && ! -f "${HM_OVPN_ETC}/hmtools.state" ]] && ok roll-clean || bad roll-clean
+unset HM_OVPN_SYSTEMCTL_FAIL
+export HM_OVPN_ETC="${saved_etc}"
+export HM_OVPN_UFW_RULES="${saved_ufw}"
 
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

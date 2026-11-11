@@ -16,6 +16,18 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [vX.Y.Z]
 
+- Feat: vhost OLS dla Node — nagłówki proxy i pytanie o wolny port
+- Docs: `site new` — kolejność prac, MVP i flagi Python oraz .NET
+- Feat: `site new` runtime Python — uv, gunicorn, statyki Django i Celery
+- Feat: `site new` runtime .NET — kanał LTS, unit Kestrel, blokada mieszanych feedów
+- Feat: `deploy release` — atomowe current, healthcheck bez przełączenia, webhook 403
+- Fix: testy monitor, backup verify, openvpn i chrome na Linuksie; runner `scripts/run-tests.sh`
+- Fix: `site new` operacje — systemctl enable, binarka z manifestu, logi i firewall
+- Fix: `site doctor` — odczyt zasobu tylko z allowlisty, lista zasobów odrzuca symlink
+- Fix: `openvpn install` — easy-rsa z EASYRSA_PKI, losowy tls-crypt, pełny hm.conf i realny systemctl
+- Fix: `report weekly` — sekcje z komend stats, audit, monitor, vuln i backup; HTML escapuje `& < > "`
+- Fix: `openvpn client export` — klucz tls-crypt i endpoint z pliku stanu install, odmowa pustego profilu
+- Fix: `openvpn client renew` — pełny profil 0600, socket management i restart `openvpn-server@hm`
 - Fix: `monitor http` — dni TLS z certyfikatu, kody curl 35/51/60 jako błąd TLS
 - Fix: `site new` — błąd PHP/vhost cofa journal; undo bazy i vhosta bez powłoki
 - Fix: `site new` — katalogi serwisu należą do usera, dysk z df, port 80/443 nginx nie jest ostrzeżeniem

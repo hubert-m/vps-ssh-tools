@@ -16,19 +16,18 @@ hm_report_section_note() {
   HM_REPORT_ISSUES+=("0")
 }
 
-hm_report_read_or_skip() {
-  local title="$1" file="${2:-}" missing="$3"
-  if [[ -z "${file}" ]]; then
-    hm_report_section_note "${title}" "pominięto — ${missing}"
-    return 0
-  fi
-  if [[ ! -f "${file}" ]]; then
-    hm_report_section_note "${title}" "pominięto — ${missing}"
-    return 0
-  fi
-  local body issue=0 line
-  body="$(cat "${file}")"
-  if grep -Eq 'FAIL|failed|wygasa|reboot|ban|ERROR|problem' "${file}"; then
+hm_html_escape() {
+  local s="$1" q='"'
+  s="${s//&/\&amp;}"
+  s="${s//</\&lt;}"
+  s="${s//>/\&gt;}"
+  s="${s//${q}/\&quot;}"
+  printf '%s' "${s}"
+}
+
+hm_report_push() {
+  local title="$1" body="$2" issue=0
+  if printf '%s\n' "${body}" | grep -Eq 'FAIL|failed|wygasa|reboot|ban|ERROR|problem'; then
     issue=1
   fi
   HM_REPORT_TITLES+=("${title}")
@@ -36,19 +35,80 @@ hm_report_read_or_skip() {
   HM_REPORT_ISSUES+=("${issue}")
 }
 
+hm_report_read_or_skip() {
+  local title="$1" file="${2:-}" missing="$3"
+  if [[ -z "${file}" || ! -f "${file}" ]]; then
+    hm_report_section_note "${title}" "pominięto — ${missing}"
+    return 0
+  fi
+  hm_report_push "${title}" "$(cat "${file}")"
+}
+
+hm_report_capture() {
+  local out=""
+  case "$1" in
+    stats)
+      declare -F cmd_stats >/dev/null 2>&1 && out="$(cmd_stats "${@:2}" 2>/dev/null || true)"
+      ;;
+    security)
+      declare -F cmd_security >/dev/null 2>&1 && out="$(cmd_security "${@:2}" 2>/dev/null || true)"
+      ;;
+    monitor)
+      declare -F cmd_monitor >/dev/null 2>&1 && out="$(cmd_monitor "${@:2}" 2>/dev/null || true)"
+      ;;
+    vuln)
+      declare -F cmd_vuln >/dev/null 2>&1 && out="$(cmd_vuln "${@:2}" 2>/dev/null || true)"
+      ;;
+    backup)
+      declare -F cmd_backup >/dev/null 2>&1 && out="$(cmd_backup "${@:2}" 2>/dev/null || true)"
+      ;;
+  esac
+  if [[ -z "${out}" && $# -gt 0 && "${HMTOOLS_TEST:-}" != "1" ]]; then
+    local bin=""
+    bin="$(command -v hmtools 2>/dev/null || true)"
+    if [[ -n "${bin}" ]]; then
+      out="$("${bin}" "$@" 2>/dev/null || true)"
+    fi
+  fi
+  printf '%s' "${out}"
+}
+
+hm_report_take() {
+  local title="$1" file="${2:-}" missing="$3"
+  shift 3
+  if [[ -n "${file}" ]]; then
+    hm_report_read_or_skip "${title}" "${file}" "${missing}"
+    return 0
+  fi
+  if [[ $# -eq 0 ]]; then
+    hm_report_section_note "${title}" "pominięto — ${missing}"
+    return 0
+  fi
+  local body
+  body="$(hm_report_capture "$@")"
+  case "${body}" in
+    ""|"[]"|"{}")
+      hm_report_section_note "${title}" "pominięto — ${missing}"
+      ;;
+    *)
+      hm_report_push "${title}" "${body}"
+      ;;
+  esac
+}
+
 hm_report_collect() {
   HM_REPORT_TITLES=()
   HM_REPORT_BODIES=()
   HM_REPORT_ISSUES=()
-  hm_report_read_or_skip "Usługi" "${HM_REPORT_SERVICES:-}" "brak modułu usług"
-  hm_report_read_or_skip "Strony" "${HM_REPORT_HTTP:-}" "brak monitor http"
-  hm_report_read_or_skip "Kopie" "${HM_REPORT_BACKUP:-}" "brak backup"
-  hm_report_read_or_skip "Certyfikaty" "${HM_REPORT_SSL:-}" "brak ssl"
-  hm_report_read_or_skip "Aktualizacje" "${HM_REPORT_UPDATES:-}" "brak aktualizacji"
-  hm_report_read_or_skip "Bany" "${HM_REPORT_BANS:-}" "brak fail2ban"
-  hm_report_read_or_skip "Dysk" "${HM_REPORT_DISK:-}" "brak statystyk dysku"
-  hm_report_read_or_skip "Zasoby" "${HM_REPORT_STATS:-}" "brak stats"
-  hm_report_read_or_skip "Audyt" "${HM_REPORT_AUDIT:-}" "brak security audit"
+  hm_report_take "Usługi" "${HM_REPORT_SERVICES:-}" "brak modułu usług"
+  hm_report_take "Strony" "${HM_REPORT_HTTP:-}" "brak monitor http" monitor http status --json
+  hm_report_take "Kopie" "${HM_REPORT_BACKUP:-}" "brak backup" backup status
+  hm_report_take "Certyfikaty" "${HM_REPORT_SSL:-}" "brak ssl"
+  hm_report_take "Aktualizacje" "${HM_REPORT_UPDATES:-}" "brak aktualizacji" vuln os --json
+  hm_report_take "Bany" "${HM_REPORT_BANS:-}" "brak fail2ban"
+  hm_report_take "Dysk" "${HM_REPORT_DISK:-}" "brak statystyk dysku"
+  hm_report_take "Zasoby" "${HM_REPORT_STATS:-}" "brak stats" stats week --json
+  hm_report_take "Audyt" "${HM_REPORT_AUDIT:-}" "brak security audit" security audit --json
 }
 
 hm_report_text() {
@@ -69,7 +129,10 @@ hm_report_html() {
     if [[ "${issues}" -eq 1 && "${HM_REPORT_ISSUES[$i]}" -eq 0 ]]; then
       continue
     fi
-    printf '<h2>%s</h2><pre>%s</pre>\n' "${HM_REPORT_TITLES[$i]}" "${HM_REPORT_BODIES[$i]}"
+    local title body
+    title="$(hm_html_escape "${HM_REPORT_TITLES[$i]}")"
+    body="$(hm_html_escape "${HM_REPORT_BODIES[$i]}")"
+    printf '<h2>%s</h2><pre>%s</pre>\n' "${title}" "${body}"
   done
   printf '</body></html>\n'
 }
@@ -101,6 +164,7 @@ hm_report_weekly() {
       --json) fmt="json"; shift ;;
       --html) fmt="html"; shift ;;
       --issues-only) issues=1; shift ;;
+      --dry-run) shift ;;
       *) hm_err "Nieznana flaga: $1"; return 1 ;;
     esac
   done

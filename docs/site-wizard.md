@@ -2,7 +2,15 @@
 
 `site new` składa serwis z kroków: preflight, użytkownik i katalogi, baza, runtime, vhost, manifest. Sekrety zostają w `shared/.env` (0600). Manifest, journal, log i `ps` ich nie dostają.
 
-Alias: `new-site` (to samo co `site new`).
+Alias: `new-site` (to samo co `site new`). `site create` zostaje osobną, krótką ścieżką OLS.
+
+## Kolejność i MVP
+
+Kolejność prac: silnik kreatora, manifest i journal, preflight z użytkownikiem, vhost, PHP, Node, bazy i `.env`, Python, .NET, deploy z `releases/current`, operacje (cron, workery, logi, health, firewall), cykl życia wg manifestu, statyczna/SPA i Docker, testy z dokumentacją.
+
+MVP to preflight, manifest, vhost OLS i nginx, PHP, Node, MySQL/MariaDB z `.env` oraz testy tych części. SSL w MVP idzie przez istniejące `ssl issue`. Python, .NET, Docker, releases, workery i usuwanie wg manifestu są drugą fazą.
+
+Domyślne w kodzie, dopóki decyzje nie zostaną zmienione: Python przez `uv`, .NET przez `microsoft-repo` (mieszany feed Ubuntu jest odrzucany), układ releases tylko z `--releases`.
 
 ## Przebieg
 
@@ -10,8 +18,8 @@ Alias: `new-site` (to samo co `site new`).
 2. Domena i aliasy (`www` domyślnie, `--no-www` wyłącza). Kolizja katalogu albo użytkownika kończy się odmową.
 3. Użytkownik systemowy i układ `releases/`, `shared/`, `logs/`, `public_html`. `umask` procesu po kroku wraca do poprzedniej wartości.
 4. Baza (`mysql`, `postgres`, `sqlite`, `none`) i opcjonalny Redis. Hasło idzie do `.env`.
-5. Runtime (PHP: pula FPM per serwis; Node: nvm, PM2 albo systemd na `127.0.0.1`).
-6. Vhost z `share/vhost-templates/` (nginx, apache, OLS). Reload dopiero po walidacji.
+5. Runtime (PHP: pula FPM per serwis; Node: nvm, PM2 albo systemd na `127.0.0.1`; Python: `uv` i gunicorn; .NET: Kestrel na `127.0.0.1`).
+6. Vhost z `share/vhost-templates/` (nginx, apache, OLS). Reload dopiero po walidacji. Szablon OLS dla Node/PM2 proxuje na `127.0.0.1:<port>` i ustawia `X-Forwarded-For`, `X-Real-IP` oraz `X-Forwarded-Proto`. Bez `--yes` kreator pyta o port, a gdy jest zajęty, prosi o inny.
 7. Manifest bez haseł i `COMMIT` w journalu.
 
 Drugie uruchomienie na istniejący manifest nic nie dopisuje. `--resume` pomija kroki oznaczone `DONE`. `--rollback` cofa otwarty journal.
@@ -25,6 +33,9 @@ Drugie uruchomienie na istniejący manifest nic nie dopisuje. `--resume` pomija 
 | `--redis [cache\|queue]` | Redis (ACL, gdy wersja ≥ 6) |
 | `--php`, `--php-preset`, `--php-ext`, `--php-sapi` | Wersja i rozszerzenia PHP |
 | `--node`, `--process pm2\|systemd`, `--port` | Node i sposób startu |
+| `--python`, `--python-source`, `--app-server`, `--wsgi`, `--celery` | Interpreter Python, gunicorn/uvicorn, opcjonalny Celery |
+| `--dotnet`, `--dotnet-kind`, `--dotnet-source`, `--app-dll` | Kanał .NET i plik DLL dla Kestrela |
+| `--releases` | Katalogi `releases/` i symlink `current` |
 | `--webserver nginx\|apache\|ols`, `--proxy-port` | Vhost |
 | `--preset` | laravel, wordpress, next, django, aspnet, spa, static |
 | `--from plik`, `--save-profile plik` | Profil JSON albo YAML |

@@ -402,6 +402,16 @@ hm_site_port_reserve() {
   [[ -f "${file}" ]] || : > "${file}"
   if [[ "${want}" != "auto" && -n "${want}" ]]; then
     [[ "${want}" =~ ^[0-9]+$ ]] || { hm_err "Zły port: ${want}"; return 1; }
+    if awk -F '\t' -v p="${want}" '$2 == p { found = 1 } END { exit !found }' "${file}"; then
+      if [[ -n "${HM_SITE_PORT_ANSWER:-}" ]]; then
+        p="${HM_SITE_PORT_ANSWER}"
+        HM_SITE_PORT_ANSWER=""
+        hm_site_port_reserve "${domain}" "${p}"
+        return $?
+      fi
+      hm_err "Port ${want} jest zajęty."
+      return 1
+    fi
     p="${want}"
   else
     p=3000

@@ -26,6 +26,8 @@ trap 'rm -rf "${root}"' EXIT
 export HM_OVPN_ROOT="${root}/ovpn"
 export HM_OVPN_PKI="${HM_OVPN_ROOT}/pki"
 export HM_OVPN_SERVER="${HM_OVPN_ROOT}/server"
+export HM_OVPN_ETC="${HM_OVPN_SERVER}"
+export HM_OVPN_REMOTE="vpn.test"
 export HM_OVPN_EXPORT="${HM_OVPN_ROOT}/clients"
 export HM_OVPN_CRON="${root}/cron/hmtools-openvpn"
 export HM_OVPN_APPLOG="${root}/applog"
@@ -66,6 +68,7 @@ grep -q 'PLAN openvpn revoke laptop' "${root}/revoke.out" && ok revoke-plan || b
 grep -q 'easyrsa revoke laptop' "${HM_OVPN_MOCK_LOG}" && ok revoke-call || bad revoke-call
 grep -q 'easyrsa gen-crl' "${HM_OVPN_MOCK_LOG}" && ok revoke-crl || bad revoke-crl
 grep -q 'kill laptop' "${HM_OVPN_MGMT_LOG}" && ok revoke-kill || bad revoke-kill
+grep -q 'sesja nie została rozłączona' "${root}/revoke.out" && ok revoke-nosock || bad revoke-nosock
 [[ ! -e "${HM_OVPN_SERVER}/ccd/laptop" && ! -e "${HM_OVPN_EXPORT}/laptop.ovpn" ]] && ok revoke-files || bad revoke-files
 grep -q 'secret-key-material' "${HM_OVPN_APPLOG}" && bad revoke-key-leak || ok revoke-audit
 probe="${root}/probe"
@@ -85,6 +88,20 @@ cmd_openvpn client renew laptop --days 365 --yes >"${root}/renew30.out"
 grep -q 'Stary profil' "${root}/renew30.out" && ok renew-warn || bad renew-warn
 order="$(grep -E 'revoke laptop|build-client-full laptop' "${HM_OVPN_MOCK_LOG}" | tr '\n' ' ')"
 [[ "${order}" == *"revoke laptop"*"build-client-full laptop"* ]] && ok renew-30 || bad renew-30
+ovpn="${HM_OVPN_EXPORT}/laptop.ovpn"
+if grep -q 'BEGIN CERTIFICATE' "${ovpn}" && grep -q '<tls-crypt>' "${ovpn}" && ! grep -q '<cert>CN=' "${ovpn}"; then
+  ok renew-export
+else
+  bad renew-export
+fi
+secprobe="${root}/secret-probe"
+: > "${secprobe}"
+chmod 0600 "${secprobe}" 2>/dev/null || true
+if [[ "$(stat -c %a "${secprobe}" 2>/dev/null || stat -f %OLp "${secprobe}")" == "600" ]]; then
+  [[ "$(stat -c %a "${ovpn}" 2>/dev/null || stat -f %OLp "${ovpn}")" == "600" ]] && ok renew-mode || bad renew-mode
+else
+  ok renew-mode-platform
+fi
 
 rm -f "${HM_OVPN_MOCK_LOG}"
 export HM_OVPN_EASYRSA_VERSION=3.1.2
@@ -126,6 +143,6 @@ rm -f "${HM_OVPN_MOCK_LOG}"
 export HM_OVPN_EASYRSA_VERSION=3.1.2
 cmd_openvpn server renew --yes >/dev/null
 grep -q 'easyrsa renew server' "${HM_OVPN_MOCK_LOG}" && ok server-renew || bad server-renew
-grep -q 'systemctl restart' "${HM_OVPN_RESTART_LOG}" && ok server-restart || bad server-restart
+grep -q 'systemctl restart openvpn-server@hm' "${HM_OVPN_RESTART_LOG}" && ok server-restart || bad server-restart
 
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

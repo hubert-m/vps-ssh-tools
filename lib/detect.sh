@@ -643,14 +643,22 @@ hm_detect_chrome() {
     fi
   done
 
-  for bin in \
-    /usr/bin/google-chrome-stable \
-    /usr/bin/google-chrome \
-    /usr/bin/chromium \
-    /usr/bin/chromium-browser \
-    /snap/bin/chromium \
-    /opt/google/chrome/chrome
-  do
+  local -a sysbins=()
+  if [[ -v HM_CHROME_SYSTEM_PATHS ]]; then
+    if [[ -n "${HM_CHROME_SYSTEM_PATHS}" ]]; then
+      read -r -a sysbins <<< "${HM_CHROME_SYSTEM_PATHS}"
+    fi
+  else
+    sysbins=(
+      /usr/bin/google-chrome-stable
+      /usr/bin/google-chrome
+      /usr/bin/chromium
+      /usr/bin/chromium-browser
+      /snap/bin/chromium
+      /opt/google/chrome/chrome
+    )
+  fi
+  for bin in "${sysbins[@]+"${sysbins[@]}"}"; do
     if [[ -x "${bin}" ]]; then
       CHROME="yes"
       CHROME_BIN="${bin}"

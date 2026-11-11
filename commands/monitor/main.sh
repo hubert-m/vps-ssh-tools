@@ -319,7 +319,36 @@ hm_monitor_targets() {
   fi
 }
 
+hm_monitor_status() {
+  local json=0 latest first=1 line dom code ms tls status reason
+  [[ "${1:-}" == "--json" ]] && json=1
+  latest="$(hm_monitor_dir)/latest.txt"
+  if [[ ! -s "${latest}" ]]; then
+    [[ "${json}" -eq 1 ]] && printf '[]\n'
+    return 0
+  fi
+  if [[ "${json}" -eq 0 ]]; then
+    cat "${latest}"
+    return 0
+  fi
+  printf '['
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ -n "${line}" ]] || continue
+    IFS=$'\t' read -r dom code ms tls status reason <<<"${line}"
+    [[ "${first}" -eq 1 ]] || printf ','
+    first=0
+    printf '{"domain":"%s","code":"%s","ms":"%s","tls":"%s","status":"%s","reason":"%s"}' \
+      "${dom}" "${code}" "${ms}" "${tls}" "${status}" "${reason}"
+  done < "${latest}"
+  printf ']\n'
+}
+
 hm_monitor_http() {
+  if [[ "${1:-}" == "status" ]]; then
+    shift
+    hm_monitor_status "$@"
+    return 0
+  fi
   local domain="" keyword="" expect="" timeout="" json=0 resolve=0 quiet=0 a
   local line any=0 first=1
   while [[ $# -gt 0 ]]; do

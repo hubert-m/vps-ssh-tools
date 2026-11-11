@@ -91,6 +91,8 @@ cmd_site_new() {
   local preset_app="" site_user="" site_shell="nologin" child_of="" releases=0 no_www=0 continue_nossl=0
   local tx_resume=0 tx_rollback=0 profile_from="" save_profile=""
   local ops_cron="" ops_cmd="" ops_worker="" ops_n="1" ops_health="" ops_port="" ops_on=0
+  local dotnet_ver="" dotnet_kind="aspnetcore-runtime" dotnet_source="microsoft-repo" app_dll="" dotnet_on=0
+  local python_ver="" python_source="uv" app_server="gunicorn" wsgi="config.wsgi" celery=0 python_on=0
   local -a redis_roles=()
   local a
   while [[ $# -gt 0 ]]; do
@@ -98,9 +100,47 @@ cmd_site_new() {
     shift || true
     case "${a}" in
       --runtime)
-        runtime="${1:-}"; shift || true ;;
+        runtime="${1:-}"; shift || true
+        [[ "${runtime}" == "dotnet" ]] && dotnet_on=1
+        [[ "${runtime}" == "python" ]] && python_on=1 ;;
       --runtime=*)
-        runtime="${a#*=}" ;;
+        runtime="${a#*=}"
+        [[ "${runtime}" == "dotnet" ]] && dotnet_on=1
+        [[ "${runtime}" == "python" ]] && python_on=1 ;;
+      --python)
+        python_ver="${1:-}"; python_on=1; shift || true ;;
+      --python=*)
+        python_ver="${a#*=}"; python_on=1 ;;
+      --python-source)
+        python_source="${1:-}"; python_on=1; shift || true ;;
+      --python-source=*)
+        python_source="${a#*=}"; python_on=1 ;;
+      --app-server)
+        app_server="${1:-}"; python_on=1; shift || true ;;
+      --app-server=*)
+        app_server="${a#*=}"; python_on=1 ;;
+      --wsgi)
+        wsgi="${1:-}"; python_on=1; shift || true ;;
+      --wsgi=*)
+        wsgi="${a#*=}"; python_on=1 ;;
+      --celery)
+        celery=1; python_on=1 ;;
+      --dotnet)
+        dotnet_ver="${1:-}"; dotnet_on=1; shift || true ;;
+      --dotnet=*)
+        dotnet_ver="${a#*=}"; dotnet_on=1 ;;
+      --dotnet-kind)
+        dotnet_kind="${1:-}"; dotnet_on=1; shift || true ;;
+      --dotnet-kind=*)
+        dotnet_kind="${a#*=}"; dotnet_on=1 ;;
+      --dotnet-source)
+        dotnet_source="${1:-}"; dotnet_on=1; shift || true ;;
+      --dotnet-source=*)
+        dotnet_source="${a#*=}"; dotnet_on=1 ;;
+      --app-dll)
+        app_dll="${1:-}"; dotnet_on=1; shift || true ;;
+      --app-dll=*)
+        app_dll="${a#*=}"; dotnet_on=1 ;;
       --db)
         db="${1:-}"; shift || true ;;
       --db=*)
@@ -435,6 +475,12 @@ cmd_site_new() {
       hm_err "Brak lib/site/node.sh."
       return 1
     fi
+    if [[ -z "${port}" && "${yes}" -eq 0 ]] && declare -F hm_site_web_ask_port >/dev/null 2>&1; then
+      local asked=""
+      if asked="$(hm_site_web_ask_port)"; then
+        [[ -n "${asked}" ]] && port="${asked}"
+      fi
+    fi
     if ! hm_site_node_provision "${domain}" "${node_spec}" "${node_default}" "${pkg}" "${process}" "${start}" "${port}" "${preset}" "${instances}" "${memory}"; then
       [[ -n "${HM_TX_JOURNAL:-}" ]] && hm_tx_rollback "${domain}" || true
       return 1
@@ -451,6 +497,30 @@ cmd_site_new() {
     if ! hm_site_php_provision "${domain}" "${php_ver}" "${php_preset:-minimal}" "${php_ext}" "${php_skel}" "${yes}" "${php_sapi}" "${php_composer}"; then
       [[ -n "${HM_TX_JOURNAL:-}" ]] && hm_tx_rollback "${domain}" || true
       hm_err "site new nieudany — cofnięto wdrożenie po błędzie PHP."
+      return 1
+    fi
+  fi
+  if [[ "${dotnet_on}" -eq 1 ]]; then
+    if ! declare -F hm_site_dotnet_provision >/dev/null 2>&1; then
+      hm_err "Brak lib/site/dotnet.sh."
+      return 1
+    fi
+    if ! hm_site_dotnet_provision "${domain}" "${dotnet_ver}" "${dotnet_kind}" "${dotnet_source}" "${app_dll:-App.dll}" "${port:-5000}"; then
+      [[ -n "${HM_TX_JOURNAL:-}" ]] && hm_tx_rollback "${domain}" || true
+      hm_err "site new nieudany — cofnięto wdrożenie po błędzie .NET."
+      return 1
+    fi
+  fi
+  if [[ "${python_on}" -eq 1 ]]; then
+    if ! declare -F hm_site_python_provision >/dev/null 2>&1; then
+      hm_err "Brak lib/site/python.sh."
+      return 1
+    fi
+    local py_fw="${framework}"
+    [[ "${py_fw}" == "auto" || -z "${py_fw}" ]] && py_fw="django"
+    if ! hm_site_python_provision "${domain}" "${python_ver}" "${python_source}" "${py_fw}" "${app_server}" "${wsgi}" "${celery}" "${port:-8000}"; then
+      [[ -n "${HM_TX_JOURNAL:-}" ]] && hm_tx_rollback "${domain}" || true
+      hm_err "site new nieudany — cofnięto wdrożenie po błędzie Pythona."
       return 1
     fi
   fi

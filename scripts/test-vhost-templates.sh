@@ -87,6 +87,11 @@ if hm_site_web_reserve_port c.example.pl 3002 >/dev/null 2>&1; then
 else
   ok "port-dup"
 fi
+export HM_SITE_PORT_ANSWER=3004
+asked="$(hm_site_web_reserve_port d.example.pl 3002)"
+[[ "${asked}" == "3004" ]] && ok "port-ask" || { bad "port-ask"; echo "asked=${asked}" >&2; }
+unset HM_SITE_PORT_ANSWER
+grep -q 'X-Real-IP' "${root}/ols-proxy.conf" && grep -q '127.0.0.1:3007' "${root}/ols-proxy.conf" && ok "ols-node-headers" || bad "ols-node-headers"
 
 dest="${HM_SITE_WEB_CONF_DIR}/old.example.pl.conf"
 printf 'OLD\n' > "${dest}"

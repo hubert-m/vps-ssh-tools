@@ -26,18 +26,26 @@ trap 'rm -rf "${root}"' EXIT
 export HM_OVPN_ROOT="${root}/ovpn"
 export HM_OVPN_PKI="${HM_OVPN_ROOT}/pki"
 export HM_OVPN_SERVER="${HM_OVPN_ROOT}/server"
+export HM_OVPN_ETC="${HM_OVPN_SERVER}"
 export HM_OVPN_EXPORT="${root}/clients"
 export HM_OVPN_APPLOG="${root}/applog"
 export HM_OVPN_TMP="${root}/tmp"
 export HM_OVPN_MOCK_LOG="${root}/easyrsa.log"
 export HM_OVPN_STATUS="${root}/status.txt"
-export HM_OVPN_REMOTE="vpn.example"
 export HM_OVPN_PORT="1194"
 export HM_OVPN_PROTO="udp"
 export HM_OVPN_SERVER_CN="server"
 export PATH="${root}/bin:${PATH}"
-mkdir -p "${root}/bin" "${HM_OVPN_PKI}" "${HM_OVPN_TMP}"
+mkdir -p "${root}/bin" "${HM_OVPN_PKI}" "${HM_OVPN_ETC}" "${HM_OVPN_TMP}"
 unset HM_OVPN_MOCK || true
+unset HM_OVPN_REMOTE || true
+cat > "${HM_OVPN_ETC}/hmtools.state" <<'EOF'
+PORT=1194
+PROTO=udp
+SUBNET=10.8.0.0/24
+ENDPOINT=vpn.test
+PKI=pki
+EOF
 
 cat > "${HM_OVPN_PKI}/ca.crt" <<'EOF'
 -----BEGIN CERTIFICATE-----
@@ -57,7 +65,7 @@ cat > "${root}/key.pem" <<'EOF'
 S0VZ
 -----END PRIVATE KEY-----
 EOF
-cat > "${HM_OVPN_PKI}/ta.key" <<'EOF'
+cat > "${HM_OVPN_ETC}/tls-crypt.key" <<'EOF'
 -----BEGIN OpenVPN Static key V1-----
 5441
 -----END OpenVPN Static key V1-----
@@ -107,6 +115,20 @@ saved="$(umask)"
 cmd_openvpn client add laptop --days 365 --static-ip 10.8.0.50 --yes >"${root}/add.out"
 [[ "$(umask)" == "${saved}" ]] && ok umask || bad umask
 diff -u "${HMTOOLS_ROOT}/scripts/fixtures/openvpn/laptop.ovpn" "${HM_OVPN_EXPORT}/laptop.ovpn" && ok golden || bad golden
+grep -q '<tls-crypt>' "${HM_OVPN_EXPORT}/laptop.ovpn" && grep -q '5441' "${HM_OVPN_EXPORT}/laptop.ovpn" && ok tls-body || bad tls-body
+grep -q 'remote vpn.test 1194' "${HM_OVPN_EXPORT}/laptop.ovpn" && ok endpoint-state || bad endpoint-state
+HM_OVPN_REMOTE=override.example cmd_openvpn client export laptop --out "${root}/over.ovpn" >/dev/null
+grep -q 'remote override.example 1194' "${root}/over.ovpn" && ok endpoint-override || bad endpoint-override
+unset HM_OVPN_REMOTE
+rc=0
+HM_OVPN_REMOTE=vpn.example cmd_openvpn client export laptop --out "${root}/bad.ovpn" >/dev/null 2>"${root}/bad.err" || rc=$?
+[[ "${rc}" -ne 0 ]] && grep -q 'vpn.example' "${root}/bad.err" && [[ ! -s "${root}/bad.ovpn" ]] && ok endpoint-placeholder || bad endpoint-placeholder
+unset HM_OVPN_REMOTE
+mv "${HM_OVPN_ETC}/tls-crypt.key" "${HM_OVPN_ETC}/tls-crypt.key.bak"
+rc=0
+cmd_openvpn client export laptop --out "${root}/notls.ovpn" >/dev/null 2>"${root}/notls.err" || rc=$?
+[[ "${rc}" -ne 0 ]] && grep -q 'tls-crypt' "${root}/notls.err" && ok tls-missing || bad tls-missing
+mv "${HM_OVPN_ETC}/tls-crypt.key.bak" "${HM_OVPN_ETC}/tls-crypt.key"
 grep -q 'BEGIN PRIVATE KEY' "${root}/add.out" "${HM_OVPN_APPLOG}" && bad add-leak || ok add-secret
 grep -q 'BEGIN OpenVPN Static key' "${root}/add.out" "${HM_OVPN_APPLOG}" && bad add-tls-leak || ok add-tls
 grep -q 'plik:' "${root}/add.out" && grep -q 'sha256:' "${root}/add.out" && grep -q 'scp root@' "${root}/add.out" && ok add-meta || bad add-meta
@@ -150,7 +172,9 @@ show="$(cmd_openvpn client show laptop)"
 printf '%s\n' "${show}" | grep -q 'serial=01' && printf '%s\n' "${show}" | grep -q 'sesja: połączony' && ok show || bad show
 printf '%s\n' "${show}" | grep -q 'BEGIN PRIVATE KEY' && bad show-key || ok show-key
 
-cmd_openvpn client export laptop --print >"${root}/print.out" 2>"${root}/print.err"
+rc=0
+cmd_openvpn client export laptop --print >"${root}/print.out" 2>"${root}/print.err" || rc=$?
+[[ "${rc}" -ne 0 ]] && ok print-rc || bad print-rc
 grep -q 'BEGIN PRIVATE KEY' "${root}/print.out" "${root}/print.err" "${HM_OVPN_APPLOG}" && bad print-leak || ok print-secret
 grep -q 'Brak TTY' "${root}/print.out" "${root}/print.err" && ok print-tty || bad print-tty
 

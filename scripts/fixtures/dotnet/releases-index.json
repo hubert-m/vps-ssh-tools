@@ -1,0 +1,28 @@
+{
+  "releases-index": [
+    {
+      "channel-version": "8.0",
+      "latest-runtime": "8.0.11",
+      "latest-sdk": "8.0.404",
+      "release-type": "lts",
+      "support-phase": "active",
+      "eol-date": "2026-11-10"
+    },
+    {
+      "channel-version": "9.0",
+      "latest-runtime": "9.0.1",
+      "latest-sdk": "9.0.102",
+      "release-type": "sts",
+      "support-phase": "active",
+      "eol-date": "2026-05-12"
+    },
+    {
+      "channel-version": "6.0",
+      "latest-runtime": "6.0.36",
+      "latest-sdk": "6.0.428",
+      "release-type": "lts",
+      "support-phase": "eol",
+      "eol-date": "2024-11-12"
+    }
+  ]
+}

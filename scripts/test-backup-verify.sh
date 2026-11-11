@@ -77,6 +77,7 @@ done
 mkdir -p "${dest}"
 cp -a "${HM_BACKUP_VERIFY_FIXTURE}/." "${dest}/"
 EOF
+chmod +x "${HM_BACKUP_VERIFY_MYSQL}" "${HM_BACKUP_VERIFY_RCLONE_BIN}" "${HM_BACKUP_VERIFY_RESTIC_BIN}"
 
 mk_good() {
   local d="$1" sum

@@ -38,6 +38,8 @@ hm_ovpn_export_dir() { printf '%s' "${HM_OVPN_EXPORT:-/root/hmtools-openvpn/clie
 hm_ovpn_cron_file() { printf '%s' "${HM_OVPN_CRON:-/etc/cron.d/hmtools-openvpn}"; }
 hm_ovpn_applog() { printf '%s' "${HM_OVPN_APPLOG:-/var/log/hmtools/openvpn.log}"; }
 hm_ovpn_dedup_file() { printf '%s' "${HM_OVPN_DEDUP:-$(hm_ovpn_root)/dedup}"; }
+hm_ovpn_instance() { printf '%s' "${HM_OVPN_INSTANCE:-hm}"; }
+hm_ovpn_mgmt_sock() { printf '%s' "${HM_OVPN_MGMT:-/run/openvpn-server/hm.sock}"; }
 
 hm_ovpn_name_ok() {
   [[ "${1:-}" =~ ^[A-Za-z0-9_.-]+$ ]]
@@ -89,8 +91,36 @@ hm_ovpn_days_left() {
   printf '%s' $(( (epoch - now) / 86400 ))
 }
 
+hm_ovpn_easyrsa_bin() {
+  local c
+  if [[ -n "${HM_OVPN_EASYRSA:-}" && "${HM_OVPN_EASYRSA}" != "easyrsa" ]]; then
+    printf '%s' "${HM_OVPN_EASYRSA}"
+    return 0
+  fi
+  c="$(command -v easyrsa 2>/dev/null || true)"
+  if [[ -n "${c}" ]]; then
+    printf '%s' "${c}"
+    return 0
+  fi
+  if [[ -x /usr/share/easy-rsa/easyrsa ]]; then
+    printf '%s' /usr/share/easy-rsa/easyrsa
+    return 0
+  fi
+  if [[ -x /usr/share/easy-rsa/3/easyrsa ]]; then
+    printf '%s' /usr/share/easy-rsa/3/easyrsa
+    return 0
+  fi
+  printf '%s' easyrsa
+}
+
 hm_ovpn_easyrsa() {
-  local bin="${HM_OVPN_EASYRSA:-easyrsa}"
+  local bin pki
+  bin="$(hm_ovpn_easyrsa_bin)"
+  export EASYRSA_BATCH=1
+  if [[ -z "${EASYRSA_PKI:-}" ]]; then
+    pki="$(hm_ovpn_pki 2>/dev/null || true)"
+    [[ -n "${pki}" ]] && export EASYRSA_PKI="${pki}"
+  fi
   [[ -n "${HM_OVPN_CALL_LOG:-}" ]] && printf 'easyrsa %s\n' "$*" >> "${HM_OVPN_CALL_LOG}"
   if [[ "${HM_OVPN_MOCK:-}" == "1" ]]; then
     printf 'easyrsa %s\n' "$*" >> "${HM_OVPN_MOCK_LOG:?}"
@@ -120,11 +150,14 @@ hm_ovpn_copy_crl() {
 }
 
 hm_ovpn_mgmt_kill() {
-  local cn="$1" sock="${HM_OVPN_MGMT:-}"
+  local cn="$1" sock
+  sock="$(hm_ovpn_mgmt_sock)"
   [[ -n "${HM_OVPN_MGMT_LOG:-}" ]] && printf 'kill %s\n' "${cn}" >> "${HM_OVPN_MGMT_LOG}"
-  if [[ -n "${sock}" && -S "${sock}" ]] && hm_have_cmd nc; then
-    printf 'kill %s\n' "${cn}" | nc -U "${sock}" || true
+  if [[ -S "${sock}" ]] && hm_have_cmd nc; then
+    printf 'kill %s\n' "${cn}" | nc -U "${sock}" || hm_warn "sesja nie została rozłączona"
+    return 0
   fi
+  hm_warn "sesja nie została rozłączona"
 }
 
 hm_ovpn_client_revoke() {
@@ -183,8 +216,10 @@ hm_ovpn_client_renew() {
       hm_ovpn_easyrsa renew "${name}" || return 1
       ;;
   esac
-  mkdir -p "$(hm_ovpn_export_dir)"
-  printf 'client\nremote vpn.example 1194\n<cert>\nCN=%s\n</cert>\n' "${name}" > "$(hm_ovpn_export_dir)/${name}.ovpn"
+  if [[ "${HM_OVPN_MOCK:-}" == "1" ]]; then
+    hm_ovpn_mock_pems "${name}"
+  fi
+  hm_ovpn_export_one "${name}" "$(hm_ovpn_export_dir)/${name}.ovpn" >/dev/null
   hm_ovpn_audit "renew ${name} days=${days}"
   hm_warn "Stary profil ${name}.ovpn przestanie działać. Rozdaj nowy plik."
 }
@@ -347,10 +382,12 @@ hm_ovpn_server_renew() {
     3.0*) hm_ovpn_easyrsa build-server-full server nopass || return 1 ;;
     *) hm_ovpn_easyrsa renew server || return 1 ;;
   esac
+  local unit
+  unit="openvpn-server@$(hm_ovpn_instance)"
   if [[ -n "${HM_OVPN_RESTART_LOG:-}" ]]; then
-    printf 'systemctl restart openvpn-server@server\n' >> "${HM_OVPN_RESTART_LOG}"
+    printf 'systemctl restart %s\n' "${unit}" >> "${HM_OVPN_RESTART_LOG}"
   else
-    systemctl restart openvpn-server@server || hm_warn "Nie zrestartowano OpenVPN."
+    systemctl restart "${unit}" || hm_warn "Nie zrestartowano OpenVPN."
   fi
   hm_ovpn_audit "server renew"
   hm_ok "Certyfikat serwera odnowiony. Profile klientów bez zmian."
@@ -387,6 +424,61 @@ hm_ovpn_read_passfile() {
   printf '%s' "${file}"
 }
 
+hm_ovpn_mock_pems() {
+  local name="$1" pki
+  pki="$(hm_ovpn_pki)"
+  mkdir -p "${pki}/issued" "${pki}/private"
+  if [[ ! -f "${pki}/ca.crt" ]]; then
+    printf '%s\n' '-----BEGIN CERTIFICATE-----' 'CA' '-----END CERTIFICATE-----' > "${pki}/ca.crt"
+  fi
+  if [[ ! -f "${pki}/issued/${name}.crt" ]]; then
+    printf '%s\n' '-----BEGIN CERTIFICATE-----' "CN=${name}" '-----END CERTIFICATE-----' > "${pki}/issued/${name}.crt"
+  fi
+  if [[ ! -f "${pki}/private/${name}.key" ]]; then
+    printf '%s\n' '-----BEGIN PRIVATE KEY-----' 'key' '-----END PRIVATE KEY-----' > "${pki}/private/${name}.key"
+  fi
+  local tls
+  tls="$(hm_ovpn_tls_key_path)"
+  if [[ ! -f "${tls}" ]]; then
+    mkdir -p "$(dirname "${tls}")"
+    printf '%s\n' '-----BEGIN OpenVPN Static key V1-----' 'ta' '-----END OpenVPN Static key V1-----' > "${tls}"
+  fi
+}
+
+hm_ovpn_tls_key_path() {
+  if [[ -n "${HM_OVPN_TLS_KEY:-}" ]]; then
+    printf '%s' "${HM_OVPN_TLS_KEY}"
+    return 0
+  fi
+  printf '%s/tls-crypt.key' "$(hm_ovpn_etc)"
+}
+
+hm_ovpn_state_value() {
+  local key="$1" file line
+  file="$(hm_ovpn_state_file 2>/dev/null || true)"
+  [[ -n "${file}" && -f "${file}" ]] || return 1
+  line="$(grep -E "^${key}=" "${file}" 2>/dev/null | head -n 1 || true)"
+  [[ -n "${line}" ]] || return 1
+  printf '%s' "${line#*=}"
+}
+
+hm_ovpn_client_endpoint() {
+  local remote port proto
+  remote="${HM_OVPN_REMOTE:-}"
+  port="${HM_OVPN_PORT:-}"
+  proto="${HM_OVPN_PROTO:-}"
+  [[ -n "${remote}" ]] || remote="$(hm_ovpn_state_value ENDPOINT || true)"
+  [[ -n "${port}" ]] || port="$(hm_ovpn_state_value PORT || true)"
+  [[ -n "${proto}" ]] || proto="$(hm_ovpn_state_value PROTO || true)"
+  [[ -n "${port}" ]] || port="1194"
+  [[ -n "${proto}" ]] || proto="udp"
+  if [[ -z "${remote}" || "${remote}" == "vpn.example" ]]; then
+    hm_err "Brak endpointu serwera (pusty albo vpn.example). Podaj go przy openvpn install."
+    return 1
+  fi
+  printf '%s %s %s\n' "${remote}" "${port}" "${proto}"
+}
+
 hm_ovpn_pem_body() {
   local file="$1" line on=0
   while IFS= read -r line || [[ -n "${line}" ]]; do
@@ -397,15 +489,24 @@ hm_ovpn_pem_body() {
 }
 
 hm_ovpn_profile_body() {
-  local name="$1" remote port proto cn ca cert key ta
-  remote="${HM_OVPN_REMOTE:-vpn.example}"
-  port="${HM_OVPN_PORT:-1194}"
-  proto="${HM_OVPN_PROTO:-udp}"
+  local name="$1" remote port proto cn ca cert key ta tls ep
+  ep="$(hm_ovpn_client_endpoint)" || return 1
+  # shellcheck disable=SC2086
+  read -r remote port proto <<< "${ep}"
   cn="${HM_OVPN_SERVER_CN:-server}"
+  tls="$(hm_ovpn_tls_key_path)"
+  if [[ ! -s "${tls}" ]]; then
+    hm_err "Brak klucza tls-crypt: ${tls}"
+    return 1
+  fi
   ca="$(hm_ovpn_pem_body "$(hm_ovpn_pki)/ca.crt")"
   cert="$(hm_ovpn_pem_body "$(hm_ovpn_pki)/issued/${name}.crt")"
   key="$(hm_ovpn_pem_body "$(hm_ovpn_pki)/private/${name}.key")"
-  ta="$(hm_ovpn_pem_body "$(hm_ovpn_pki)/ta.key")"
+  ta="$(hm_ovpn_pem_body "${tls}")"
+  if [[ -z "${ta}" ]]; then
+    hm_err "Pusty klucz tls-crypt."
+    return 1
+  fi
   cat <<EOF
 client
 dev tun
@@ -458,7 +559,8 @@ hm_ovpn_export_one() {
   [[ -f "$(hm_ovpn_pki)/issued/${name}.crt" ]] || { hm_err "Brak certyfikatu ${name}."; return 1; }
   [[ -n "${dest}" ]] || dest="$(hm_ovpn_export_dir)/${name}.ovpn"
   local body
-  body="$(hm_ovpn_profile_body "${name}")"
+  body="$(hm_ovpn_profile_body "${name}")" || return 1
+  [[ -n "${body}" ]] || return 1
   hm_ovpn_write_secret_file "${dest}" "${body}"
   hm_ovpn_audit "export ${name}"
   if [[ "${HM_OVPN_EXPORT_PRINT:-}" == "1" ]]; then

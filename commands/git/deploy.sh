@@ -108,6 +108,15 @@ hm_deploy_build_line_ok() {
         ;;
       php\ artisan*|php)
         ;;
+      pip\ install\ -r\ *|uv\ sync)
+        ;;
+      python\ manage.py\ migrate*|python\ manage.py\ collectstatic\ --noinput)
+        ;;
+      dotnet\ publish\ -c\ Release*|dotnet\ restore)
+        if declare -F hm_dotnet_publish_allowed >/dev/null 2>&1 && ! hm_dotnet_publish_allowed; then
+          return 1
+        fi
+        ;;
       npx\ *)
         ;;
       *)
@@ -206,7 +215,16 @@ cmd_deploy() {
   case "${sub}" in
     rollback|rb|undo)
       shift || true
+      if [[ -L "$(hm_deploy_home)/current" ]] && { [[ -z "${1:-}" ]] || [[ -d "$(hm_deploy_home)/releases/${1:-}" ]]; }; then
+        hm_deploy_release_rollback "$@"
+        return $?
+      fi
       hm_deploy_rollback "$@"
+      return $?
+      ;;
+    release)
+      shift || true
+      hm_deploy_release_apply "$@"
       return $?
       ;;
     config|cfg)
@@ -500,6 +518,9 @@ hm_deploy_rollback() {
   hm_deploy_log_append "ROLLBACK ok sha=${now} from=${cur}"
   hm_ok "Rollback OK → ${now:0:8}"
 }
+
+# shellcheck source=releases.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/releases.sh"
 
 _hm_cmd_register deploy cmd_deploy 0
 _hm_cmd_register_site deploy cmd_deploy

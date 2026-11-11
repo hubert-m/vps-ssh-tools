@@ -49,7 +49,10 @@ topology subnet
 server ${pair}
 ${ciphers}
 tls-version-min 1.2
-tls-crypt ${etc}/tls-crypt.key
+ca ${etc}/hm/pki/ca.crt
+cert ${etc}/hm/pki/issued/server.crt
+key ${etc}/hm/pki/private/server.key
+tls-crypt $(hm_ovpn_tls_key_path)
 auth SHA256
 dh none
 remote-cert-tls client
@@ -62,7 +65,7 @@ keepalive 10 120
 client-config-dir ${etc}/ccd
 status /run/openvpn-server/status-hm.log 30
 status-version 3
-management /run/openvpn-server/hm-mgmt.sock unix
+management /run/openvpn-server/hm.sock unix
 verb 3
 EOF
   if [[ "${proto}" == "udp" ]]; then
@@ -78,15 +81,76 @@ EOF
 }
 
 hm_ovpn_port_busy() {
-  local port="$1" file="${HM_OVPN_SS_FILE:-}"
-  [[ -n "${file}" && -f "${file}" ]] || return 1
-  grep -q ":${port} " "${file}"
+  local port="$1" file="${HM_OVPN_SS_FILE:-}" line
+  if [[ -n "${file}" ]]; then
+    [[ -f "${file}" ]] || return 1
+    grep -q ":${port} " "${file}"
+    return
+  fi
+  [[ "${HMTOOLS_TEST:-}" == "1" ]] && return 1
+  command -v ss >/dev/null 2>&1 || return 1
+  line="$(ss -Hlun "sport = :${port}" 2>/dev/null || true)"
+  [[ -n "${line}" ]]
 }
 
 hm_ovpn_subnet_used() {
   local cidr="${1%%/*}" file="${HM_OVPN_ROUTES:-}"
-  [[ -n "${file}" && -f "${file}" ]] || return 1
-  grep -q "${cidr}" "${file}"
+  if [[ -n "${file}" ]]; then
+    [[ -f "${file}" ]] || return 1
+    grep -q "${cidr}" "${file}"
+    return
+  fi
+  [[ "${HMTOOLS_TEST:-}" == "1" ]] && return 1
+  command -v ip >/dev/null 2>&1 || return 1
+  ip -o route show 2>/dev/null | grep -q "${cidr}"
+}
+
+hm_ovpn_os_ok() {
+  local id
+  if [[ -n "${HM_OVPN_OS_OK:-}" ]]; then
+    [[ "${HM_OVPN_OS_OK}" == "1" ]]
+    return
+  fi
+  case "${OS_FAMILY:-}" in
+    debian|rhel|redhat) return 0 ;;
+  esac
+  [[ -r /etc/os-release ]] || return 1
+  id="$(. /etc/os-release && printf '%s' "${ID:-}")"
+  case "${id}" in
+    ubuntu|debian|linuxmint|raspbian|almalinux|rocky|rhel|centos|fedora) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+hm_ovpn_default_iface() {
+  local dev
+  if [[ -n "${HM_OVPN_IFACE:-}" ]]; then
+    printf '%s' "${HM_OVPN_IFACE}"
+    return 0
+  fi
+  if [[ "${HMTOOLS_TEST:-}" != "1" ]] && command -v ip >/dev/null 2>&1; then
+    dev="$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')"
+    if [[ -n "${dev}" ]]; then
+      printf '%s' "${dev}"
+      return 0
+    fi
+  fi
+  printf '%s' eth0
+}
+
+hm_ovpn_validate_install() {
+  local port="$1" proto="$2" dns="$3" ip re
+  [[ "${port}" =~ ^[0-9]+$ ]] || { hm_err "Zły port."; return 1; }
+  [[ "${port}" -ge 1 && "${port}" -le 65535 ]] || { hm_err "Zły port."; return 1; }
+  case "${proto}" in
+    udp|tcp) ;;
+    *) hm_err "Zły proto. Dozwolone: udp albo tcp."; return 1 ;;
+  esac
+  if [[ "${dns}" == custom:* ]]; then
+    ip="${dns#custom:}"
+    re='^([0-9]{1,3}\.){3}[0-9]{1,3}(,([0-9]{1,3}\.){3}[0-9]{1,3})*$'
+    [[ "${ip}" =~ ${re} ]] || { hm_err "Zły adres DNS."; return 1; }
+  fi
 }
 
 hm_ovpn_foreign_conf() {
@@ -123,9 +187,85 @@ hm_ovpn_dns_ips() {
   esac
 }
 
+hm_ovpn_nat_unit_path() {
+  if [[ -n "${HM_OVPN_NAT_UNIT:-}" ]]; then
+    printf '%s' "${HM_OVPN_NAT_UNIT}"
+    return 0
+  fi
+  if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+    printf '%s/hmtools-openvpn-nat.service' "$(hm_ovpn_etc)"
+    return 0
+  fi
+  printf '%s' /etc/systemd/system/hmtools-openvpn-nat.service
+}
+
+hm_ovpn_systemctl() {
+  [[ -n "${HM_OVPN_CALL_LOG:-}" ]] && printf 'systemctl %s\n' "$*" >> "${HM_OVPN_CALL_LOG}"
+  if [[ "${HM_OVPN_SYSTEMCTL_FAIL:-}" == "1" ]]; then
+    return 1
+  fi
+  if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+    return 0
+  fi
+  systemctl "$@"
+}
+
+hm_ovpn_fw_exec() {
+  local log="${HM_OVPN_CALL_LOG:-}"
+  [[ -n "${log}" ]] && printf '%s\n' "$*" >> "${log}"
+  if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+    return 0
+  fi
+  "$@"
+}
+
+hm_ovpn_gen_tls_key() {
+  local dest="$1" bin
+  if [[ -s "${dest}" ]]; then
+    return 0
+  fi
+  mkdir -p "$(dirname "${dest}")"
+  [[ -n "${HM_OVPN_CALL_LOG:-}" ]] && printf 'openvpn --genkey secret %s\n' "${dest}" >> "${HM_OVPN_CALL_LOG}"
+  if [[ "${HMTOOLS_TEST:-}" == "1" && "${HM_OVPN_GENKEY_LIVE:-}" != "1" ]]; then
+    printf '%s\n' '-----BEGIN OpenVPN Static key V1-----' 'mock-tls' '-----END OpenVPN Static key V1-----' > "${dest}"
+  else
+    bin="$(command -v openvpn 2>/dev/null || true)"
+    [[ -n "${bin}" ]] || { hm_err "Brak openvpn do wygenerowania klucza tls-crypt."; return 1; }
+    if ! "${bin}" --genkey secret "${dest}" >/dev/null 2>&1; then
+      "${bin}" --genkey --secret "${dest}" >/dev/null 2>&1 || { hm_err "Nie udało się wygenerować klucza tls-crypt."; return 1; }
+    fi
+  fi
+  chmod 0600 "${dest}" || true
+}
+
+hm_ovpn_strip_markers() {
+  local file="$1"
+  [[ -f "${file}" ]] || return 0
+  awk '
+    /BEGIN hmtools-openvpn/ {skip=1; next}
+    /END hmtools-openvpn/ {skip=0; next}
+    skip==0 {print}
+  ' "${file}" > "${file}.tmp" && mv "${file}.tmp" "${file}"
+}
+
+hm_ovpn_rollback() {
+  local etc pki
+  hm_warn "Wycofuję niedokończoną instalację OpenVPN."
+  etc="$(hm_ovpn_etc)"
+  pki="${etc}/hm/pki"
+  hm_ovpn_systemctl disable --now "openvpn-server@$(hm_ovpn_instance)" >/dev/null 2>&1 || true
+  rm -f "$(hm_ovpn_conf_file)" "$(hm_ovpn_state_file)" "${etc}/crl.pem"
+  case "${pki}" in
+    "${etc}/"*) rm -rf "${pki}" ;;
+  esac
+  hm_ovpn_strip_markers "${HM_OVPN_UFW_RULES:-/etc/ufw/before.rules}"
+  hm_ovpn_strip_markers "${HM_OVPN_CSF_POST:-/etc/csf/csfpost.sh}"
+  rm -f "$(hm_ovpn_nat_unit_path)"
+}
+
 hm_ovpn_nat_apply() {
   local fw="${HM_OVPN_FW:-iptables}" cidr="$1" iface="${2:-eth0}" port="$3" proto="$4"
-  local rules log
+  local rules log unit script
   log="${HM_OVPN_CALL_LOG:-}"
   case "${fw}" in
     ufw)
@@ -134,14 +274,21 @@ hm_ovpn_nat_apply() {
       if [[ ! -f "${rules}" ]] || ! grep -q 'BEGIN hmtools-openvpn' "${rules}"; then
         cat >> "${rules}" <<EOF
 # BEGIN hmtools-openvpn
-# NAT ${cidr} via ${iface} port ${port}/${proto}
+*nat
+:POSTROUTING ACCEPT [0:0]
+-A POSTROUTING -s ${cidr} -o ${iface} -j MASQUERADE
+COMMIT
 # END hmtools-openvpn
 EOF
       fi
-      [[ -n "${log}" ]] && printf 'ufw route allow in on tun0 out on %s\n' "${iface}" >> "${log}"
+      hm_ovpn_fw_exec ufw route allow in on tun0 out on "${iface}" || true
+      hm_ovpn_fw_exec ufw allow "${port}/${proto}" || true
       ;;
     firewalld)
-      [[ -n "${log}" ]] && printf 'firewall-cmd --permanent --add-masquerade\nfirewall-cmd --permanent --add-port=%s/%s\n' "${port}" "${proto}" >> "${log}"
+      hm_ovpn_fw_exec firewall-cmd --permanent --add-masquerade || true
+      hm_ovpn_fw_exec firewall-cmd --permanent --add-port="${port}/${proto}" || true
+      hm_ovpn_fw_exec firewall-cmd --permanent --zone=trusted --add-interface=tun0 || true
+      hm_ovpn_fw_exec firewall-cmd --reload || true
       ;;
     csf)
       rules="${HM_OVPN_CSF_POST:-/etc/csf/csfpost.sh}"
@@ -149,22 +296,35 @@ EOF
       if [[ ! -f "${rules}" ]] || ! grep -q 'BEGIN hmtools-openvpn' "${rules}"; then
         cat >> "${rules}" <<EOF
 # BEGIN hmtools-openvpn
-# MASQUERADE ${cidr} ${iface}
+iptables -t nat -C POSTROUTING -s ${cidr} -o ${iface} -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s ${cidr} -o ${iface} -j MASQUERADE
 # END hmtools-openvpn
 EOF
       fi
       ;;
     *)
-      rules="${HM_OVPN_NAT_UNIT:-/etc/systemd/system/hmtools-openvpn-nat.service}"
-      mkdir -p "$(dirname "${rules}")"
-      if [[ ! -f "${rules}" ]]; then
-        cat > "${rules}" <<EOF
+      unit="$(hm_ovpn_nat_unit_path)"
+      script="${unit}.sh"
+      mkdir -p "$(dirname "${unit}")"
+      cat > "${script}" <<EOF
+#!/bin/sh
+iptables -t nat -C POSTROUTING -s ${cidr} -o ${iface} -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s ${cidr} -o ${iface} -j MASQUERADE
+EOF
+      chmod 0755 "${script}" || true
+      cat > "${unit}" <<EOF
+[Unit]
+Description=hmtools OpenVPN NAT
+After=network-online.target
+
 [Service]
 Type=oneshot
-ExecStart=/sbin/iptables -t nat -C POSTROUTING -s ${cidr} -o ${iface} -j MASQUERADE || /sbin/iptables -t nat -A POSTROUTING -s ${cidr} -o ${iface} -j MASQUERADE
+RemainAfterExit=yes
+ExecStart=/bin/sh ${script}
+
+[Install]
+WantedBy=multi-user.target
 EOF
-      fi
-      [[ -n "${log}" ]] && printf 'iptables -C || -A MASQUERADE %s\n' "${cidr}" >> "${log}"
+      hm_ovpn_systemctl enable hmtools-openvpn-nat.service || true
+      [[ -n "${log}" ]] && printf 'iptables MASQUERADE %s via %s\n' "${cidr}" "${iface}" >> "${log}"
       ;;
   esac
 }
@@ -207,7 +367,8 @@ hm_ovpn_install() {
     esac
   done
   [[ -n "${endpoint}" ]] || endpoint="${HM_OVPN_ENDPOINT:-vpn.example}"
-  if [[ "${HM_OVPN_OS_OK:-1}" != "1" ]]; then
+  hm_ovpn_validate_install "${port}" "${proto}" "${dns}" || return 1
+  if ! hm_ovpn_os_ok; then
     hm_err "Nieobsługiwany system. OpenVPN nie został zainstalowany."
     return 1
   fi
@@ -250,26 +411,32 @@ hm_ovpn_install() {
     [[ -n "${pkg}" ]] || continue
     hm_pkg_install "${pkg}" || return 1
   done < <(hm_ovpn_packages)
-  local etc pki group ver dns_ips
+  local etc pki group ver dns_ips iface
   etc="$(hm_ovpn_etc)"
-  pki="${etc}/easy-rsa/pki"
+  pki="${etc}/hm/pki"
   group="$(hm_ovpn_group_name)"
   ver="${HM_OVPN_VERSION:-2.6.0}"
   dns_ips="$(hm_ovpn_dns_ips "${dns}")"
-  mkdir -p "${pki}" "${etc}/ccd"
+  iface="$(hm_ovpn_default_iface)"
+  mkdir -p "${pki}/issued" "${pki}/private" "${etc}/ccd"
+  export EASYRSA_PKI="${pki}" EASYRSA_BATCH=1
   export EASYRSA_ALGO="ec" EASYRSA_CURVE="secp384r1"
   [[ "${rsa}" -eq 1 ]] && export EASYRSA_ALGO="rsa" EASYRSA_KEY_SIZE="3072"
-  hm_ovpn_easyrsa init-pki || return 1
-  hm_ovpn_easyrsa build-ca nopass || return 1
-  hm_ovpn_easyrsa build-server-full server nopass || return 1
-  hm_ovpn_easyrsa gen-crl || return 1
+  if ! hm_ovpn_easyrsa init-pki \
+    || ! hm_ovpn_easyrsa build-ca nopass \
+    || ! hm_ovpn_easyrsa build-server-full server nopass \
+    || ! hm_ovpn_easyrsa gen-crl; then
+    hm_ovpn_rollback
+    return 1
+  fi
   if [[ ! -f "${pki}/crl.pem" ]]; then
     printf 'CRL\n' > "${pki}/crl.pem"
   fi
   cp -f "${pki}/crl.pem" "${etc}/crl.pem"
   chmod 0644 "${etc}/crl.pem" || true
-  if [[ ! -f "${etc}/tls-crypt.key" ]]; then
-    printf '%s\n' '-----BEGIN OpenVPN Static key V1-----' 'HM' '-----END OpenVPN Static key V1-----' > "${etc}/tls-crypt.key"
+  if ! hm_ovpn_gen_tls_key "$(hm_ovpn_tls_key_path)"; then
+    hm_ovpn_rollback
+    return 1
   fi
   hm_ovpn_render_conf "${etc}" "${port}" "${proto}" "${cidr}" "${group}" "${ver}" "${dns_ips}" > "$(hm_ovpn_conf_file)"
   if [[ "${ipv6}" -eq 1 ]]; then
@@ -279,13 +446,17 @@ hm_ovpn_install() {
   mkdir -p "$(dirname "${sysctl}")"
   printf 'net.ipv4.ip_forward=1\n' > "${sysctl}"
   [[ "${ipv6}" -eq 1 ]] && printf 'net.ipv6.conf.all.forwarding=1\n' >> "${sysctl}"
-  hm_ovpn_nat_apply "${cidr}" "${HM_OVPN_IFACE:-eth0}" "${port}" "${proto}"
-  hm_ovpn_write_state "${port}" "${proto}" "${cidr}" "${endpoint}" "${pki}"
-  if [[ -n "${HM_OVPN_CALL_LOG:-}" ]]; then
-    printf 'systemctl enable --now openvpn-server@hm\n' >> "${HM_OVPN_CALL_LOG}"
+  hm_ovpn_nat_apply "${cidr}" "${iface}" "${port}" "${proto}"
+  if ! hm_ovpn_systemctl enable --now "openvpn-server@$(hm_ovpn_instance)"; then
+    hm_ovpn_rollback
+    return 1
   fi
+  hm_ovpn_write_state "${port}" "${proto}" "${cidr}" "${endpoint}" "${pki}"
   if [[ -n "${first}" ]]; then
-    HM_OVPN_PKI="${pki}" hm_ovpn_client_add "${first}" --yes --no-export || return 1
+    if ! HM_OVPN_PKI="${pki}" hm_ovpn_client_add "${first}" --yes --no-export; then
+      hm_err "Serwer jest zainstalowany, ale pierwszy klient nie powstał."
+      return 1
+    fi
   fi
   hm_ok "OpenVPN zainstalowany (${endpoint}:${port}/${proto})."
 }

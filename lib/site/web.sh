@@ -78,6 +78,36 @@ hm_site_web_port_write() {
   mv -f "${tmp}" "${file}"
 }
 
+hm_site_web_port_read_again() {
+  local want="$1" ans=""
+  if [[ -n "${HM_SITE_PORT_ANSWER:-}" ]]; then
+    ans="${HM_SITE_PORT_ANSWER}"
+    HM_SITE_PORT_ANSWER=""
+    printf '%s' "${ans}"
+    return 0
+  fi
+  [[ "${HMTOOLS_TEST_NO_TTY:-}" == "1" ]] && return 1
+  [[ -t 0 ]] || return 1
+  printf 'Port %s jest zajęty. Podaj inny: ' "${want}" >&2
+  IFS= read -r ans || return 1
+  printf '%s' "${ans}"
+}
+
+hm_site_web_ask_port() {
+  local ans=""
+  if [[ -n "${HM_SITE_PORT_ANSWER:-}" ]]; then
+    ans="${HM_SITE_PORT_ANSWER}"
+    HM_SITE_PORT_ANSWER=""
+    printf '%s' "${ans}"
+    return 0
+  fi
+  [[ "${HMTOOLS_TEST_NO_TTY:-}" == "1" ]] && return 1
+  [[ -t 0 ]] || return 1
+  printf '%s' "Port aplikacji (127.0.0.1, Enter = auto): " >&2
+  IFS= read -r ans || return 1
+  printf '%s' "${ans}"
+}
+
 hm_site_web_reserve_port() {
   local domain="$1" want="${2:-auto}" lo hi cur p
   read -r lo hi <<<"$(hm_site_web_port_range)"
@@ -89,6 +119,12 @@ hm_site_web_reserve_port() {
       return 0
     fi
     if hm_site_web_port_busy "${want}"; then
+      local again=""
+      if again="$(hm_site_web_port_read_again "${want}")"; then
+        [[ -n "${again}" && "${again}" != "${want}" ]] || { hm_err "Port ${want} jest zajęty."; return 1; }
+        hm_site_web_reserve_port "${domain}" "${again}"
+        return $?
+      fi
       hm_err "Port ${want} jest zajęty."
       return 1
     fi

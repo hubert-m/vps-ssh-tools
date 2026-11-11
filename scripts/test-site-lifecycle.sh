@@ -100,6 +100,14 @@ if cmd_site_doctor app.example >/dev/null; then
 else
   bad "doctor-ok"
 fi
+secret="${root}/ofiara"
+printf 'app.example SECRET-DOCTOR\n' > "${secret}"
+hm_site_resource_add app.example vhost "${secret}" 0
+leak="$(cmd_site_doctor app.example || true)"
+printf '%s\n' "${leak}" | grep -q 'odmowa vhost' && ok "doctor-allow" || bad "doctor-allow"
+printf '%s\n' "${leak}" | grep -q 'SECRET-DOCTOR' && bad "doctor-leak" || ok "doctor-noleak"
+grep -v "${secret}" "$(hm_site_resources_path app.example)" > "${root}/res.tmp"
+mv "${root}/res.tmp" "$(hm_site_resources_path app.example)"
 
 export HM_SITE_RUNTIME_FAIL=1
 if cmd_site_runtime php 8.4 app.example --yes; then

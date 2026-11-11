@@ -2,13 +2,15 @@ name: lint
 
 # Wyłączone: brak automatycznych uruchomień przy push / PR.
 # Włączenie: dodaj push/pull_request pod on: i usuń „if: false” z joba.
+
 on:
+  # push:
+  # pull_request:
   workflow_dispatch:
 
 jobs:
   bash:
     name: bash -n + shellcheck
-    if: false
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -51,3 +53,13 @@ jobs:
           # -S error: błędy krytyczne (np. local poza funkcją); ostrzeżenia nie blokują
           mapfile -t files < /tmp/hmtools-scripts.txt
           shellcheck -S error -x "${files[@]}"
+
+  tests:
+    name: scripts/test-*.sh
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run tests
+        run: bash scripts/run-tests.sh
