@@ -248,6 +248,165 @@ hm_ovpn_strip_markers() {
   ' "${file}" > "${file}.tmp" && mv "${file}.tmp" "${file}"
 }
 
+hm_ovpn_state_get() {
+  local key="$1" file line
+  file="$(hm_ovpn_state_file)"
+  [[ -f "${file}" ]] || return 1
+  line="$(grep -E "^${key}=" "${file}" | head -n 1 || true)"
+  [[ -n "${line}" ]] || return 1
+  printf '%s' "${line#*=}"
+}
+
+hm_ovpn_pkg_remove() {
+  local pkg="$1" log="${HM_OVPN_CALL_LOG:-}"
+  [[ -n "${log}" ]] && printf 'pkg remove %s\n' "${pkg}" >> "${log}"
+  if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+    return 0
+  fi
+  if declare -F hm_pkg_remove >/dev/null 2>&1; then
+    hm_pkg_remove "${pkg}" || true
+  fi
+}
+
+hm_ovpn_restore_forward() {
+  local prev="$1" live="${HM_OVPN_FORWARD_STATE:-}"
+  [[ "${prev}" =~ ^[0-9]+$ ]] || prev=0
+  [[ -n "${live}" ]] && printf '%s\n' "${prev}" > "${live}"
+  [[ -n "${HM_OVPN_CALL_LOG:-}" ]] && printf 'sysctl net.ipv4.ip_forward=%s\n' "${prev}" >> "${HM_OVPN_CALL_LOG}"
+  if [[ "${HMTOOLS_TEST:-}" != "1" ]] && command -v sysctl >/dev/null 2>&1; then
+    sysctl -w "net.ipv4.ip_forward=${prev}" >/dev/null 2>&1 || true
+  fi
+}
+
+hm_ovpn_uninstall() {
+  local yes=0 dry=0 force=0 keep_pki=0 keep_profiles=0 no_backup=0 purge=0
+  local state etc prev fw copy="" removed="" kept=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --yes|-y) yes=1; shift ;;
+      --dry-run) dry=1; shift ;;
+      --force) force=1; shift ;;
+      --keep-pki) keep_pki=1; shift ;;
+      --keep-profiles) keep_profiles=1; shift ;;
+      --no-backup) no_backup=1; shift ;;
+      --purge-packages) purge=1; shift ;;
+      *) hm_err "Nieznana flaga: $1"; return 1 ;;
+    esac
+  done
+  state="$(hm_ovpn_state_file)"
+  etc="$(hm_ovpn_etc)"
+  if [[ ! -f "${state}" && "${force}" -ne 1 ]]; then
+    hm_err "Brak manifestu hmtools. Nic nie usuwam. Użyj --force, żeby zdjąć tylko bloki hmtools."
+    return 1
+  fi
+  local -a steps=()
+  if [[ "${no_backup}" -eq 1 ]]; then
+    steps+=("pominąć kopię PKI")
+  else
+    steps+=("kopia PKI")
+  fi
+  steps+=("stop openvpn-server@$(hm_ovpn_instance)" "zdjąć NAT i firewall hmtools" "przywrócić ip_forward" "usunąć sysctl, cron i jail" "usunąć hm.conf")
+  [[ "${keep_pki}" -eq 0 ]] && steps+=("usunąć PKI")
+  [[ "${purge}" -eq 1 ]] && steps+=("usunąć pakiety openvpn i easy-rsa")
+  if [[ "${dry}" -eq 1 ]]; then
+    hm_info "dry-run: brak zmian w systemie"
+    printf 'plan: %s\n' "${steps[*]}"
+    return 0
+  fi
+  if [[ "${yes}" -eq 1 ]]; then
+    hm_confirm_plan_critical "OPENVPN" "openvpn uninstall" "Znika serwer VPN hmtools." --yes "${steps[@]}" || return 1
+  else
+    hm_confirm_plan_critical "OPENVPN" "openvpn uninstall" "Znika serwer VPN hmtools." "${steps[@]}" || return 1
+  fi
+  if [[ "${no_backup}" -eq 1 ]]; then
+    hm_warn "Pomijam kopię PKI."
+    kept="${kept}kopia PKI (pominieta)"$'\n'
+  elif [[ -d "$(hm_ovpn_pki)" ]]; then
+    copy="${HM_OVPN_BACKUP_DIR:-$(hm_ovpn_root)/backups}/pki-$(date -u +%Y%m%d%H%M%S)"
+    hm_ovpn_backup "${copy}" || return 1
+  fi
+  hm_ovpn_systemctl disable --now "openvpn-server@$(hm_ovpn_instance)" >/dev/null 2>&1 || true
+  hm_ovpn_systemctl disable --now hmtools-openvpn-nat.service >/dev/null 2>&1 || true
+  hm_ovpn_strip_markers "${HM_OVPN_UFW_RULES:-/etc/ufw/before.rules}"
+  hm_ovpn_strip_markers "${HM_OVPN_CSF_POST:-/etc/csf/csfpost.sh}"
+  fw="$(hm_ovpn_state_get FW 2>/dev/null || true)"
+  [[ -n "${fw}" ]] || fw="${HM_OVPN_FW:-}"
+  if [[ "${fw}" == "firewalld" ]]; then
+    prev="$(hm_ovpn_state_get PORT 2>/dev/null || true)"
+    local proto
+    proto="$(hm_ovpn_state_get PROTO 2>/dev/null || true)"
+    hm_ovpn_fw_exec firewall-cmd --permanent --remove-masquerade || true
+    [[ -n "${prev}" && -n "${proto}" ]] && hm_ovpn_fw_exec firewall-cmd --permanent --remove-port="${prev}/${proto}" || true
+    hm_ovpn_fw_exec firewall-cmd --permanent --zone=trusted --remove-interface=tun0 || true
+  fi
+  prev="$(hm_ovpn_state_get PREV_FORWARD 2>/dev/null || true)"
+  [[ -n "${prev}" ]] || prev=0
+  rm -f "${HM_OVPN_SYSCTL_D:-/etc/sysctl.d}/99-hmtools-openvpn.conf"
+  hm_ovpn_restore_forward "${prev}"
+  local cron jail
+  cron="$(hm_ovpn_cron_file)"
+  if [[ -f "${cron}" ]] && grep -q 'hmtools-openvpn' "${cron}"; then
+    rm -f "${cron}"
+    removed="${removed}cron"$'\n'
+  fi
+  jail="${HM_OVPN_F2B_JAIL:-${HM_OVPN_F2B_DIR:-/etc/fail2ban/jail.d}/hmtools-openvpn.conf}"
+  if [[ -f "${jail}" ]]; then
+    rm -f "${jail}"
+    removed="${removed}jail fail2ban"$'\n'
+  fi
+  rm -f "$(hm_ovpn_nat_unit_path)" "$(hm_ovpn_nat_unit_path).sh"
+  rm -f "$(hm_ovpn_conf_file)" "${etc}/crl.pem" "$(hm_ovpn_tls_key_path)"
+  rm -rf "${etc}/ccd"
+  if [[ "${keep_pki}" -eq 1 ]]; then
+    kept="${kept}PKI"$'\n'
+  else
+    local pki
+    pki="$(hm_ovpn_state_get PKI 2>/dev/null || true)"
+    if [[ -z "${pki}" ]]; then
+      kept="${kept}PKI (brak ścieżki w manifeście)"$'\n'
+    else
+      case "${pki}" in
+        /|/etc|/etc/openvpn) kept="${kept}PKI (odmowa ścieżki)"$'\n' ;;
+        */pki|*/pki/) rm -rf "${pki}"; removed="${removed}PKI"$'\n' ;;
+        *) kept="${kept}PKI (spoza hmtools)"$'\n' ;;
+      esac
+    fi
+  fi
+  if [[ "${keep_profiles}" -eq 1 ]]; then
+    kept="${kept}profile"$'\n'
+  else
+    local profiles
+    profiles="$(hm_ovpn_export_dir)"
+    case "${profiles}" in
+      */hmtools-openvpn/clients|*/hmtools-openvpn/clients/) rm -rf "${profiles}"; removed="${removed}profile"$'\n' ;;
+      *)
+        if [[ -n "${HM_OVPN_EXPORT:-}" ]]; then
+          rm -rf "${profiles}"
+          removed="${removed}profile"$'\n'
+        fi
+        ;;
+    esac
+  fi
+  if [[ "${purge}" -eq 1 ]]; then
+    if hm_ovpn_foreign_conf; then
+      kept="${kept}pakiety (obca konfiguracja)"$'\n'
+    elif [[ "$(hm_ovpn_state_get PACKAGES 2>/dev/null || true)" == "yes" || "${force}" -eq 1 ]]; then
+      hm_ovpn_pkg_remove openvpn
+      hm_ovpn_pkg_remove easy-rsa
+      removed="${removed}pakiety"$'\n'
+    else
+      kept="${kept}pakiety (nie instalował ich hmtools)"$'\n'
+    fi
+  fi
+  rm -f "${state}"
+  removed="${removed}hm.conf i manifest"$'\n'
+  printf 'usunieto:\n%s' "${removed}"
+  [[ -n "${kept}" ]] && printf 'zostaje:\n%s' "${kept}"
+  if [[ -n "${copy}" ]]; then
+    printf 'kopia: %s\n' "${copy}"
+  fi
+}
+
 hm_ovpn_rollback() {
   local etc pki
   hm_warn "Wycofuję niedokończoną instalację OpenVPN."
@@ -452,6 +611,7 @@ hm_ovpn_install() {
     return 1
   fi
   hm_ovpn_write_state "${port}" "${proto}" "${cidr}" "${endpoint}" "${pki}"
+  printf 'FW=%s\nIFACE=%s\nPACKAGES=yes\n' "${HM_OVPN_FW:-iptables}" "${iface}" >> "$(hm_ovpn_state_file)"
   if [[ -n "${first}" ]]; then
     if ! HM_OVPN_PKI="${pki}" hm_ovpn_client_add "${first}" --yes --no-export; then
       hm_err "Serwer jest zainstalowany, ale pierwszy klient nie powstał."

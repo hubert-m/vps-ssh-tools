@@ -16,6 +16,9 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [vX.Y.Z]
 
+- Feat: `openvpn audit`, `fail2ban` i `ca rotate` — odczyt, jail i bundle CA
+- Feat: `openvpn uninstall` — kopia PKI, zwrot ip_forward, bloki spoza markera zostają
+- Feat: `openvpn` w REPL — status, doctor, Tab klientów, docs i testy mock
 - Feat: vhost OLS dla Node — nagłówki proxy i pytanie o wolny port
 - Docs: `site new` — kolejność prac, MVP i flagi Python oraz .NET
 - Feat: `site new` runtime Python — uv, gunicorn, statyki Django i Celery

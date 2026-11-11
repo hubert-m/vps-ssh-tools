@@ -300,6 +300,14 @@ hm_health_overview() {
   echo "MySQL    : ${mysql_ok}"
   echo "Supervisor: ${sup_ok}"
   echo "Chrome   : ${chrome_ok}"
+  if [[ -z "${OPENVPN:-}" ]] && declare -F hm_detect_openvpn >/dev/null 2>&1; then
+    hm_detect_openvpn
+  fi
+  if [[ "${OPENVPN:-no}" == "yes" ]]; then
+    echo "OpenVPN  : up"
+  else
+    echo "OpenVPN  : absent"
+  fi
 
   echo
   echo "${C_BOLD}Certyfikaty wygasające < 14 dni${C_RESET}"

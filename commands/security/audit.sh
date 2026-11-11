@@ -252,6 +252,19 @@ hm_sec_audit_svc() {
     "") hm_sec_audit_add svc-fw services 8 WARN "firewall nieznany" "włącz ufw/firewalld/csf" ;;
     *) hm_sec_audit_add svc-fw services 8 FAIL "firewall wyłączony" "włącz ufw/firewalld/csf" ;;
   esac
+  local ovpn_conf="${HM_OVPN_ETC:-/etc/openvpn/server}/hm.conf" ovpn_key mode
+  [[ -f "${ovpn_conf}" ]] || return 0
+  ovpn_key="${HM_OVPN_TLS_KEY:-$(dirname "${ovpn_conf}")/tls-crypt.key}"
+  if [[ ! -f "${ovpn_key}" ]]; then
+    hm_sec_audit_add ovpn-tls services 4 WARN "brak tls-crypt.key" "openvpn doctor"
+    return 0
+  fi
+  mode="$(stat -c '%a' -- "${ovpn_key}" 2>/dev/null || stat -f '%OLp' "${ovpn_key}" 2>/dev/null || true)"
+  if [[ "${mode}" == "600" || "${mode}" == "400" ]]; then
+    hm_sec_audit_add ovpn-tls services 4 PASS "tls-crypt tylko dla root" "chmod 0600"
+  else
+    hm_sec_audit_add ovpn-tls services 4 WARN "tls-crypt tryb ${mode:-nieznany}" "chmod 0600"
+  fi
 }
 
 hm_sec_audit_score() {

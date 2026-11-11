@@ -105,6 +105,19 @@ hm_complete_filter_names() {
   done
 }
 
+# Tab: ważni klienci OpenVPN (CN z index.txt, wiersze V).
+hm_complete_openvpn_clients() {
+  local partial="${1:-}" file line cn
+  file="${HM_OVPN_INDEX:-${HM_OVPN_PKI:-/etc/openvpn/pki}/index.txt}"
+  [[ -f "${file}" ]] || return 0
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ "${line}" == V* ]] || continue
+    cn="${line##*/CN=}"
+    cn="${cn%%/*}"
+    [[ -n "${cn}" && "${cn}" == "${partial}"* ]] && printf '%s\n' "${cn}"
+  done < "${file}"
+}
+
 # Tab: nazwy workerów Supervisora (group:name) + „all”.
 hm_complete_filter_supervisor() {
   local partial="${1:-}"

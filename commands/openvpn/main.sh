@@ -3,10 +3,22 @@
 
 _hm_cmd_help openvpn <<'EOF'
 Użycie:
+  openvpn                               status, albo podpowiedź install --dry-run
+  openvpn install [--dry-run] [--yes]
+  openvpn status
+  openvpn doctor
+  openvpn who
+  openvpn kick <nazwa>
+  openvpn log
+  openvpn route
+  openvpn config [show|set <klucz> <wartość>]
+  openvpn backup [katalog]
+  openvpn restore <katalog> --yes
   openvpn client add <nazwa> [--days N] [--pass] [--static-ip IP] [--no-export] [--yes]
   openvpn client export <nazwa> [--out ścieżka] [--print] | --all
   openvpn client list [--all|--revoked|--expiring N]
   openvpn client show <nazwa>
+  openvpn client ip <nazwa>
   openvpn client revoke <nazwa> [--yes]
   openvpn client renew <nazwa> [--days N] [--yes]
   openvpn crl update [--quiet]
@@ -14,6 +26,11 @@ Użycie:
   openvpn check [--notify]
   openvpn schedule install|status|disable
   openvpn server renew [--yes]
+  openvpn uninstall [--yes] [--dry-run] [--keep-pki] [--keep-profiles] [--no-backup] [--purge-packages] [--force]
+  openvpn audit [--fix] [--json]
+  openvpn fail2ban on|off|status
+  openvpn ca rotate [--days N] [--yes] | openvpn ca rotate finish [--yes]
+  openvpn help
 EOF
 
 hm_ovpn_root() { printf '%s' "${HM_OVPN_ROOT:-/etc/openvpn}"; }
@@ -768,20 +785,238 @@ hm_ovpn_client() {
     export) hm_ovpn_client_export "$@" ;;
     list) hm_ovpn_client_list "$@" ;;
     show) hm_ovpn_client_show "$@" ;;
+    ip) hm_ovpn_client_ip "$@" ;;
     revoke) hm_ovpn_client_revoke "$@" ;;
     renew) hm_ovpn_client_renew "$@" ;;
     *)
-      hm_err "Użycie: openvpn client add|export|list|show|revoke|renew"
+      hm_err "Użycie: openvpn client add|export|list|show|ip|revoke|renew"
       return 1
       ;;
   esac
+}
+
+hm_ovpn_installed() {
+  [[ -f "$(hm_ovpn_conf_file)" || -f "$(hm_ovpn_state_file)" ]]
+}
+
+hm_ovpn_mode() {
+  local path="$1" mode=""
+  [[ -e "${path}" ]] || return 1
+  mode="$(stat -c '%a' -- "${path}" 2>/dev/null || stat -f '%OLp' "${path}" 2>/dev/null || true)"
+  printf '%s' "${mode}"
+}
+
+hm_ovpn_redact_line() {
+  local line="$1"
+  case "${line}" in
+    *BEGIN*PRIVATE*|*BEGIN\ CERTIFICATE*|*SECRET*|*PASSWORD*|*password*) return 1 ;;
+  esac
+  printf '%s\n' "${line}"
+}
+
+hm_ovpn_status() {
+  local n="0" ep port proto
+  if ! hm_ovpn_installed; then
+    hm_info "OpenVPN nie jest zainstalowany. Podgląd: openvpn install --dry-run"
+    return 0
+  fi
+  ep="$(hm_ovpn_state_value ENDPOINT 2>/dev/null || true)"
+  port="$(hm_ovpn_state_value PORT 2>/dev/null || true)"
+  proto="$(hm_ovpn_state_value PROTO 2>/dev/null || true)"
+  if [[ -f "$(hm_ovpn_pki)/index.txt" ]]; then
+    n="$(grep -c '^V' "$(hm_ovpn_pki)/index.txt" 2>/dev/null || true)"
+    [[ "${n}" =~ ^[0-9]+$ ]] || n="0"
+  fi
+  printf 'instancja: %s\n' "$(hm_ovpn_instance)"
+  printf 'endpoint: %s\n' "${ep:-brak}"
+  printf 'port: %s/%s\n' "${port:-1194}" "${proto:-udp}"
+  printf 'klienci: %s\n' "${n}"
+  if [[ -f "$(hm_ovpn_etc)/crl.pem" ]]; then
+    printf 'crl: jest\n'
+  else
+    printf 'crl: brak\n'
+  fi
+}
+
+hm_ovpn_doctor() {
+  local rc=0 mode unit key ca bin
+  if command -v openvpn >/dev/null 2>&1; then
+    printf 'pakiet openvpn: jest\n'
+  else
+    printf 'pakiet openvpn: brak\n'
+    rc=1
+  fi
+  if command -v easyrsa >/dev/null 2>&1; then
+    printf 'pakiet easy-rsa: jest\n'
+  else
+    printf 'pakiet easy-rsa: brak\n'
+    rc=1
+  fi
+  unit="${HM_OVPN_UNIT:-/lib/systemd/system/openvpn-server@$(hm_ovpn_instance).service}"
+  if [[ -f "${unit}" ]]; then
+    printf 'unit: jest\n'
+  else
+    printf 'unit: brak\n'
+    rc=1
+  fi
+  key="$(hm_ovpn_tls_key_path)"
+  ca="$(hm_ovpn_pki)/private/ca.key"
+  for bin in "${key}" "${ca}"; do
+    if [[ ! -e "${bin}" ]]; then
+      printf 'uprawnienia %s: brak\n' "${bin}"
+      continue
+    fi
+    mode="$(hm_ovpn_mode "${bin}" || true)"
+    printf 'uprawnienia %s: %s\n' "${bin}" "${mode:-nieznany}"
+    if [[ "${mode}" != "600" && "${mode}" != "400" ]]; then
+      hm_warn "Klucz ${bin} nie jest 0600."
+      rc=1
+    fi
+  done
+  return "${rc}"
+}
+
+hm_ovpn_who() {
+  local file line name
+  file="${HM_OVPN_STATUS:-$(hm_ovpn_etc)/status-hm.log}"
+  [[ -f "${file}" ]] || { hm_info "Brak pliku statusu."; return 0; }
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ "${line}" == CLIENT_LIST,* ]] || continue
+    name="${line#CLIENT_LIST,}"
+    name="${name%%,*}"
+    [[ -n "${name}" ]] && printf '%s\n' "${name}"
+  done < "${file}"
+}
+
+hm_ovpn_kick() {
+  local name="${1:-}"
+  hm_ovpn_name_ok "${name}" || { hm_err "Zła nazwa klienta."; return 1; }
+  hm_ovpn_mgmt_kill "${name}"
+  hm_ovpn_audit "kick ${name}"
+}
+
+hm_ovpn_log() {
+  local file line
+  file="$(hm_ovpn_applog)"
+  [[ -f "${file}" ]] || { hm_info "Brak applog."; return 0; }
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    hm_ovpn_redact_line "${line}" || true
+  done < "${file}"
+}
+
+hm_ovpn_route() {
+  local conf line
+  conf="$(hm_ovpn_conf_file)"
+  [[ -f "${conf}" ]] || { hm_info "Brak hm.conf."; return 0; }
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    case "${line}" in
+      server\ *|route\ *|push\ \"route\ *) printf '%s\n' "${line}" ;;
+    esac
+  done < "${conf}"
+}
+
+hm_ovpn_config_key_ok() {
+  case "${1:-}" in
+    ENDPOINT|PORT|PROTO|DNS|SUBNET) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+hm_ovpn_config() {
+  local sub="${1:-show}" key val file tmp line
+  case "${sub}" in
+    show|"")
+      file="$(hm_ovpn_state_file)"
+      [[ -f "${file}" ]] || { hm_info "Brak pliku stanu."; return 0; }
+      while IFS= read -r line || [[ -n "${line}" ]]; do
+        key="${line%%=*}"
+        hm_ovpn_config_key_ok "${key}" || continue
+        printf '%s\n' "${line}"
+      done < "${file}"
+      ;;
+    set)
+      key="${2:-}"
+      val="${3:-}"
+      hm_ovpn_config_key_ok "${key}" || { hm_err "Niedozwolony klucz konfiguracji."; return 1; }
+      [[ "${val}" =~ ^[A-Za-z0-9.:/_-]+$ ]] || { hm_err "Niedozwolona wartość."; return 1; }
+      file="$(hm_ovpn_state_file)"
+      [[ -f "${file}" ]] || { hm_err "Brak pliku stanu."; return 1; }
+      tmp="$(mktemp "${file}.XXXXXX")"
+      grep -v -E "^${key}=" "${file}" > "${tmp}" || true
+      printf '%s=%s\n' "${key}" "${val}" >> "${tmp}"
+      mv -f "${tmp}" "${file}"
+      hm_ok "config ${key}"
+      ;;
+    *)
+      hm_err "Użycie: openvpn config show|set <klucz> <wartość>"
+      return 1
+      ;;
+  esac
+}
+
+hm_ovpn_client_ip() {
+  local name="${1:-}" ccd
+  hm_ovpn_name_ok "${name}" || { hm_err "Zła nazwa klienta."; return 1; }
+  ccd="$(hm_ovpn_server_dir)/ccd/${name}"
+  [[ -f "${ccd}" ]] || { hm_err "Brak stałego IP dla ${name}."; return 1; }
+  awk '{print $2; exit}' "${ccd}"
+}
+
+hm_ovpn_backup() {
+  local dest="${1:-}" src stamp
+  src="$(hm_ovpn_pki)"
+  [[ -d "${src}" ]] || { hm_err "Brak PKI."; return 1; }
+  stamp="$(date -u +%Y%m%d%H%M%S)"
+  [[ -n "${dest}" ]] || dest="${HM_OVPN_BACKUP_DIR:-$(hm_ovpn_root)/backups}/pki-${stamp}"
+  case "${dest}" in
+    *..*) hm_err "Zła ścieżka kopii."; return 1 ;;
+  esac
+  mkdir -p "${dest}"
+  chmod 0700 "${dest}" 2>/dev/null || true
+  cp -a "${src}/." "${dest}/" 2>/dev/null || cp -R "${src}/." "${dest}/"
+  hm_ok "Kopia PKI: ${dest}"
+}
+
+hm_ovpn_restore() {
+  local dest="" yes=0 src
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --yes|-y) yes=1; shift ;;
+      *) dest="$1"; shift ;;
+    esac
+  done
+  [[ "${yes}" -eq 1 ]] || { hm_err "restore wymaga --yes."; return 1; }
+  [[ -n "${dest}" && -d "${dest}" ]] || { hm_err "Brak katalogu kopii."; return 1; }
+  case "${dest}" in
+    *..*) hm_err "Zła ścieżka kopii."; return 1 ;;
+  esac
+  src="$(hm_ovpn_pki)"
+  mkdir -p "${src}"
+  cp -a "${dest}/." "${src}/" 2>/dev/null || cp -R "${dest}/." "${src}/"
+  hm_ok "Przywrócono PKI z ${dest}"
 }
 
 cmd_openvpn() {
   local sub="${1:-}"
   shift || true
   case "${sub}" in
+    "")
+      hm_ovpn_status
+      ;;
     install) hm_ovpn_install "$@" ;;
+    status) hm_ovpn_status ;;
+    doctor) hm_ovpn_doctor ;;
+    who) hm_ovpn_who ;;
+    kick) hm_ovpn_kick "$@" ;;
+    log) hm_ovpn_log ;;
+    route) hm_ovpn_route ;;
+    config) hm_ovpn_config "$@" ;;
+    backup) hm_ovpn_backup "$@" ;;
+    restore) hm_ovpn_restore "$@" ;;
+    uninstall) hm_ovpn_uninstall "$@" ;;
+    audit) hm_ovpn_security_audit "$@" ;;
+    fail2ban) hm_ovpn_fail2ban "$@" ;;
+    ca) hm_ovpn_ca "$@" ;;
     client) hm_ovpn_client "$@" ;;
     crl)
       case "${1:-}" in
@@ -808,5 +1043,7 @@ cmd_openvpn() {
 
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/install.sh"
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/audit.sh"
 
 _hm_cmd_register openvpn cmd_openvpn 0 ovpn vpn

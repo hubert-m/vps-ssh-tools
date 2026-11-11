@@ -264,6 +264,30 @@ hm_detect_db() {
   fi
 }
 
+hm_detect_openvpn() {
+  # Tylko lokalny socket albo wymuszenie. Bez systemctl i bez sieci.
+  OPENVPN="no"
+  OPENVPN_SOURCE=""
+  if [[ -n "${HM_OVPN_DETECT:-}" ]]; then
+    case "${HM_OVPN_DETECT}" in
+      yes) OPENVPN="yes"; OPENVPN_SOURCE="test" ;;
+      *) OPENVPN="no"; OPENVPN_SOURCE="test" ;;
+    esac
+  else
+    local sock="${HM_OVPN_MGMT:-/run/openvpn-server/hm.sock}"
+    if [[ -S "${sock}" ]]; then
+      OPENVPN="yes"
+      OPENVPN_SOURCE="sock:${sock}"
+    fi
+  fi
+  if [[ -n "${FORCE_OPENVPN:-}" ]]; then
+    case "${FORCE_OPENVPN}" in
+      yes) OPENVPN="yes"; OPENVPN_SOURCE="override:FORCE_OPENVPN" ;;
+      no) OPENVPN="no"; OPENVPN_SOURCE="override:FORCE_OPENVPN" ;;
+    esac
+  fi
+}
+
 hm_detect_docker() {
   # DOCKER=yes tylko gdy docker CLI działa (daemon dostępny opcjonalnie sprawdzany przy komendzie).
   DOCKER="no"
@@ -879,6 +903,7 @@ hm_detect_all() {
   hm_detect_supervisor
   hm_detect_chrome
   hm_detect_docker
+  hm_detect_openvpn
   hm_detect_apply_overrides
   if ! hm_os_is_supported; then
     HMTOOLS_RESTRICTED=1
@@ -992,6 +1017,7 @@ hm_detect_tool_hints() {
   [[ "${SUPERVISOR:-no}" == "yes" ]] && extra="${extra}, supervisor"
   [[ "${CHROME:-no}" == "yes" ]] && extra="${extra}, chrome"
   [[ "${DOCKER:-no}" == "yes" ]] && extra="${extra}, docker"
+  [[ "${OPENVPN:-no}" == "yes" ]] && extra="${extra}, openvpn"
   if hm_have_cmd postqueue || hm_have_cmd postfix; then
     extra="${extra}, mail"
   fi
@@ -1057,7 +1083,7 @@ hm_detect_banner() {
   # krótka karta na start REPL
   local hints
   hints="$(hm_detect_tool_hints)"
-  hm_ok "Wykryty stos — OS: ${OS_PRETTY:-?} [${OS_FAMILY}/${PKG_MANAGER}] · panel=${PANEL} · www=${WEBSERVER} · db=${DB_ENGINE} · supervisor=${SUPERVISOR:-no} · docker=${DOCKER:-no} · chrome=${CHROME:-no}"
+  hm_ok "Wykryty stos — OS: ${OS_PRETTY:-?} [${OS_FAMILY}/${PKG_MANAGER}] · panel=${PANEL} · www=${WEBSERVER} · db=${DB_ENGINE} · supervisor=${SUPERVISOR:-no} · docker=${DOCKER:-no} · chrome=${CHROME:-no} · openvpn=${OPENVPN:-no}"
   if [[ "${HMTOOLS_RESTRICTED:-0}" -eq 1 ]]; then
     hm_err "Niewspierany lub nierozpoznany system (${OS_ID:-unknown})."
     hm_warn "Dozwolone komendy: uninstall-hmtools | help | version | detect | exit"

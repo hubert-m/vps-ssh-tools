@@ -10,7 +10,7 @@ Użycie:
   services status <nazwa>          Szczegóły jednej usługi
 
 Nazwy: lsws, lscpd, mariadb|mysql, postfix, dovecot, pdns, pure-ftpd,
-       opendkim, redis, fail2ban, cron, docker, supervisor, sshd
+       opendkim, redis, fail2ban, cron, docker, supervisor, sshd, openvpn
 OLS: preferowany soft-reload (hm_ols_reload_soft); sshd: sshd -t przed restartem.
 EOF
 
@@ -31,6 +31,7 @@ cron|cron crond|—|Cron
 docker|docker docker.service|—|Docker
 supervisor|supervisor supervisord|—|Supervisor
 sshd|sshd ssh|22|OpenSSH
+openvpn|openvpn-server@hm|1194|OpenVPN
 EOF
 }
 

@@ -208,7 +208,7 @@ hm_tab_complete() {
         ;;
       services)
         if [[ "${prefix}" =~ services[[:space:]]+(restart|enable|disable|status)[[:space:]] ]]; then
-          for m in lsws lscpd mariadb mysql postfix dovecot pdns pure-ftpd opendkim redis fail2ban cron docker supervisor sshd; do
+          for m in lsws lscpd mariadb mysql postfix dovecot pdns pure-ftpd opendkim redis fail2ban cron docker supervisor sshd openvpn; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         else
@@ -419,8 +419,21 @@ hm_tab_complete() {
         fi
         ;;
       openvpn)
-        if [[ "${prefix}" =~ openvpn[[:space:]]+client ]]; then
-          for m in add export list show revoke renew; do
+        if [[ "${prefix}" =~ openvpn[[:space:]]+client[[:space:]]+(revoke|renew|export|show|ip)[[:space:]] ]] \
+          || [[ "${prefix}" =~ openvpn[[:space:]]+kick[[:space:]] ]]; then
+          while IFS= read -r m; do
+            [[ -n "${m}" ]] && matches+=("${m}")
+          done < <(hm_complete_openvpn_clients "${partial}")
+        elif [[ "${prefix}" =~ openvpn[[:space:]]+client ]]; then
+          for m in add export list show ip revoke renew; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ openvpn[[:space:]]+config[[:space:]]+set[[:space:]] ]]; then
+          for m in ENDPOINT PORT PROTO DNS SUBNET; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ openvpn[[:space:]]+config ]]; then
+          for m in show set; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         elif [[ "${prefix}" =~ openvpn[[:space:]]+crl ]]; then
@@ -431,8 +444,16 @@ hm_tab_complete() {
           for m in install status disable; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
+        elif [[ "${prefix}" =~ openvpn[[:space:]]+fail2ban ]]; then
+          for m in on off status; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ openvpn[[:space:]]+ca ]]; then
+          for m in rotate; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
         else
-          for m in install client crl check schedule server; do
+          for m in install status who kick log client config route crl check backup restore audit fail2ban ca uninstall schedule server doctor help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi

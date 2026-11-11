@@ -187,6 +187,19 @@ cmd_security_status() {
 
   cmd_security_ports
   echo
+  local ovpn_conf ovpn_jail
+  ovpn_conf="${HM_OVPN_ETC:-/etc/openvpn/server}/hm.conf"
+  if [[ -f "${ovpn_conf}" ]]; then
+    echo "${C_BOLD}OpenVPN${C_RESET}"
+    echo "  znany port 1194/udp"
+    ovpn_jail="${HM_OVPN_F2B_JAIL:-${HM_OVPN_F2B_DIR:-/etc/fail2ban/jail.d}/hmtools-openvpn.conf}"
+    if [[ -f "${ovpn_jail}" ]] && grep -qE '^enabled[[:space:]]*=[[:space:]]*true' "${ovpn_jail}"; then
+      echo "  Fail2Ban: on"
+    else
+      echo "  Fail2Ban: off"
+    fi
+    echo
+  fi
   echo "${C_DIM}Więcej: security ssh | security events | security scan | security malware | security waf${C_RESET}"
 }
 
@@ -242,6 +255,9 @@ cmd_security_ports() {
         ;;
       22|2222)
         alert="${C_DIM}SSH${C_RESET}"
+        ;;
+      1194)
+        alert="${C_DIM}OpenVPN${C_RESET}"
         ;;
       80|443)
         alert="${C_DIM}HTTP(S)${C_RESET}"

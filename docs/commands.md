@@ -19,6 +19,10 @@
 | `site doctor <d>` | Dryf: brak unitu, inny port, vhost bez domeny |
 | `site new <d> --cron laravel --worker queue --workers 2 --health-path /up [--open-port N]` | Timer, worker, logrotate; port aplikacji zostaje na 127.0.0.1 |
 | `site new` / `new-site` / `site new <d> --dry-run [--json]` | Kreator albo sam plan; `--json` to jeden obiekt, bez zmian na dysku |
+| `openvpn` / `openvpn status` | Skrót stanu, albo podpowiedź `install --dry-run` gdy brak instalacji |
+| `openvpn doctor` | Pakiety, unit i tryb kluczy (oczekiwane 0600) |
+| `openvpn audit` / `fail2ban` / `ca rotate` | Audyt tylko do odczytu, jail Fail2Ban, rotacja CA z bundlem |
+| `openvpn config show\|set` | Klucze stanu ENDPOINT, PORT, PROTO, DNS, SUBNET |
 | `openvpn install --yes` / `--dry-run` | PKI, `hm.conf` z tls-crypt i AES-256-GCM, NAT bez ruszania SSH |
 | `report weekly [--send] [--json] [--html]` | Tygodniowy raport; brak sekcji jest pominięty, webhook dostaje JSON |
 | `openvpn client add\|export\|list\|show` | Profil `.ovpn` inline (0600), tabela klientów, sekret tylko na TTY |
