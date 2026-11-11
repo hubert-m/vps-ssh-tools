@@ -16,6 +16,14 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [vX.Y.Z]
 
+- Feat: `docker compose update` — zapis digestów, rollback i audyt restart/health
+- Feat: `traffic sites`/`spikes` — log strumieniowo, adres cf= i sekcja w report weekly
+- Feat: `memory oom`/`swap`/`sysctl` — mapa strony, fstab i rollback profilu
+- Feat: `mail spam`, `senders`, `quota` i `dmarc` — próg wysyłki, dedup, odrzut XXE
+- Docs: układ modułu `openvpn` — pliki, stan jako źródło prawdy, kolejność prac
+- Feat: `openvpn status`/`who`/`log` — tabela klientów, błędy journala i alert health
+- Feat: `openvpn config set` — render ze stanu, kopia, rollback i stałe IP w ccd
+- Feat: `openvpn backup` — archiwum z manifestem, fail-closed na cel zdalny, rollback restore
 - Feat: `openvpn audit`, `fail2ban` i `ca rotate` — odczyt, jail i bundle CA
 - Feat: `openvpn uninstall` — kopia PKI, zwrot ip_forward, bloki spoza markera zostają
 - Feat: `openvpn` w REPL — status, doctor, Tab klientów, docs i testy mock

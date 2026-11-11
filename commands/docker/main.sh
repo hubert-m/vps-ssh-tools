@@ -9,8 +9,10 @@ Użycie:
   docker logs <nazwa> [N] [--follow]
   docker restart|stop|start <nazwa>
   docker compose ls
-  docker compose pull <stack>
-  docker compose up <stack>
+  docker compose pull|up|down|logs|ps|update <stack>
+  docker scan <obraz|--all>
+  docker audit
+  docker updates
   docker prune [--images] [--volumes] [--dry-run]
                                Domyślnie dry-run; --volumes wymaga critical confirm
 
@@ -331,8 +333,21 @@ cmd_docker_compose() {
       fi
       hm_ok "compose ${sub} ${stack} OK."
       ;;
+    down|logs|ps|update)
+      local stack="${1:-}"
+      [[ -n "${stack}" ]] || {
+        hm_err "Użycie: docker compose ${sub} <stack>"
+        return 1
+      }
+      case "${sub}" in
+        down) hm_docker_compose_down "${stack}" ;;
+        logs) hm_docker_compose_logs "${stack}" "${2:-100}" ;;
+        ps) hm_docker_compose_ps "${stack}" ;;
+        update) hm_docker_compose_update "${stack}" ;;
+      esac
+      ;;
     *)
-      hm_err "Użycie: docker compose ls|pull <stack>|up <stack>"
+      hm_err "Użycie: docker compose ls|pull|up|down|logs|ps|update <stack>"
       return 1
       ;;
   esac
@@ -426,6 +441,21 @@ cmd_docker() {
       shift || true
       cmd_docker_prune "$@"
       ;;
+    scan)
+      shift || true
+      hm_docker_require || return 1
+      hm_docker_scan "$@"
+      ;;
+    audit)
+      shift || true
+      hm_docker_require || return 1
+      hm_docker_audit "$@"
+      ;;
+    updates)
+      shift || true
+      hm_docker_require || return 1
+      hm_docker_updates "$@"
+      ;;
     help|-h|--help)
       hm_help_topic docker
       ;;
@@ -437,6 +467,9 @@ cmd_docker() {
       ;;
   esac
 }
+
+# shellcheck source=ops.sh
+source "${HMTOOLS_ROOT}/commands/docker/ops.sh"
 
 _hm_cmd_register docker cmd_docker 0
 _hm_cmd_register_site docker cmd_docker

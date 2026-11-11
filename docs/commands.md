@@ -24,6 +24,7 @@
 | `openvpn audit` / `fail2ban` / `ca rotate` | Audyt tylko do odczytu, jail Fail2Ban, rotacja CA z bundlem |
 | `openvpn config show\|set` | Klucze stanu ENDPOINT, PORT, PROTO, DNS, SUBNET |
 | `openvpn install --yes` / `--dry-run` | PKI, `hm.conf` z tls-crypt i AES-256-GCM, NAT bez ruszania SSH |
+| `openvpn backup --local` / `restore` | Archiwum z manifestem SHA-256, lokalnie 0600, zdalnie tylko zaszyfrowane |
 | `report weekly [--send] [--json] [--html]` | Tygodniowy raport; brak sekcji jest pominięty, webhook dostaje JSON |
 | `openvpn client add\|export\|list\|show` | Profil `.ovpn` inline (0600), tabela klientów, sekret tylko na TTY |
 | `openvpn client revoke\|renew` / `openvpn crl update` / `openvpn check --notify` | Unieważnienie, CRL 0644, cron i alarm z deduplikacją |
@@ -132,6 +133,29 @@
 | `docker …` | Kontenery powiązane z portami proxy tej strony |
 | `exit` | Wyjście z kontekstu |
 
+## Traffic
+
+```text
+hmtools> traffic day
+hmtools> traffic sites --since 24h
+hmtools> traffic now
+hmtools> traffic spikes
+```
+
+Log access jest czytany strumieniowo. Pole `cf=` jest adresem klienta za Cloudflare. Skok podpowiada `security ban`.
+
+## Memory
+
+```text
+hmtools> memory oom --since 7d
+hmtools> memory swap create 1G
+hmtools> memory zram on
+hmtools> memory sysctl profile apply web-small
+hmtools> memory sysctl profile rollback
+```
+
+OOM mapuje cgroup albo nazwę procesu na stronę. Swap i zram odmawiają na OpenVZ i LXC. Profil sysctl ma kopię i rollback.
+
 ## Docker
 
 ```text
@@ -139,6 +163,9 @@ hmtools> docker                 # lista + OLS proxy domain
 hmtools> docker logs n8n 100
 hmtools> docker compose ls
 hmtools> docker prune --dry-run # nigdy volume bez --volumes + critical
+hmtools> docker compose update n8n
+hmtools> docker scan nginx:1.25
+hmtools> docker audit
 [app.example.pl]> docker        # filtr pod proxy strony
 ```
 

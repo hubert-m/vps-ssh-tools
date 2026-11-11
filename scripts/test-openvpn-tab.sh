@@ -21,7 +21,7 @@ printf '%s\n' "$(hm_complete_openvpn_clients "")" | grep -qx 'old' && bad client
 
 if grep -q 'hm_complete_openvpn_clients' lib/complete/tab.sh \
   && grep -q 'revoke|renew|export|show|ip' lib/complete/tab.sh \
-  && grep -q 'ENDPOINT PORT PROTO DNS SUBNET' lib/complete/tab.sh; then
+  && grep -q 'port proto dns endpoint subnet ipv6 mode client-to-client max-clients keepalive' lib/complete/tab.sh; then
   ok tab-wired
 else
   bad tab-wired

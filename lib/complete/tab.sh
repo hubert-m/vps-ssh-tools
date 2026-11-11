@@ -429,7 +429,7 @@ hm_tab_complete() {
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         elif [[ "${prefix}" =~ openvpn[[:space:]]+config[[:space:]]+set[[:space:]] ]]; then
-          for m in ENDPOINT PORT PROTO DNS SUBNET; do
+          for m in port proto dns endpoint subnet ipv6 mode client-to-client max-clients keepalive; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         elif [[ "${prefix}" =~ openvpn[[:space:]]+config ]]; then

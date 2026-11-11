@@ -708,6 +708,9 @@ hm_backup_full() {
   fi
   hm_rclone_ensure_backup_layout
   hm_rclone_mkdir "${remote_base}"
+  if declare -F hm_ovpn_backup_for_full >/dev/null 2>&1; then
+    hm_ovpn_backup_for_full "${remote_base}" || hm_warn "Kopia OpenVPN pominięta w backup full."
+  fi
 
   local cfg_ok=1 sites_fail=0 db_ok=1 db_acc_ok=0
   local -a failed_sites=()

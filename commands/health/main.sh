@@ -446,6 +446,14 @@ hm_health_check() {
     fi
   fi
 
+  if declare -F hm_health_openvpn_alerts >/dev/null 2>&1; then
+    local ovpn_alert
+    while IFS= read -r ovpn_alert; do
+      [[ -n "${ovpn_alert}" ]] || continue
+      alerts+=("${ovpn_alert}")
+    done < <(hm_health_openvpn_alerts)
+  fi
+
   local rc=0
   if [[ "${#alerts[@]}" -gt 0 ]]; then
     rc=1
@@ -483,6 +491,7 @@ hm_health_check() {
           disk:*) has_disk=1 ;;
           ssl:*) has_ssl=1 ;;
           service:*) has_svc=1 ;;
+          openvpn:*) has_svc=1 ;;
         esac
       done
       [[ "${has_disk}" -eq 1 ]] && hm_notify error "Dysk ≥${disk_thr}%" "host=$(hostname)\n${body}" "health.disk"

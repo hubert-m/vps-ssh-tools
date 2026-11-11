@@ -10,6 +10,10 @@ Użycie (globalnie):
   mail check <domena>
   mail dkim <domena> [generate]
   mail blacklist [IPv4]
+  mail spam status
+  mail senders [--since 24h]
+  mail quota [domena]
+  mail dmarc report <plik>
 
 Użycie (kontekst [domena]>):
   mail                               Skrzynki + rozmiar Maildir + forward/catchall
@@ -30,6 +34,8 @@ source "${_HM_MAIL_DIR}/diag.sh"
 source "${_HM_MAIL_DIR}/accounts.sh"
 # shellcheck source=forward.sh
 source "${_HM_MAIL_DIR}/forward.sh"
+# shellcheck source=spam.sh
+source "${_HM_MAIL_DIR}/spam.sh"
 
 cmd_mail() {
   local sub="${1:-}"
@@ -54,6 +60,22 @@ cmd_mail() {
       ;;
     blacklist|dnsbl|rbl)
       hm_mail_blacklist_cmd "$@"
+      return $?
+      ;;
+    spam)
+      hm_mail_spam_cmd "$@"
+      return $?
+      ;;
+    senders)
+      hm_mail_senders "$@"
+      return $?
+      ;;
+    quota)
+      hm_mail_quota "$@"
+      return $?
+      ;;
+    dmarc)
+      hm_mail_dmarc_cmd "$@"
       return $?
       ;;
     help|-h|--help)

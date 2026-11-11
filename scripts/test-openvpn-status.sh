@@ -84,4 +84,58 @@ export HM_OVPN_DETECT=no
 hm_detect_openvpn
 [[ "${OPENVPN}" == "no" ]] && ok detect-no || bad detect-no
 
+export HM_OVPN_STATUS="${root}/status-v3.log"
+cat > "${HM_OVPN_STATUS}" <<'EOF'
+HEADER,CLIENT_LIST,Common Name,Real Address,Virtual Address,Virtual IPv6 Address,Bytes Received,Bytes Sent,Connected Since,Username,Client ID,Peer ID,Data Channel Cipher
+CLIENT_LIST,lap top,1.2.3.4:1194,10.8.0.2,,100,200,2026-11-11 10:00:00,,,AES-256-GCM
+CLIENT_LIST,host.example,[2001:db8::1]:1194,10.8.0.3,fd42::2,0,0,2026-11-11 10:00:00,,,AES-256-GCM
+EOF
+snap="$(mktemp)"
+cp -f "${HM_OVPN_STATUS}" "${snap}"
+who="$(cmd_openvpn who)"
+printf '%s\n' "${who}" | grep -q 'lap top' && ok who-space || bad who-space
+printf '%s\n' "${who}" | grep -q '2001:db8::1' && ok who-v6 || bad who-v6
+cmp -s "${HM_OVPN_STATUS}" "${snap}" && ok who-readonly || bad who-readonly
+empty="$(mktemp)"
+printf 'HEADER,CLIENT_LIST\n' > "${empty}"
+HM_OVPN_STATUS="${empty}" cmd_openvpn who >/dev/null && ok who-empty || bad who-empty
+js="$(cmd_openvpn who --json)"
+printf '%s\n' "${js}" | grep -q '"cn":"lap top"' && ok who-json || bad who-json
+stj="$(cmd_openvpn status --json)"
+printf '%s\n' "${stj}" | grep -q '"endpoint":"vpn.test"' && ok status-json || bad status-json
+
+if cmd_openvpn kick ghost >/dev/null 2>&1; then bad kick-missing; else ok kick-missing; fi
+export HM_OVPN_MGMT_LOG="${root}/mgmt.log"
+cmd_openvpn kick host.example --yes >/dev/null
+grep -q 'kill host.example' "${HM_OVPN_MGMT_LOG}" && ok kick-dot || bad kick-dot
+
+export HM_OVPN_JOURNAL="${root}/journal.log"
+cat > "${HM_OVPN_JOURNAL}" <<'EOF'
+laptop connected
+TLS Error: TLS handshake failed
+VERIFY ERROR laptop
+-----BEGIN PRIVATE KEY-----
+SECRET-STATUS-LOG
+AUTH_FAILED
+EOF
+errlog="$(cmd_openvpn log 2 --errors)"
+printf '%s\n' "${errlog}" | grep -q 'AUTH_FAILED' && ok log-err || bad log-err
+printf '%s\n' "${errlog}" | grep -q 'connected' && bad log-filter || ok log-filter
+printf '%s\n' "${errlog}" | grep -q 'SECRET-STATUS-LOG' && bad log-secret || ok log-secret
+lines="$(printf '%s\n' "${errlog}" | grep -c . || true)"
+[[ "${lines}" == "2" ]] && ok log-tail || bad log-tail
+
+printf 'port 1194\n' > "$(hm_ovpn_conf_file)"
+hm_notify() { printf 'notify %s\n' "$1" >> "${root}/notify"; }
+: > "${root}/notify"
+export HM_OVPN_ACTIVE=failed
+if hm_ovpn_health_section --notify >/dev/null; then bad health-rc; else ok health-rc; fi
+sec="$(hm_ovpn_health_section --notify || true)"
+printf '%s\n' "${sec}" | grep -q 'OpenVPN' && ok health-section || bad health-section
+grep -q 'notify error' "${root}/notify" && ok health-notify || bad health-notify
+rm -f "$(hm_ovpn_conf_file)"
+if hm_ovpn_health_section >/dev/null; then ok health-absent; else bad health-absent; fi
+
+grep -q 'openvpn-server@hm openvpn@server openvpn' commands/services/main.sh && ok services-catalog || bad services-catalog
+
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

@@ -109,6 +109,13 @@ hm_report_collect() {
   hm_report_take "Dysk" "${HM_REPORT_DISK:-}" "brak statystyk dysku"
   hm_report_take "Zasoby" "${HM_REPORT_STATS:-}" "brak stats" stats week --json
   hm_report_take "Audyt" "${HM_REPORT_AUDIT:-}" "brak security audit" security audit --json
+  if declare -F hm_traffic_summary >/dev/null 2>&1; then
+    local traffic
+    traffic="$(hm_traffic_summary || true)"
+    if [[ -n "${traffic}" ]]; then
+      hm_report_push "Ruch" "${traffic}"
+    fi
+  fi
 }
 
 hm_report_text() {

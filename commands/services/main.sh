@@ -31,7 +31,7 @@ cron|cron crond|—|Cron
 docker|docker docker.service|—|Docker
 supervisor|supervisor supervisord|—|Supervisor
 sshd|sshd ssh|22|OpenSSH
-openvpn|openvpn-server@hm|1194|OpenVPN
+openvpn|openvpn-server@hm openvpn@server openvpn|1194|OpenVPN
 EOF
 }
 

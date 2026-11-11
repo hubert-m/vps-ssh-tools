@@ -5,20 +5,26 @@ _hm_cmd_help openvpn <<'EOF'
 Użycie:
   openvpn                               status, albo podpowiedź install --dry-run
   openvpn install [--dry-run] [--yes]
-  openvpn status
+  openvpn status [--json]
   openvpn doctor
-  openvpn who
-  openvpn kick <nazwa>
-  openvpn log
+  openvpn who [--json]
+  openvpn clients online
+  openvpn kick <nazwa> [--yes]
+  openvpn log [N] [--errors] [--client <nazwa>]
+  openvpn traffic [--days N]
   openvpn route
-  openvpn config [show|set <klucz> <wartość>]
-  openvpn backup [katalog]
-  openvpn restore <katalog> --yes
+  openvpn config show
+  openvpn config set <klucz> <wartość> [--dry-run]
+  openvpn route add|del|list <CIDR>
+  openvpn backup [katalog] | --local | --target <nazwa> [--keep N] [--plain]
+  openvpn backup list [--target <nazwa>]
+  openvpn restore <katalog|plik|latest> [--yes] [--endpoint HOST] [--target <nazwa>]
   openvpn client add <nazwa> [--days N] [--pass] [--static-ip IP] [--no-export] [--yes]
   openvpn client export <nazwa> [--out ścieżka] [--print] | --all
   openvpn client list [--all|--revoked|--expiring N]
   openvpn client show <nazwa>
-  openvpn client ip <nazwa>
+  openvpn client ip <nazwa> [<IP>|--clear]
+  openvpn client route <nazwa> add <CIDR>
   openvpn client revoke <nazwa> [--yes]
   openvpn client renew <nazwa> [--days N] [--yes]
   openvpn crl update [--quiet]
@@ -786,6 +792,7 @@ hm_ovpn_client() {
     list) hm_ovpn_client_list "$@" ;;
     show) hm_ovpn_client_show "$@" ;;
     ip) hm_ovpn_client_ip "$@" ;;
+    route) hm_ovpn_client_route "$@" ;;
     revoke) hm_ovpn_client_revoke "$@" ;;
     renew) hm_ovpn_client_renew "$@" ;;
     *)
@@ -1004,15 +1011,26 @@ cmd_openvpn() {
       hm_ovpn_status
       ;;
     install) hm_ovpn_install "$@" ;;
-    status) hm_ovpn_status ;;
+    status) hm_ovpn_status "$@" ;;
     doctor) hm_ovpn_doctor ;;
-    who) hm_ovpn_who ;;
+    who) hm_ovpn_who "$@" ;;
+    clients)
+      [[ "${1:-}" == "online" ]] || { hm_err "Użycie: openvpn clients online"; return 1; }
+      shift || true
+      hm_ovpn_who "$@"
+      ;;
     kick) hm_ovpn_kick "$@" ;;
-    log) hm_ovpn_log ;;
-    route) hm_ovpn_route ;;
+    log) hm_ovpn_log "$@" ;;
+    traffic) hm_ovpn_traffic "$@" ;;
+    route)
+      case "${1:-}" in
+        add|del|list) hm_ovpn_route_edit "$@" ;;
+        *) hm_ovpn_route ;;
+      esac
+      ;;
     config) hm_ovpn_config "$@" ;;
-    backup) hm_ovpn_backup "$@" ;;
-    restore) hm_ovpn_restore "$@" ;;
+    backup) hm_ovpn_backup_entry "$@" ;;
+    restore) hm_ovpn_restore_entry "$@" ;;
     uninstall) hm_ovpn_uninstall "$@" ;;
     audit) hm_ovpn_security_audit "$@" ;;
     fail2ban) hm_ovpn_fail2ban "$@" ;;
@@ -1045,5 +1063,11 @@ cmd_openvpn() {
 source "$(dirname "${BASH_SOURCE[0]}")/install.sh"
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/audit.sh"
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/backup.sh"
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/config.sh"
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/status.sh"
 
 _hm_cmd_register openvpn cmd_openvpn 0 ovpn vpn
