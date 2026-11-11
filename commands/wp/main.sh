@@ -3,7 +3,7 @@
 
 _hm_cmd_help wp <<'EOF'
 Użycie (globalnie, bez kontekstu strony):
-  wp sites                         Instalacje WP: wersja, aktualizacje, maintenance, PHP
+  wp sites [--json]                Instalacje WP: wersja, aktualizacje, maintenance, PHP
   wp install <domena> --title "…" --admin-email … [--yes]
   wp cli-info                      ścieżka i `wp --info` (bundled phar lub systemowy wp)
   wp cli-update                    pobierz oficjalny wp-cli.phar → lib/wp-cli/ (SHA-512)
@@ -561,6 +561,10 @@ cmd_wp() {
       ;;
     sites|list-sites)
       shift || true
+      if hm_has_json_flag "$@"; then
+        hm_json_emit wp
+        return $?
+      fi
       cmd_wp_sites "$@"
       ;;
     install)

@@ -4,7 +4,7 @@
 
 _hm_cmd_help node <<'EOF'
 Użycie (globalnie):
-  node | node sites                 Serwisy z katalogiem .nvm i/lub .npm
+  node | node sites [--json]         Serwisy z katalogiem .nvm i/lub .npm
   node update nvm <domena> [--yes]  Aktualizacja nvm w ~/.nvm tej strony
   node update npm <domena> [--yes]  npm install -g npm@<najnowsza> jako user strony
 
@@ -499,8 +499,12 @@ cmd_node() {
     help|-h|--help)
       hm_help_topic node
       ;;
-    sites|list|ls)
+    sites|list|ls|--json)
       shift || true
+      if [[ "${sub}" == "--json" ]] || hm_has_json_flag "$@"; then
+        hm_json_emit node
+        return $?
+      fi
       hm_node_list_sites
       ;;
     update)
@@ -508,6 +512,10 @@ cmd_node() {
       hm_node_update_cmd "$@"
       ;;
     "")
+      if hm_has_json_flag "$@"; then
+        hm_json_emit node
+        return $?
+      fi
       if [[ -n "${HM_SITE_DOMAIN:-}" ]]; then
         hm_node_print_one "${HM_SITE_DOMAIN}"
       else

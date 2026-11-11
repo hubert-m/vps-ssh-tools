@@ -4,7 +4,7 @@
 
 _hm_cmd_help disk <<'EOF'
 Użycie:
-  disk                         pełny raport (df + inody + top /home)
+  disk [--json]                pełny raport (df + inody + top /home); --json to same systemy plików
   disk --drive                 tylko zużycie dysku (df -hT)
   disk --inodes                tylko inody (df -i)
   disk --home                  tylko top katalogi w /home
@@ -133,7 +133,7 @@ hm_disk_section_heavy() {
 }
 
 cmd_disk() {
-  local do_drive=0 do_inodes=0 do_home=0 do_heavy=0
+  local do_drive=0 do_inodes=0 do_home=0 do_heavy=0 do_json=0
   local heavy_count="" heavy_deep=""
   local any_section=0
   local arg
@@ -141,6 +141,10 @@ cmd_disk() {
   while [[ $# -gt 0 ]]; do
     arg="${1}"
     case "${arg}" in
+      --json)
+        do_json=1
+        shift
+        ;;
       --drive|-d)
         do_drive=1
         any_section=1
@@ -205,6 +209,15 @@ cmd_disk() {
         ;;
     esac
   done
+
+  if [[ "${do_json}" -eq 1 ]]; then
+    if [[ "${any_section}" -eq 1 ]]; then
+      hm_err "disk --json jest dla listy systemów plików."
+      return 1
+    fi
+    hm_json_emit disk
+    return $?
+  fi
 
   if [[ -n "${heavy_count}" || -n "${heavy_deep}" ]] && [[ "${do_heavy}" -ne 1 ]]; then
     hm_err "--count / --deep wymagają flagi --heavy."

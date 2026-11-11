@@ -4,7 +4,7 @@
 
 _hm_cmd_help limits <<'EOF'
 Użycie:
-  limits | status              Tabela per strona (dysk cache, limity cgroup/quota)
+  limits | status [--json]     Tabela per strona (dysk cache, limity cgroup/quota)
   limits check                 cgroup v2, quota /home, OLS cgroups
   limits set --cpu 100% --mem 1G [--io 20M] [--tasks 200]
   limits set --disk 10G [--inodes 300000]
@@ -644,6 +644,20 @@ hm_limits_table() {
 
 cmd_limits() {
   local sub="${1:-}"
+  if [[ "${sub}" == "--json" ]] || hm_has_json_flag "$@"; then
+    local a
+    for a in "$@"; do
+      case "${a}" in
+        --json|status|list|ls|all|"") ;;
+        *)
+          hm_err "limits --json jest dla listy."
+          return 1
+          ;;
+      esac
+    done
+    hm_json_emit limits
+    return $?
+  fi
   # w kontekście bez sub → show; globalnie → table
   case "${sub}" in
     check)

@@ -4,8 +4,8 @@
 
 _hm_cmd_help security <<'EOF'
 Użycie:
-  security status          Firewall + Fail2Ban + skrót portów
-  security ports           Publiczne 0.0.0.0/[::] + alerty (3306/6379/7080/3xxx)
+  security status [--json] Firewall + Fail2Ban + skrót portów
+  security ports [--json]  Publiczne 0.0.0.0/[::] + alerty (3306/6379/7080/3xxx)
   security ssh             Audyt sshd_config, authorized_keys, lastb
   security ssh set port <N> | password-auth no|yes | root-login <val>
   security ssh confirm     Potwierdź zmianę SSH (anuluje auto-rollback 120 s)
@@ -123,10 +123,22 @@ cmd_security() {
   hm_detect_all
 
   case "${sub}" in
+    --json)
+      hm_json_emit security_status
+      return $?
+      ;;
     status|stat)
+      if hm_has_json_flag "$@"; then
+        hm_json_emit security_status
+        return $?
+      fi
       cmd_security_status
       ;;
     ports|port)
+      if hm_has_json_flag "$@"; then
+        hm_json_emit ports
+        return $?
+      fi
       cmd_security_ports
       ;;
     ssh)

@@ -4,7 +4,7 @@
 
 _hm_cmd_help services <<'EOF'
 Użycie:
-  services                         Tabela: usługa, active/failed, enabled, uptime, RAM, porty
+  services [--json]                Tabela: usługa, active/failed, enabled, uptime, RAM, porty
   services restart <nazwa>         Plan → restart → is-active + port + journal przy błędzie
   services enable|disable <nazwa>  Z ostrzeżeniem o zależnościach
   services status <nazwa>          Szczegóły jednej usługi
@@ -374,7 +374,15 @@ cmd_services() {
   local sub="${1:-}"
   shift || true
   case "${sub}" in
-    ""|list|ls|status)
+    ""|list|ls|status|--json)
+      if [[ "${sub}" == "--json" ]] || hm_has_json_flag "$@"; then
+        if [[ "${sub}" == "status" && -n "${1:-}" && "${1}" != "--json" ]]; then
+          hm_err "services --json jest dla listy."
+          return 1
+        fi
+        hm_json_emit services
+        return $?
+      fi
       if [[ -n "${1:-}" && "${sub}" == "status" ]]; then
         cmd_services_one "$1"
       elif [[ -n "${1:-}" && "${sub}" != "list" && "${sub}" != "ls" && "${sub}" != "" ]]; then

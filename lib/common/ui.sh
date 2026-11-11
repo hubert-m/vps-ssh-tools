@@ -590,3 +590,10 @@ hm_table_print() {
   done
   return 0
 }
+
+_hm_json_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/json.sh"
+if [[ -f "${_hm_json_lib}" ]]; then
+  # shellcheck source=json.sh
+  source "${_hm_json_lib}"
+fi
+unset _hm_json_lib

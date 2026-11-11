@@ -91,6 +91,39 @@
 | `help [polecenie]` | Lista komend lub pomoc do wybranej (np. `help use`) |
 | `exit` | Na głównej: wyjście z hmtools; w `[domena]>`: powrót do `hmtools>` |
 
+## JSON i metryki
+
+`--json` drukuje jeden obiekt na stdout, bez kolorów i bez komunikatów UI. Błąd idzie na stderr i zwraca kod różny od zera. Klucze są stałe.
+
+| Komenda | Klucze |
+|---------|--------|
+| `webs --json` | `sites[]`: `domain`, `php`, `ssl`, `size_bytes`, `status` |
+| `wp sites --json` | `sites[]`: `domain`, `version`, `plugins`, `themes`, `maintenance`, `php` |
+| `ssl --json` | `certs[]`: `domain`, `status`, `days`, `expiry` |
+| `services --json` | `services[]`: `name`, `unit`, `active`, `enabled` |
+| `backup list --json` | `snapshots[]`: `scope`, `stamp`, `age_seconds`, `ok` |
+| `backup targets --json` | `targets[]`: `name`, `kind`, `spec`, `default` |
+| `security status --json` | `firewall`, `fail2ban`, `bans`, `updates_pending` (`-1` = brak liczby) |
+| `security ports --json` | `ports[]`: `port`, `proto`, `address`, `process` |
+| `node --json` | `sites[]`: `domain`, `nvm`, `npm` |
+| `docker --json` | `containers[]`: `name`, `image`, `status`, `ports` |
+| `limits --json` | `sites[]`: `domain`, `user`, `disk_bytes`, `cpu`, `mem`, `io` |
+| `disk --json` | `filesystems[]`: `mount`, `used_percent`, `avail_kb`, `fstype` |
+| `mysql --json` | `databases[]`: `name`, `size_bytes` |
+| `metrics export [--textfile ŚCIEŻKA]` | Atomowy zapis `.prom` (tmp + mv). Domyślnie `/var/lib/node_exporter/textfile/hmtools.prom` |
+| `metrics timer [--yes]` | Cron co 15 min. Wiek kopii liczy lokalne stemple w `BACKUP_LOCAL_ROOT`. Uptime HTTP jest w pliku, gdy działa `monitor http` |
+
+Serie: `hmtools_backup_age_seconds`, `hmtools_cert_days_left`, `hmtools_service_up`, `hmtools_http_up`, `hmtools_fail2ban_bans`, `hmtools_security_updates_pending`.
+
+## Dashboard
+
+| Komenda | Opis |
+|---------|------|
+| `dashboard build [--out KATALOG]` | Statyczny `index.html` z danych `--json` (health, domeny, certy, usługi, kopie, uptime, aktualizacje, audyt). Tekst jest escapowany |
+| `dashboard serve [--port 8765] [--python] [--dry-run]` | Plan nasłuchu tylko na `127.0.0.1` albo `::1`. `--python` to `http.server --bind`. Inny adres jest odrzucany |
+| `dashboard schedule enable\|disable [--yes]` | Cron przebudowy HTML |
+| `dashboard publish --domain D --allow IP --yes` | Opcjonalny vhost. Hasło basic auth zostaje w pliku auth, poza HTML |
+
 ## W kontekście strony (`[domena]>`)
 
 | Komenda | Opis |

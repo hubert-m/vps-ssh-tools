@@ -4,7 +4,7 @@
 
 _hm_cmd_help webs <<'EOF'
 Użycie:
-  webs [--quick|-q] [--suspended]   Lista usług webowych
+  webs [--quick|-q] [--suspended] [--json]   Lista usług webowych
   webs delete <n|domena> […]        Całkowite usunięcie serwisu (aliasy: remove/destroy/rm)
   webs archive <n|domena>           Archiwum na Drive → weryfikacja → usunięcie z VPS
 
@@ -41,18 +41,32 @@ cmd_webs() {
       ;;
   esac
 
-  local quick=0 suspended_only=0
+  local quick=0 suspended_only=0 json=0
   local arg
+  for arg in "$@"; do
+    [[ "${arg}" == "--json" ]] && json=1
+  done
   for arg in "$@"; do
     case "${arg}" in
       --quick|-q) quick=1 ;;
       --suspended) suspended_only=1 ;;
+      --json) ;;
       --help|-h)
         hm_help_topic webs
         return 0
         ;;
+      *)
+        if [[ "${json}" -eq 1 ]]; then
+          hm_err "Nieznana flaga: ${arg}"
+          return 1
+        fi
+        ;;
     esac
   done
+  if [[ "${json}" -eq 1 ]]; then
+    hm_json_emit webs "${quick}" "${suspended_only}"
+    return $?
+  fi
   hm_list_sites "${quick}" "${suspended_only}"
 }
 

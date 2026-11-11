@@ -4,7 +4,7 @@
 
 _hm_cmd_help mysql <<'EOF'
 Użycie:
-  mysql | dbs                 Lista baz (globalnie / w kontekście strony)
+  mysql | dbs [--json]        Lista baz (globalnie / w kontekście strony)
   mysql heavy [--min-size X]  Bazy ≥ X + tabele ≥ X (domyślnie 1G)
   mysql dump <db>             Zrzut → Google Drive
   mysql dump <db> --local [p] Lokalny .sql.gz (domyślnie <site>/backups/ lub ${TMP_DIR}/hmtools-db/ → zwykle /tmp/hmtools-backup/hmtools-db/)
@@ -66,7 +66,11 @@ cmd_mysql() {
   hm_detect_all
 
   case "${sub}" in
-    list|ls|"")
+    list|ls|""|--json)
+      if [[ "${sub}" == "--json" ]] || hm_has_json_flag "$@"; then
+        hm_json_emit mysql
+        return $?
+      fi
       if [[ -n "${HM_SITE_DOMAIN}" ]]; then
         hm_print_dbs_for_site "${HM_SITE_DOMAIN}" "${HM_SITE_DOCROOT}" "${HM_SITE_ROOT}" "${HM_SITE_USER}"
       else

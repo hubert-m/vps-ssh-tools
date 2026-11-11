@@ -8,7 +8,7 @@ source "${_HM_SSL_DIR}/issue.sh"
 
 _hm_cmd_help ssl <<'EOF'
 Użycie:
-  ssl                              Lista certyfikatów (status / dni do wygaśnięcia)
+  ssl [--json]                     Lista certyfikatów (status / dni do wygaśnięcia)
   ssl issue [domena] [--with-www] [--aliases]
                                    Wydaj LE (HTTP-01) z pre-check DNS + .well-known
   ssl issue [domena] --wildcard --dns pdns|cloudflare
@@ -72,6 +72,21 @@ cmd_ssl() {
       return
       ;;
   esac
+
+  if hm_has_json_flag "$@"; then
+    local a
+    for a in "$@"; do
+      case "${a}" in
+        --json) ;;
+        *)
+          hm_err "Nieznana flaga: ${a}"
+          return 1
+          ;;
+      esac
+    done
+    hm_json_emit ssl
+    return $?
+  fi
 
   # W kontekście strony bez podkomendy → szczegóły certu
   if [[ -n "${HM_SITE_DOMAIN:-}" && -z "${1:-}" ]]; then

@@ -142,6 +142,10 @@ cmd_backup() {
       fi
       ;;
     targets)
+      if hm_has_json_flag "$@"; then
+        hm_json_emit backup_targets
+        return $?
+      fi
       cmd_backup_targets "$@"
       ;;
     target)
@@ -159,6 +163,10 @@ cmd_backup() {
       cmd_backup_inc "$@"
       ;;
     list|ls)
+      if hm_has_json_flag "$@"; then
+        hm_json_emit backup_list
+        return $?
+      fi
       hm_backup_list "${1:-}"
       ;;
     verify)

@@ -16,6 +16,8 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [vX.Y.Z]
 
+- Feat: `dashboard build` — statyczny HTML z `--json`, nasłuch tylko na loopback
+- Feat: `--json` list i statusów oraz `metrics export` (atomowy plik Prometheus)
 - Fix: `chrome clean` kasuje zweryfikowaną ścieżkę; `chrome ps` obcina znaki sterujące i hasło proxy
 - Fix: `hm_visible_len` liczy znaki w C.UTF-8, a testy tabel ładują `ui.sh`
 - Feat: `config track` — lokalne repo, rollback pliku i pominięcie sekretów

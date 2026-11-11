@@ -996,6 +996,16 @@ hm_tab_complete() {
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
         done
         ;;
+      metrics)
+        for m in export timer --textfile --yes help; do
+          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+        done
+        ;;
+      dashboard)
+        for m in build serve schedule publish --port --python --dry-run --yes help; do
+          [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+        done
+        ;;
       cf|cloudflare)
         for m in setup realip purge dns attack block status help; do
           [[ "${m}" == "${partial}"* ]] && matches+=("${m}")

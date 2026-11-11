@@ -4,7 +4,7 @@
 
 _hm_cmd_help docker <<'EOF'
 Użycie:
-  docker | status              Lista kontenerów (nazwa, obraz, status, porty, stack, domena OLS)
+  docker | status [--json]     Lista kontenerów (nazwa, obraz, status, porty, stack, domena OLS)
   docker all                   Wszystkie (ignoruj filtr kontekstu use)
   docker logs <nazwa> [N] [--follow]
   docker restart|stop|start <nazwa>
@@ -418,8 +418,11 @@ cmd_docker_prune() {
 
 cmd_docker() {
   case "${1:-}" in
-    ""|status|list|ls)
-      shift || true
+    ""|status|list|ls|--json)
+      if [[ "${1:-}" == "--json" ]] || { shift || true; hm_has_json_flag "$@"; }; then
+        hm_json_emit docker
+        return $?
+      fi
       cmd_docker_list 0
       ;;
     all)
