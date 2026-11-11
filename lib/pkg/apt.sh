@@ -264,6 +264,16 @@ _hm_pkg_do_auto_security_set() {
   esac
 }
 
+_hm_pkg_do_php_fpm_query() {
+  local v
+  local -a pkgs=()
+  hm_have_cmd apt-cache || return 1
+  for v in 8.1 8.2 8.3 8.4 8.5; do
+    pkgs+=("php${v}-fpm")
+  done
+  apt-cache policy "${pkgs[@]}"
+}
+
 _hm_pkg_do_php_repo_label() {
   if [[ "${OS_ID:-}" == "ubuntu" ]]; then
     printf 'ondrej'
@@ -288,6 +298,10 @@ _hm_pkg_do_php_repo_add() {
       *) keyurl="https://packages.sury.org/php/apt.gpg" ;;
     esac
     hm_have_cmd curl || { hm_err "Brak curl — nie pobieram klucza PHP."; return 1; }
+    if ! hm_have_cmd gpg; then
+      hm_info "Brak gpg — instaluję gnupg."
+      hm_pkg_install gnupg || { hm_err "Nie udało się zainstalować gnupg."; return 1; }
+    fi
     hm_have_cmd gpg || { hm_err "Brak gpg — nie składam klucza PHP."; return 1; }
     curl -fsSL --max-time 60 "${keyurl}" | gpg --dearmor -o "${keyfile}"
   fi

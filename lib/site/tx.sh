@@ -14,6 +14,47 @@ hm_site_manifest_path() {
   printf '%s/%s.json' "$(hm_site_manifest_dir)" "${1:-}"
 }
 
+# Stan kreatora poza HOME usera strony (root, 0700).
+hm_site_state_dir() {
+  local base="${HM_SITE_STATE_DIR:-}"
+  if [[ -z "${base}" && "${HMTOOLS_TEST:-}" == "1" ]]; then
+    base="${TMPDIR:-/tmp}/hmtools-site-state"
+  fi
+  [[ -n "${base}" ]] || base="/var/lib/hmtools/sites"
+  printf '%s/%s' "${base}" "${1:-}"
+}
+
+# 0, gdy ścieżka albo któryś katalog nadrzędny jest symlinkiem.
+hm_site_path_has_symlink() {
+  local path="$1" cur line
+  [[ -n "${path}" ]] || return 1
+  cur="${path}"
+  while [[ -n "${cur}" && "${cur}" != "/" ]]; do
+    if [[ -e "${cur}" || -L "${cur}" ]]; then
+      line="$(ls -ld -- "${cur}" 2>/dev/null || true)"
+      [[ "${line}" == *"->"* ]] && return 0
+    fi
+    cur="$(dirname "${cur}")"
+  done
+  return 1
+}
+
+# Zapis bez podążania za symlinkiem (mktemp + mv w katalogu docelowym).
+hm_site_write_nofollow() {
+  local path="$1" dir tmp
+  dir="$(dirname "${path}")"
+  if [[ -L "${path}" ]] || hm_site_path_has_symlink "${dir}"; then
+    hm_err "Odmowa zapisu przez symlink: ${path}"
+    return 1
+  fi
+  mkdir -p "${dir}"
+  chmod 0700 "${dir}" 2>/dev/null || true
+  tmp="$(mktemp "${dir}/.write.XXXXXX")"
+  cat > "${tmp}"
+  chmod 0600 "${tmp}" 2>/dev/null || true
+  mv -f "${tmp}" "${path}"
+}
+
 hm_site_journal_dir() {
   printf '%s' "${HM_SITE_JOURNAL_DIR:-/var/lib/hmtools/journal}"
 }
@@ -111,9 +152,144 @@ hm_tx_done() {
   printf 'DONE %s\n' "${name}" >> "${HM_TX_JOURNAL}"
 }
 
+hm_tx_note_undo() {
+  local spec="$1"
+  [[ -n "${HM_TX_JOURNAL:-}" && -f "${HM_TX_JOURNAL}" ]] || return 0
+  printf 'undo=%s\n' "${spec}" >> "${HM_TX_JOURNAL}"
+}
+
+hm_tx_ident_ok() {
+  [[ "${1:-}" =~ ^[A-Za-z0-9_]+$ ]]
+}
+
+hm_tx_undo_meta() {
+  local s="$1" re
+  [[ "${s}" == *$'\n'* ]] && return 0
+  re='[;&<>|]|[$][(]|`'
+  [[ "${s}" =~ ${re} ]]
+}
+
 hm_tx_undo_ok() {
-  case "${1:-}" in
-    rm\ *|rmdir\ *|userdel\ *) return 0 ;;
+  local spec="${1:-}" kind
+  [[ -n "${spec}" ]] || return 1
+  hm_tx_undo_meta "${spec}" && return 1
+  if [[ "${spec}" == *$'\t'* ]]; then
+    kind="${spec%%$'\t'*}"
+    case "${kind}" in
+      mysql-drop-db|mysql-drop-user|pg-drop|systemd-unit|nginx-vhost|fpm-pool) return 0 ;;
+    esac
+    return 1
+  fi
+  case "${spec}" in
+    rm\ -rf\ *|rm\ -fr\ *|rm\ -f\ *|rmdir\ *|userdel\ *) return 0 ;;
+  esac
+  return 1
+}
+
+hm_tx_undo_legacy() {
+  local spec="$1" cmd flag path
+  hm_tx_undo_ok "${spec}" || return 1
+  [[ "${spec}" == *$'\t'* ]] && return 1
+  cmd="${spec%% *}"
+  case "${cmd}" in
+    rm)
+      spec="${spec#rm }"
+      flag="${spec%% *}"
+      path="${spec#"${flag}" }"
+      path="${path#" "}"
+      case "${flag}" in
+        -f|-rf|-fr) ;;
+        *) return 1 ;;
+      esac
+      [[ -n "${path}" && "${path}" != *" "* ]] || return 1
+      rm "${flag}" -- "${path}"
+      ;;
+    rmdir)
+      path="${spec#rmdir }"
+      [[ -n "${path}" && "${path}" != *" "* ]] || return 1
+      rmdir -- "${path}"
+      ;;
+    userdel)
+      path="${spec#userdel }"
+      if [[ "${path}" == "--remove "* ]]; then
+        path="${path#--remove }"
+        [[ -n "${path}" && "${path}" != *" "* ]] || return 1
+        userdel --remove -- "${path}"
+      else
+        [[ -n "${path}" && "${path}" != *" "* ]] || return 1
+        userdel -- "${path}"
+      fi
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+hm_tx_undo_systemd() {
+  local path="$1" base
+  base="$(basename "${path}")"
+  [[ "${base}" == hm-*.service || "${base}" == hm-*.timer ]] || return 1
+  if hm_have_cmd systemctl; then
+    systemctl disable --now "${base}" >/dev/null 2>&1 || true
+  fi
+  rm -f -- "${path}"
+}
+
+hm_tx_undo_vhost() {
+  local path="$1"
+  case "${path}" in
+    /etc/nginx/sites-available/*|/etc/nginx/sites-enabled/*|/etc/nginx/conf.d/*)
+      ;;
+    /etc/apache2/sites-available/*|/etc/apache2/sites-enabled/*|/etc/httpd/conf.d/*)
+      ;;
+    */sites-available/*|*/sites-enabled/*|*/conf.d/*)
+      ;;
+    *) return 1 ;;
+  esac
+  rm -f -- "${path}"
+}
+
+hm_tx_undo_fpm() {
+  local path="$1"
+  [[ "${path}" == *pool.d/*.conf || "${path}" == */fpm.conf ]] || return 1
+  rm -f -- "${path}"
+}
+
+hm_tx_undo_dispatch() {
+  local spec="$1" kind rest a b q
+  if [[ "${spec}" != *$'\t'* ]]; then
+    hm_tx_undo_legacy "${spec}"
+    return $?
+  fi
+  kind="${spec%%$'\t'*}"
+  rest="${spec#*$'\t'}"
+  a="${rest%%$'\t'*}"
+  b=""
+  if [[ "${rest}" == *$'\t'* ]]; then
+    b="${rest#*$'\t'}"
+  fi
+  case "${kind}" in
+    mysql-drop-db)
+      hm_tx_ident_ok "${a}" || return 1
+      declare -F hm_mysql_exec >/dev/null 2>&1 || { hm_warn "Brak mysql — nie kasuję bazy ${a}."; return 0; }
+      hm_mysql_exec -e "DROP DATABASE IF EXISTS \`${a}\`;"
+      ;;
+    mysql-drop-user)
+      hm_tx_ident_ok "${a}" || return 1
+      declare -F hm_mysql_exec >/dev/null 2>&1 || { hm_warn "Brak mysql — nie kasuję usera ${a}."; return 0; }
+      if declare -F hm_sql_quote >/dev/null 2>&1; then
+        q="$(hm_sql_quote "${a}")"
+      else
+        q="'${a}'"
+      fi
+      hm_mysql_exec -e "DROP USER IF EXISTS ${q}@'localhost';"
+      ;;
+    pg-drop)
+      declare -F hm_site_db_drop_postgres >/dev/null 2>&1 || { hm_warn "Brak undo PostgreSQL."; return 0; }
+      hm_site_db_drop_postgres "${a}" "${b}"
+      ;;
+    systemd-unit) hm_tx_undo_systemd "${a}" ;;
+    nginx-vhost) hm_tx_undo_vhost "${a}" ;;
+    fpm-pool) hm_tx_undo_fpm "${a}" ;;
     *) return 1 ;;
   esac
 }
@@ -132,8 +308,7 @@ hm_tx_rollback() {
   for ((i = ${#undos[@]} - 1; i >= 0; i--)); do
     undo="${undos[$i]}"
     hm_tx_undo_ok "${undo}" || { hm_err "Odrzucono undo: ${undo}"; return 1; }
-    # shellcheck disable=SC2086
-    bash -c "${undo}" || hm_warn "undo nieudane: ${undo}"
+    hm_tx_undo_dispatch "${undo}" || hm_warn "undo nieudane: ${undo}"
   done
   printf 'ROLLBACK\n' >> "${journal}"
   hm_tx_unlock

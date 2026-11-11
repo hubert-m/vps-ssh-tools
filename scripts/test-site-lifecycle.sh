@@ -25,8 +25,16 @@ bad() { printf 'FAIL %s\n' "$1" >&2; fail=1; }
 root="$(mktemp -d)"
 trap 'rm -rf "${root}"' EXIT
 export HM_SITE_HOME_BASE="${root}/homes"
+export HM_SITE_MANIFEST_DIR="${root}/manifests"
+export HM_SITE_STATE_DIR="${root}/state"
+export HM_SITE_SYSTEMD_DIR="${root}/systemd"
+export HM_SITE_LOGROTATE_DIR="${root}/logrotate.d"
+export HM_SITE_FW_DIR="${root}/fw"
+export HM_SITE_VHOST_DIR="${root}/vhosts"
 home="${HM_SITE_HOME_BASE}/app.example"
-mkdir -p "${home}/.hmtools" "${root}/ext" "${root}/pkgs/php8.3" "${root}/pkgs/php8.4"
+state="$(hm_site_state_dir app.example)"
+mkdir -p "${home}" "${state}" "${root}/ext" "${root}/pkgs/php8.3" "${root}/pkgs/php8.4" \
+  "${HM_SITE_SYSTEMD_DIR}" "${HM_SITE_LOGROTATE_DIR}" "${HM_SITE_FW_DIR}" "${HM_SITE_VHOST_DIR}"
 printf 'pkg\n' > "${root}/pkgs/php8.3/keep"
 printf 'pkg\n' > "${root}/pkgs/php8.4/keep"
 printf 'shared-runtime\n' > "${root}/ext/shared-php"
@@ -36,33 +44,33 @@ mkdir -p "$(dirname "${man}")"
 cat > "${man}" <<'EOF'
 {"schema":1,"domain":"app.example","webserver":"nginx","runtime":{"type":"php","version":"8.3","manager":"fpm"},"env_file":"/tmp/none","databases":[]}
 EOF
-printf 'php=8.3\n' > "${home}/.hmtools/fpm.conf"
+printf 'php=8.3\n' > "${state}/fpm.conf"
 printf '22\n' > "${home}/.nvmrc"
-mkdir -p "${home}/.nvm/versions/node/v22" "${home}/.hmtools/venv-3.11"
-ln -sfn "venv-3.11" "${home}/.hmtools/venv" 2>/dev/null || true
-if ! ls -ld "${home}/.hmtools/venv" | grep -F -q -- '->'; then
-  rm -rf "${home}/.hmtools/venv"
-  printf 'venv-3.11\n' > "${home}/.hmtools/venv"
+mkdir -p "${home}/.nvm/versions/node/v22" "${state}/venv-3.11"
+ln -sfn "venv-3.11" "${state}/venv" 2>/dev/null || true
+if ! ls -ld "${state}/venv" | grep -F -q -- '->'; then
+  rm -rf "${state}/venv"
+  printf 'venv-3.11\n' > "${state}/venv"
 fi
 
-unit="${root}/ext/hm-app.service"
+unit="${HM_SITE_SYSTEMD_DIR}/hm-app.example.service"
 printf 'ExecStart=/node/v22/bin/node\n' > "${unit}"
-vh="${root}/ext/vhost.conf"
+vh="${HM_SITE_VHOST_DIR}/app.example.conf"
 printf 'server_name app.example;\n' > "${vh}"
-fpm="${root}/ext/fpm.conf"
+fpm="${state}/pool.conf"
 printf 'php=8.3\n' > "${fpm}"
-dbf="${root}/ext/db.sql"
+dbf="${state}/db.sql"
 printf 'CREATE DATABASE app;\n' > "${dbf}"
-fw="${root}/ext/fw.rules"
+fw="${HM_SITE_FW_DIR}/hm-app.example.rules"
 printf 'allow 80\n' > "${fw}"
-portf="${root}/ext/port"
+portf="${state}/port"
 printf '3001\n' > "${portf}"
-lr="${root}/ext/logrotate"
+lr="${HM_SITE_LOGROTATE_DIR}/hm-app.example"
 printf 'daily\n' > "${lr}"
-cronf="${root}/ext/cron"
+cronf="${HM_SITE_SYSTEMD_DIR}/hm-app.example-cron"
 printf '0 * * * * true\n' > "${cronf}"
-worker="${root}/ext/worker"
-timer="${root}/ext/timer"
+worker="${HM_SITE_SYSTEMD_DIR}/hm-app.example-worker"
+timer="${HM_SITE_SYSTEMD_DIR}/hm-app.example.timer"
 printf 'w\n' > "${worker}"
 printf 't\n' > "${timer}"
 
@@ -142,25 +150,25 @@ if cmd_site_runtime python 3.12 app.example --yes; then
 else
   ok "py-fail-rc"
 fi
-pycur="$(ls -ld "${home}/.hmtools/venv")"
+pycur="$(ls -ld "${state}/venv")"
 if [[ "${pycur}" == *"->"* ]]; then
   pycur="${pycur##*-> }"
 else
-  pycur="$(tr -d '[:space:]' < "${home}/.hmtools/venv")"
+  pycur="$(tr -d '[:space:]' < "${state}/venv")"
 fi
 pycur="${pycur//[[:space:]]/}"
 [[ "${pycur}" == "venv-3.11" ]] && ok "py-fail-link" || bad "py-fail-link=${pycur}"
 unset HM_SITE_RUNTIME_FAIL
 cmd_site_runtime python 3.12 app.example --yes
-pycur="$(ls -ld "${home}/.hmtools/venv")"
+pycur="$(ls -ld "${state}/venv")"
 if [[ "${pycur}" == *"->"* ]]; then
   pycur="${pycur##*-> }"
 else
-  pycur="$(tr -d '[:space:]' < "${home}/.hmtools/venv")"
+  pycur="$(tr -d '[:space:]' < "${state}/venv")"
 fi
 pycur="${pycur//[[:space:]]/}"
 [[ "${pycur}" == "venv-3.12" ]] && ok "py-switch" || bad "py-switch=${pycur}"
-[[ -d "${home}/.hmtools/venv-3.11" ]] && ok "py-old-remains" || bad "py-old-remains"
+[[ -d "${state}/venv-3.11" ]] && ok "py-old-remains" || bad "py-old-remains"
 
 # --- webs delete ---
 # shellcheck disable=SC1091
@@ -210,14 +218,15 @@ order="$(cut -f1 "${HM_SITE_LIFECYCLE_LOG}" | tr '\n' ' ')"
 
 # keep-db / keep-files
 home2="${HM_SITE_HOME_BASE}/keep.example"
-mkdir -p "${home2}/.hmtools"
+state2="$(hm_site_state_dir keep.example)"
+mkdir -p "${home2}" "${state2}" "${HM_SITE_SYSTEMD_DIR}"
 export HM_SITE_DOMAIN=""
 man2="$(hm_site_manifest_path keep.example)"
 mkdir -p "$(dirname "${man2}")"
 printf '%s\n' '{"schema":1,"domain":"keep.example","runtime":{"type":"php","version":"8.3","manager":""}}' > "${man2}"
-db2="${root}/ext/db2.sql"
-unit2="${root}/ext/unit2.service"
-inside="${home2}/.hmtools/local.unit"
+db2="${state2}/db.sql"
+unit2="${HM_SITE_SYSTEMD_DIR}/hm-keep.example.service"
+inside="${home2}/local.unit"
 printf 'db\n' > "${db2}"
 printf 'u\n' > "${unit2}"
 printf 'in\n' > "${inside}"

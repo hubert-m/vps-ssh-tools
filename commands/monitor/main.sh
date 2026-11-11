@@ -154,12 +154,35 @@ hm_monitor_fetch() {
   return "${rc}"
 }
 
+hm_monitor_tls_days() {
+  local host="$1" file end epoch now days
+  if [[ -n "${HM_MONITOR_TLS_DIR:-}" ]]; then
+    file="${HM_MONITOR_TLS_DIR}/${host}"
+    [[ -f "${file}" ]] || return 1
+    tr -d '[:space:]' < "${file}"
+    return 0
+  fi
+  if declare -F hm_have_cmd >/dev/null 2>&1; then
+    hm_have_cmd openssl || return 1
+  elif ! command -v openssl >/dev/null 2>&1; then
+    return 1
+  fi
+  end="$(openssl s_client -connect "${host}:443" -servername "${host}" </dev/null 2>/dev/null \
+    | openssl x509 -noout -enddate 2>/dev/null | sed 's/^notAfter=//')"
+  [[ -n "${end}" ]] || return 1
+  epoch="$(date -d "${end}" +%s 2>/dev/null || true)"
+  [[ "${epoch}" =~ ^[0-9]+$ ]] || return 1
+  now="$(date +%s)"
+  days="$(( (epoch - now) / 86400 ))"
+  printf '%s' "${days}"
+}
+
 hm_monitor_judge() {
   local rc="$1" expect="$2" keyword="$3" body="$4" max_ms="$5"
-  local code="" secs="" redirs="" tls="" ms="0"
+  local code="" secs="" redirs="" ms="0"
   HM_MON_CODE="-"
   HM_MON_MS="-"
-  HM_MON_TLS="-"
+  [[ -n "${HM_MON_TLS:-}" ]] || HM_MON_TLS="-"
   HM_MON_STATUS="FAIL"
   HM_MON_REASON="nieznany"
   if [[ "${rc}" -eq 28 ]]; then
@@ -170,7 +193,7 @@ hm_monitor_judge() {
     HM_MON_REASON="pętla przekierowań"
     return 0
   fi
-  read -r code secs redirs tls <<<"${HM_MON_META}"
+  read -r code secs redirs <<<"${HM_MON_META}"
   [[ "${code}" =~ ^[0-9]+$ ]] || code="0"
   [[ "${redirs}" =~ ^[0-9]+$ ]] || redirs="0"
   HM_MON_CODE="${code}"
@@ -178,8 +201,13 @@ hm_monitor_judge() {
     ms="$(awk -v s="${secs}" 'BEGIN { printf "%.0f", s * 1000 }')"
   fi
   HM_MON_MS="${ms}"
-  if [[ "${tls}" =~ ^-?[0-9]+$ ]]; then
-    HM_MON_TLS="${tls}"
+  if [[ "${rc}" -eq 35 || "${rc}" -eq 51 || "${rc}" -eq 60 ]]; then
+    if [[ "${HM_MON_TLS}" =~ ^-[0-9]+$ ]]; then
+      HM_MON_REASON="tls wygasł"
+    else
+      HM_MON_REASON="tls błąd"
+    fi
+    return 0
   fi
   if [[ "${redirs}" -ge 5 ]]; then
     HM_MON_REASON="pętla przekierowań"
@@ -199,7 +227,7 @@ hm_monitor_judge() {
     HM_MON_REASON="wolno ${ms}ms"
     return 0
   fi
-  if [[ "${tls}" =~ ^-[0-9]+$ ]]; then
+  if [[ "${HM_MON_TLS}" =~ ^-[0-9]+$ ]]; then
     HM_MON_REASON="tls wygasł"
     return 0
   fi
@@ -255,6 +283,14 @@ hm_monitor_check_domain() {
     resolve="${domain}:443:127.0.0.1"
   fi
   hm_monitor_fetch "${url}" "${HM_MON_TIMEOUT}" "${body}" "${resolve}" || rc=$?
+  HM_MON_TLS="-"
+  case "${url}" in
+    https://*)
+      local days
+      days="$(hm_monitor_tls_days "${domain}" 2>/dev/null || true)"
+      [[ "${days}" =~ ^-?[0-9]+$ ]] && HM_MON_TLS="${days}"
+      ;;
+  esac
   hm_monitor_judge "${rc}" "${HM_MON_EXPECT}" "${HM_MON_KEYWORD}" "${body}" "${HM_MON_MAX_MS}"
   rm -f "${body}"
   hm_monitor_alert "${domain}" "${HM_MON_STATUS}" "${HM_MON_REASON}"

@@ -47,7 +47,7 @@ Profil nie może zawierać hasła. Zapis `--save-profile` trzyma tylko preset, r
 
 ## Manifest
 
-Ścieżka robocza kreatora: `…/<domena>/.hmtools/service.json` (katalog 0750, plik 0600). Journal transakcji: `/var/lib/hmtools/journal` (albo `HM_SITE_JOURNAL_DIR`).
+Manifest i lista zasobów: `/etc/hmtools/sites/<domena>.json` oraz `<domena>.resources.ndjson` (katalog 0700, plik 0600). Stan kreatora (health, cron, proxy): `/var/lib/hmtools/sites/<domena>/`. Journal: `/var/lib/hmtools/journal` (albo `HM_SITE_JOURNAL_DIR`). Katalog domowy usera nie jest źródłem planu `webs delete`.
 
 Pola: `schema`, `domain`, `aliases`, `user`, `webserver`, `runtime.type` / `version` / `manager`, `databases` (typ, nazwa, user, host, port — bez hasła), `env_file`, `ssl`, `created_by`, `created_at`, `hmtools_version`.
 

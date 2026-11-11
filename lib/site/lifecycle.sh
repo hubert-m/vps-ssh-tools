@@ -7,9 +7,13 @@ fi
 HMTOOLS_SITE_LIFE_LOADED=1
 
 hm_site_resources_path() {
-  local domain="$1" man
-  man="$(hm_site_manifest_path "${domain}")"
-  printf '%s/%s.resources.ndjson' "$(dirname "${man}")" "${domain}"
+  local domain="$1" dir
+  if declare -F hm_site_manifest_dir >/dev/null 2>&1; then
+    dir="$(hm_site_manifest_dir)"
+  else
+    dir="${HM_SITE_MANIFEST_DIR:-/etc/hmtools/sites}"
+  fi
+  printf '%s/%s.resources.ndjson' "${dir}" "${domain}"
 }
 
 hm_site_resource_add() {
@@ -51,10 +55,13 @@ hm_site_runtime_version() {
 hm_site_manifest_set_version() {
   local path="$1" ver="$2" tmp
   [[ "${ver}" =~ ^[A-Za-z0-9._+-]+$ ]] || { hm_err "Zła wersja: ${ver}"; return 1; }
+  if [[ -L "${path}" ]] || hm_site_path_has_symlink "$(dirname "${path}")"; then
+    hm_err "Odmowa zapisu manifestu przez symlink."
+    return 1
+  fi
   tmp="$(mktemp)"
   sed -E 's/("runtime":\{"type":"[^"]*","version":")[^"]*/\1'"${ver}"'/' "${path}" > "${tmp}"
-  cat "${tmp}" > "${path}"
-  rm -f "${tmp}"
+  mv -f "${tmp}" "${path}"
 }
 
 hm_site_show_table() {
@@ -94,10 +101,11 @@ hm_site_show_table() {
 
 hm_site_runtime_restore() {
   local src="$1" dest="$2"
-  if [[ -f "${src}" ]]; then
-    cat "${src}" > "${dest}"
+  if [[ ! -f "${src}" || -L "${src}" || -L "${dest}" ]]; then
     rm -f "${src}"
+    return 0
   fi
+  mv -f "${src}" "${dest}"
 }
 
 hm_site_runtime_php() {
@@ -106,7 +114,7 @@ hm_site_runtime_php() {
   [[ -f "${path}" ]] || { hm_err "Brak manifestu."; return 1; }
   old="$(hm_site_runtime_version "${path}")"
   home="$(hm_site_home "${domain}")"
-  pool="${HM_SITE_FPM_POOL:-${home}/.hmtools/fpm.conf}"
+  pool="${HM_SITE_FPM_POOL:-$(hm_site_state_dir "${domain}")/fpm.conf}"
   mkdir -p "$(dirname "${pool}")" "$(dirname "${path}")"
   [[ -f "${pool}" ]] && cp -f "${pool}" "${pool}.hmbak"
   cp -f "${path}" "${path}.hmbak"
@@ -179,10 +187,10 @@ hm_site_runtime_beside() {
   path="$(hm_site_manifest_path "${domain}")"
   [[ -f "${path}" ]] || { hm_err "Brak manifestu."; return 1; }
   old="$(hm_site_runtime_version "${path}")"
-  home="$(hm_site_home "${domain}")"
-  link="${home}/.hmtools/${prefix}"
-  dest="${home}/.hmtools/${prefix}-${ver}"
-  mkdir -p "${home}/.hmtools"
+  home="$(hm_site_state_dir "${domain}")"
+  link="${home}/${prefix}"
+  dest="${home}/${prefix}-${ver}"
+  mkdir -p "${home}"
   cp -f "${path}" "${path}.hmbak"
   if [[ "${HM_SITE_RUNTIME_FAIL:-}" == "1" ]]; then
     rm -f "${path}.hmbak"
@@ -333,15 +341,61 @@ hm_site_lifecycle_plan_delete() {
   HM_DEL_PLAN_KEYS+=("wizard")
 }
 
-hm_site_lifecycle_remove_path() {
-  local path="$1" kind="$2"
-  [[ -n "${path}" && "${path}" != "/" ]] || return 0
-  case "${path}" in
-    /usr/*|/bin/*|/sbin/*|/lib/*|/lib64/*)
-      hm_warn "Odmowa usunięcia ścieżki systemowej: ${path}"
-      return 0
+hm_site_delete_path_allowed() {
+  local path="$1" kind="$2" domain="${3:-${HM_DEL_DOMAIN:-}}" safe="" state="" home="" real="" realhome=""
+  [[ "${path}" == /* && "${path}" != "/" ]] || return 1
+  [[ -L "${path}" ]] && return 1
+  if declare -F hm_site_path_has_symlink >/dev/null 2>&1 && hm_site_path_has_symlink "${path}"; then
+    return 1
+  fi
+  if [[ -e "${path}" ]]; then
+    real="$(readlink -f -- "${path}" 2>/dev/null || true)"
+    [[ -n "${real}" && "${real}" == "${path}" ]] || return 1
+  fi
+  safe="${domain//[^A-Za-z0-9._-]/_}"
+  state="$(hm_site_state_dir "${domain}")"
+  case "${kind}" in
+    worker|timer|unit|cron|pm2)
+      [[ "${path}" == /etc/systemd/system/hm-* ]] && return 0
+      [[ -n "${HM_SITE_SYSTEMD_DIR:-}" && "${path}" == "${HM_SITE_SYSTEMD_DIR}/hm-"* ]] && return 0
+      ;;
+    logrotate)
+      [[ "${path}" == "/etc/logrotate.d/hm-${safe}" || "${path}" == "/etc/logrotate.d/hm-${safe}.conf" ]] && return 0
+      [[ -n "${HM_SITE_LOGROTATE_DIR:-}" && "${path}" == "${HM_SITE_LOGROTATE_DIR}/hm-${safe}"* ]] && return 0
+      ;;
+    firewall)
+      [[ "${path}" == "/etc/hmtools/firewall/hm-${safe}.rules" ]] && return 0
+      [[ -n "${HM_SITE_FW_DIR:-}" && "${path}" == "${HM_SITE_FW_DIR}/hm-${safe}"* ]] && return 0
+      ;;
+    vhost)
+      [[ "${path}" == /etc/nginx/sites-available/${domain}* || "${path}" == /etc/nginx/sites-enabled/${domain}* ]] && return 0
+      [[ "${path}" == /etc/apache2/sites-available/${domain}* || "${path}" == /etc/apache2/sites-enabled/${domain}* ]] && return 0
+      [[ "${path}" == /etc/httpd/conf.d/${domain}* ]] && return 0
+      [[ -n "${HM_SITE_VHOST_DIR:-}" && "${path}" == "${HM_SITE_VHOST_DIR}/${domain}"* ]] && return 0
+      ;;
+    fpm|db|port|compose)
+      [[ "${path}" == "${state}/"* ]] && return 0
+      [[ "${path}" == /etc/php/*/fpm/pool.d/${domain}.conf ]] && return 0
       ;;
   esac
+  home="$(hm_site_home "${domain}")"
+  [[ -n "${home}" && "${home}" != "/" && "${path}" == "${home}/"* ]] || return 1
+  [[ -L "${home}" ]] && return 1
+  if [[ -e "${path}" ]]; then
+    realhome="$(readlink -f -- "${home}" 2>/dev/null || true)"
+    real="$(readlink -f -- "${path}" 2>/dev/null || true)"
+    [[ -n "${real}" && -n "${realhome}" && "${real}" == "${realhome}/"* ]] || return 1
+  fi
+  return 0
+}
+
+hm_site_lifecycle_remove_path() {
+  local path="$1" kind="$2"
+  [[ -n "${path}" && "${path}" != "/" ]] || return 1
+  if ! hm_site_delete_path_allowed "${path}" "${kind}"; then
+    hm_warn "Odmowa usunięcia ścieżki spoza allowlisty: ${path}"
+    return 1
+  fi
   if [[ -e "${path}" || -L "${path}" ]]; then
     rm -rf -- "${path}"
   fi

@@ -141,13 +141,25 @@ hm_site_node_install_nvm() {
     hm_err "Suma SHA-256 instalatora nvm nie zgadza się z pinowaną wersją ${HM_NODE_NVM_PIN_VER}."
     return 1
   fi
-  chmod 700 "${tmp}"
-  if ! hm_site_node_as_user "${user}" "${home}" env "NVM_DIR=${home}/.nvm" "HOME=${home}" bash "${tmp}"; then
-    rm -f "${tmp}"
+  local dest="${home}/.cache/hm-nvm-install.sh"
+  mkdir -p "${home}/.cache"
+  rm -f "${dest}"
+  cp "${tmp}" "${dest}" || { rm -f "${tmp}"; return 1; }
+  rm -f "${tmp}"
+  chmod 0500 "${dest}" || { rm -f "${dest}"; return 1; }
+  if [[ "$(id -u)" -eq 0 ]] && id "${user}" >/dev/null 2>&1; then
+    chown "${user}:${user}" "${home}/.cache" "${dest}" || {
+      rm -f "${dest}"
+      hm_err "Nie udało się oddać instalatora nvm użytkownikowi ${user}."
+      return 1
+    }
+  fi
+  if ! hm_site_node_as_user "${user}" "${home}" env "NVM_DIR=${home}/.nvm" "HOME=${home}" bash "${dest}"; then
+    rm -f "${dest}"
     hm_err "Instalacja nvm nieudana."
     return 1
   fi
-  rm -f "${tmp}"
+  rm -f "${dest}"
   [[ -f "${home}/.nvm/nvm.sh" ]] || { hm_err "Brak ${home}/.nvm/nvm.sh po instalacji."; return 1; }
 }
 
@@ -408,9 +420,9 @@ hm_site_port_reserve() {
 
 hm_site_node_write_proxy() {
   local domain="$1" port="$2" mode="$3" home
-  home="$(hm_site_home "${domain}")"
-  mkdir -p "${home}/.hmtools"
-  printf 'mode=%s\nupstream=127.0.0.1:%s\n' "${mode}" "${port}" > "${home}/.hmtools/proxy.snippet"
+  home="$(hm_site_state_dir "${domain}")"
+  mkdir -p "${home}"
+  printf 'mode=%s\nupstream=127.0.0.1:%s\n' "${mode}" "${port}" | hm_site_write_nofollow "${home}/proxy.snippet"
   if declare -F hm_site_web_apply_proxy >/dev/null 2>&1; then
     hm_site_web_apply_proxy "${domain}" "${port}" "${mode}" || return 1
   fi
@@ -509,6 +521,9 @@ WantedBy=multi-user.target
 EOF
   if declare -F hm_site_resource_add >/dev/null 2>&1; then
     hm_site_resource_add "${domain}" unit "${dest}" 0 || true
+  fi
+  if declare -F hm_tx_note_undo >/dev/null 2>&1; then
+    hm_tx_note_undo "$(printf 'systemd-unit\t%s' "${dest}")"
   fi
   if [[ "${HM_SITE_NODE_MOCK:-}" == "1" || "$(id -u)" -eq 0 ]]; then
     if [[ -n "${HM_SITE_NODE_LOG:-}" && "${HM_SITE_NODE_MOCK:-}" == "1" ]]; then

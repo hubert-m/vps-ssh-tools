@@ -31,6 +31,8 @@ export HM_SITE_PASSWD_FILE="${root}/passwd"
 export HM_SITE_USERADD_MOCK=1
 export HM_SITE_RUN_LOG="${root}/run.log"
 export HM_SITE_DISK_MB=20000
+export HM_SITE_OWN_LOG="${root}/own.log"
+: > "${HM_SITE_OWN_LOG}"
 export HM_SITE_NTP=synced
 export HM_SITE_REPO_OK=1
 export HM_SITE_WEB_GROUP=www-data
@@ -102,6 +104,10 @@ now="$(umask)"
 home="${HM_SITE_HOME_BASE}/app.example.pl"
 [[ -d "${home}/public_html" && -d "${home}/shared" && -d "${home}/logs" && -d "${home}/releases" && -d "${home}/tmp" ]] \
   && ok "layout" || bad "layout"
+grep -q "own 2750 app:www-data ${home}/public_html" "${HM_SITE_OWN_LOG}" \
+  && grep -q "own 2750 app:www-data ${home}/releases ${home}/shared" "${HM_SITE_OWN_LOG}" \
+  && grep -q "own 0700 app:www-data ${home}/tmp" "${HM_SITE_OWN_LOG}" \
+  && ok "layout-owner" || { bad "layout-owner"; cat "${HM_SITE_OWN_LOG}" >&2; }
 grep -q '^user=app$' "${home}/.config/hmtools/site.env" && grep -q '^runtime=php$' "${home}/.config/hmtools/site.env" \
   && ok "preset-runtime" || bad "preset-runtime"
 grep -qx 'www' "${home}/.config/hmtools/aliases" && ok "alias-www" || bad "alias-www"
@@ -160,6 +166,27 @@ key="$(printf '\xc5\x82.pl')"
 printf '%s\txn--kda.pl\n' "${key}" > "${root}/idn.map"
 got="$(hm_site_base_punycode "${key}")"
 [[ "${got}" == "xn--kda.pl" ]] && ok "idn-map" || bad "idn-map"
+
+unset HM_SITE_DISK_MB
+pre="$(hm_site_base_preflight node 2>&1 || true)"
+printf '%s\n' "${pre}" | grep -q $'DYSK\t? MB\tWARN' && ok "disk-unknown-warn" || { bad "disk-unknown-warn"; printf '%s\n' "${pre}" >&2; }
+printf 'Avail\n8192\n' > "${root}/df-output.txt"
+export HM_SITE_DF_FILE="${root}/df-output.txt"
+pre="$(hm_site_base_preflight node 2>&1 || true)"
+printf '%s\n' "${pre}" | grep -q $'DYSK\t8192 MB\tOK' && ok "disk-output-avail" || { bad "disk-output-avail"; printf '%s\n' "${pre}" >&2; }
+printf 'Filesystem 1M-blocks Used Available Use%% Mounted\noverlay 100 40 1536 30%% /\n' > "${root}/df-output.txt"
+pre="$(hm_site_base_preflight node 2>&1 || true)"
+printf '%s\n' "${pre}" | grep -q $'DYSK\t1536 MB\tWARN' && ok "disk-fallback-col" || { bad "disk-fallback-col"; printf '%s\n' "${pre}" >&2; }
+unset HM_SITE_DF_FILE
+export HM_SITE_DISK_MB=20000
+
+printf 'LISTEN 0.0.0.0:80 users:(("nginx",pid=1,fd=6))\nLISTEN 0.0.0.0:443 users:(("nginx",pid=1,fd=7))\n' > "${HM_SITE_SS_FILE}"
+pre="$(hm_site_base_preflight node 2>&1 || true)"
+printf '%s\n' "${pre}" | grep -q $'PORT-80/443\tnginx\tOK' && ok "port-nginx-ok" || { bad "port-nginx-ok"; printf '%s\n' "${pre}" >&2; }
+printf 'LISTEN 0.0.0.0:80 users:(("python",pid=9,fd=3))\n' > "${HM_SITE_SS_FILE}"
+pre="$(hm_site_base_preflight node 2>&1 || true)"
+printf '%s\n' "${pre}" | grep -q $'PORT-80/443\tobcy\tWARN' && ok "port-foreign-warn" || { bad "port-foreign-warn"; printf '%s\n' "${pre}" >&2; }
+printf 'LISTEN 0.0.0.0:80\nLISTEN 0.0.0.0:443\n' > "${HM_SITE_SS_FILE}"
 
 if [[ "${fail}" -eq 0 ]]; then
   echo "ALL PASSED"

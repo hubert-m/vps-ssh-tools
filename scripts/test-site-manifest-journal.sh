@@ -133,4 +133,51 @@ else
   grep -q 'yaml' "${root}/yaml.err" && ok yaml-missing || bad yaml-missing
 fi
 
+# shellcheck disable=SC1091
+source lib/site/db.sh
+hm_site_db_provision() { return 0; }
+[[ "$(hm_site_manifest_path app.example)" == "${HM_SITE_MANIFEST_DIR}/app.example.json" ]] \
+  && ok manifest-etc || bad manifest-etc
+
+mkdir -p "${root}/safe"
+hm_tx_begin evil.example
+printf 'undo=rm -rf %s; echo PWNED\n' "${root}/safe" >> "${HM_TX_JOURNAL}"
+if hm_tx_rollback evil.example >/dev/null 2>&1; then
+  bad undo-meta
+else
+  ok undo-meta
+fi
+[[ -d "${root}/safe" ]] && ok undo-meta-kept || bad undo-meta-kept
+
+mysql_log="${root}/mysql.log"
+: > "${mysql_log}"
+hm_mysql_exec() { printf '%s\n' "$*" >> "${mysql_log}"; }
+hm_sql_quote() { printf "'%s'" "$1"; }
+hm_tx_begin dbundo.example
+hm_tx_note_undo "$(printf 'mysql-drop-user\tp1exampl')"
+hm_tx_note_undo "$(printf 'mysql-drop-db\tp1exampl')"
+hm_tx_unlock
+HM_TX_JOURNAL=""
+hm_tx_rollback dbundo.example >/dev/null
+if grep -q 'DROP DATABASE IF EXISTS `p1exampl`' "${mysql_log}" \
+  && grep -q "DROP USER IF EXISTS 'p1exampl'@'localhost'" "${mysql_log}"; then
+  ok mysql-undo
+else
+  bad mysql-undo
+  cat "${mysql_log}" >&2 || true
+fi
+
+hm_site_php_provision() { return 1; }
+if cmd_site_new phpfail.example --php 8.4 --db none --yes >/dev/null 2>&1; then
+  bad php-rollback
+else
+  grep -q '^ROLLBACK$' "${HM_SITE_JOURNAL_DIR}"/phpfail.example-*.log && ok php-rollback || bad php-rollback
+fi
+hm_site_web_provision() { return 1; }
+if cmd_site_new webfail.example --webserver nginx --db none --yes >/dev/null 2>&1; then
+  bad web-rollback
+else
+  grep -q '^ROLLBACK$' "${HM_SITE_JOURNAL_DIR}"/webfail.example-*.log && ok web-rollback || bad web-rollback
+fi
+
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

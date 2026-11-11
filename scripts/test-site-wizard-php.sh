@@ -138,6 +138,9 @@ pa="$(hm_site_php_write_pool a.example.pl 8.4 shop "${home_a}" fpm)"
 pb="$(hm_site_php_write_pool b.example.pl 8.4 api "${home_b}" fpm)"
 if grep -q '^user = shop$' "${pa}" && grep -q '^user = api$' "${pb}" \
   && grep -q 'listen.mode = 0660' "${pa}" \
+  && grep -q 'listen.owner = www-data' "${pa}" \
+  && grep -q 'listen.group = www-data' "${pa}" \
+  && ! grep -q 'listen.owner = nogroup' "${pa}" \
   && grep -q "open_basedir] = ${home_a}:/tmp" "${pa}" \
   && ! grep -q "${home_b}" "${pa}" \
   && grep -q 'pm.max_children = 8' "${pa}"; then
@@ -209,6 +212,30 @@ else
   ok "home-mode-platform"
 fi
 rm -f "${probe}"
+
+saved_policy="${HM_PHP_POLICY_FILE}"
+unset HM_PHP_POLICY_FILE
+_hm_pkg_do_php_fpm_query() { cat "${saved_policy}"; }
+if [[ "$(hm_site_php_kind 8.3)" == "installed" && "$(hm_site_php_kind 8.5)" != "installed" ]]; then
+  ok "live-os-installed"
+else
+  bad "live-os-installed 8.3=$(hm_site_php_kind 8.3) 8.5=$(hm_site_php_kind 8.5)"
+fi
+export HM_PHP_POLICY_FILE="${saved_policy}"
+
+hm_have_cmd() {
+  case "$1" in
+    gpg) return 1 ;;
+    *) command -v "$1" >/dev/null 2>&1 ;;
+  esac
+}
+unset HM_PKG_PHP_KEY_FILE
+: > "${HM_PKG_PHP_LOG}"
+if hm_pkg_php_repo_add 8.4 >/dev/null 2>&1; then
+  bad "gpg-missing-should-fail"
+else
+  grep -qx 'gnupg' "${HM_PKG_PHP_LOG}" && ok "gpg-installs-gnupg" || bad "gpg-installs-gnupg"
+fi
 
 if [[ "${fail}" -eq 0 ]]; then
   echo "ALL PASSED"

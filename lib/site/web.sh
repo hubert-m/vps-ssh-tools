@@ -178,8 +178,41 @@ hm_site_web_reload() {
   esac
 }
 
+hm_site_web_track() {
+  local domain="$1" path="$2"
+  if declare -F hm_site_resource_add >/dev/null 2>&1; then
+    hm_site_resource_add "${domain}" vhost "${path}" 0 || true
+  fi
+  if [[ -n "${HM_TX_JOURNAL:-}" && -f "${HM_TX_JOURNAL}" ]]; then
+    case "${path}" in
+      /etc/nginx/*|/etc/apache2/*|/etc/httpd/*|*/sites-available/*|*/sites-enabled/*|*/conf.d/*)
+        printf 'undo=nginx-vhost\t%s\n' "${path}" >> "${HM_TX_JOURNAL}"
+        ;;
+      *)
+        printf 'undo=rm -f %s\n' "${path}" >> "${HM_TX_JOURNAL}"
+        ;;
+    esac
+  fi
+}
+
+# Debian/Ubuntu: symlink sites-enabled → sites-available. RHEL (conf.d) — nic.
+hm_site_web_nginx_enable() {
+  local _domain="$1" dest="$2" base en link
+  [[ "${dest}" == */sites-available/* ]] || return 0
+  if declare -F hm_os_nginx_sites_enabled >/dev/null 2>&1; then
+    hm_os_nginx_sites_enabled || return 0
+  fi
+  base="$(basename "${dest}")"
+  en="$(dirname "${dest}")"
+  en="${en%/sites-available}/sites-enabled"
+  mkdir -p "${en}"
+  link="${en}/${base}"
+  ln -sfn "../sites-available/${base}" "${link}" || return 1
+  printf '%s\n' "${link}"
+}
+
 hm_site_web_apply_file() {
-  local server="$1" kind="$2" dest="$3" body="${4:-}" bak="" journal=""
+  local server="$1" kind="$2" dest="$3" body="${4:-}" bak="" journal="" link="" domain=""
   mkdir -p "$(dirname "${dest}")"
   bak="${dest}.hmbak"
   rm -f "${bak}"
@@ -197,12 +230,18 @@ hm_site_web_apply_file() {
     hm_err "Vhost zawiera bind 0.0.0.0."
     return 1
   fi
+  domain="${dest##*/}"
+  domain="${domain%.conf}"
+  if [[ "${server}" == "nginx" ]]; then
+    link="$(hm_site_web_nginx_enable "${domain}" "${dest}")" || return 1
+  fi
   if ! hm_site_web_validate "${server}"; then
     if [[ -f "${bak}" ]]; then
       mv -f "${bak}" "${dest}"
     else
       rm -f "${dest}"
     fi
+    [[ -n "${link}" ]] && rm -f "${link}"
     journal="${HM_SITE_WEB_JOURNAL:-}"
     if [[ -n "${journal}" ]]; then
       mkdir -p "$(dirname "${journal}")"
@@ -212,6 +251,8 @@ hm_site_web_apply_file() {
     return 1
   fi
   rm -f "${bak}"
+  hm_site_web_track "${domain}" "${dest}"
+  [[ -n "${link}" ]] && hm_site_web_track "${domain}" "${link}"
   hm_site_web_reload "${server}"
   printf '%s' "${dest}"
 }
@@ -221,7 +262,13 @@ hm_site_web_conf_path() {
   dir="${HM_SITE_WEB_CONF_DIR:-}"
   if [[ -z "${dir}" ]]; then
     case "${server}" in
-      nginx) dir="/etc/nginx/sites-available" ;;
+      nginx)
+        if declare -F hm_os_nginx_conf_dir >/dev/null 2>&1; then
+          dir="$(hm_os_nginx_conf_dir)"
+        else
+          dir="/etc/nginx/sites-available"
+        fi
+        ;;
       apache) dir="/etc/apache2/sites-available" ;;
       ols) dir="${OLS_VHOSTS:-/usr/local/lsws/conf/vhosts}/${domain}" ;;
     esac
@@ -331,5 +378,9 @@ hm_site_web_provision() {
   if [[ "${ssl}" == "1" ]]; then
     hm_site_web_ssl "${domain}" "${server}" "${HM_SITE_WEB_ROOT}" || return 1
   fi
-  hm_ok "Vhost ${server}/${kind} dla ${domain} (bind 127.0.0.1${port:+:${port}})."
+  if [[ -n "${port}" ]]; then
+    hm_ok "Vhost ${server}/${kind} dla ${domain} (bind 127.0.0.1:${port})."
+  else
+    hm_ok "Vhost ${server}/${kind} dla ${domain}."
+  fi
 }

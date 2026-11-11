@@ -55,6 +55,20 @@ hm_os_bind() {
 }
 
 _hm_os_do_web_group() { printf 'nogroup'; }
+_hm_os_do_web_user_for() {
+  case "${1:-nginx}" in
+    apache|nginx) printf 'www-data' ;;
+    *) printf 'nobody' ;;
+  esac
+}
+_hm_os_do_web_group_for() {
+  case "${1:-nginx}" in
+    apache|nginx) printf 'www-data' ;;
+    *) printf 'nogroup' ;;
+  esac
+}
+_hm_os_do_nginx_conf_dir() { printf '/etc/nginx/sites-available'; }
+_hm_os_do_nginx_sites_enabled() { return 0; }
 _hm_os_do_apache_unit() { printf 'apache2'; }
 _hm_os_do_apache_error_log() { return 1; }
 _hm_os_do_firewall_status() { hm_warn "Firewall: brak adaptera OS."; return 1; }
@@ -172,6 +186,30 @@ hm_os_web_group() {
   fi
   hm_os_bind || true
   _hm_os_do_web_group
+}
+
+# User i grupa procesu WWW dla nginx, apache albo ols (nie mylić z grupą OLS „nogroup”).
+hm_os_web_user_for() {
+  local kind="${1:-nginx}"
+  hm_os_bind || true
+  _hm_os_do_web_user_for "${kind}"
+}
+
+hm_os_web_group_for() {
+  local kind="${1:-nginx}"
+  hm_os_bind || true
+  _hm_os_do_web_group_for "${kind}"
+}
+
+# Katalog vhostów nginx i czy rodzina OS włącza je symlinkiem sites-enabled.
+hm_os_nginx_conf_dir() {
+  hm_os_bind || true
+  _hm_os_do_nginx_conf_dir
+}
+
+hm_os_nginx_sites_enabled() {
+  hm_os_bind || true
+  _hm_os_do_nginx_sites_enabled
 }
 
 hm_os_apache_unit() {

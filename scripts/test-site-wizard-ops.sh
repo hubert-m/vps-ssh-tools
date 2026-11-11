@@ -85,7 +85,7 @@ grep -q 'shop.example' "${HM_SITE_MANIFEST_DIR}/${domain}.resources.ndjson" || b
 grep -q '0.0.0.0' "${worker}" && bad "bind" || true
 [[ "$(cat "${HM_SITE_FW_DIR}/public.rules")" == "${before}" ]] || bad "ports-same"
 [[ ! -f "${HM_SITE_FW_DIR}/hm-shop.example.rules" ]] || bad "no-extra-port"
-grep -q 'https://shop.example/up' "${home}/.hmtools/health.url" || bad "health-url"
+grep -q 'https://shop.example/up' "$(hm_site_state_dir "${domain}")/health.url" || bad "health-url"
 grep -q 'hm-worker-shop.example@1.service' "${HM_SITE_HEALTH_REG}" || bad "inst-1"
 grep -q 'hm-worker-shop.example@2.service' "${HM_SITE_HEALTH_REG}" || bad "inst-2"
 grep -q '^undo=rm -f ' "${HM_TX_JOURNAL}" || bad "undo"
@@ -148,7 +148,7 @@ rc=$?
 set -e
 [[ "${rc}" -eq 0 ]] || bad "open-rc"
 printf '%s\n' "${warn}" | grep -q 'Docker omija UFW' || bad "docker"
-grep -q 'DISABLE_WP_CRON=true' "${HM_SITE_HOME_BASE}/${open_domain}/.hmtools/wp-cron.env" || bad "wp-cron"
+grep -q 'DISABLE_WP_CRON=true' "$(hm_site_state_dir "${open_domain}")/wp-cron.env" || bad "wp-cron"
 grep -q '9090/tcp # hm:open.example' "${HM_SITE_FW_DIR}/hm-open.example.rules" || bad "open-port"
 grep -q '3000' "${HM_SITE_FW_DIR}/public.rules" && bad "app-port" || true
 grep -q 'open.example' "${HM_SITE_BACKUP_LIST}" || bad "backup"

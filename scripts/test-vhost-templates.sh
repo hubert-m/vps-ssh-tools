@@ -136,6 +136,62 @@ else
   cat "${out}" >&2 || true
 fi
 
+export HM_SITE_WEB_CONF_DIR="${root}/nginx/sites-available"
+export HM_TX_JOURNAL="${root}/tx.journal"
+: > "${HM_TX_JOURNAL}"
+: > "${HM_SITE_WEB_LOG}"
+reslog="${root}/resources.txt"
+: > "${reslog}"
+hm_site_resource_add() { printf '%s %s\n' "$2" "$3" >> "${reslog}"; }
+mkdir -p "${HM_SITE_WEB_CONF_DIR}"
+out="${root}/static.out"
+cmd_site_new static.example.pl --runtime static --db none --webserver nginx --yes >"${out}" 2>&1 || {
+  bad "site-new-static"
+  cat "${out}" >&2
+  exit 1
+}
+sconf="${HM_SITE_WEB_CONF_DIR}/static.example.pl.conf"
+slink="${root}/nginx/sites-enabled/static.example.pl.conf"
+if [[ -f "${sconf}" ]] && grep -q 'try_files' "${sconf}" && grep -q 'public_html' "${sconf}" \
+  && ! grep -q 'proxy_pass' "${sconf}" && grep -q 'Vhost nginx/static' "${out}" \
+  && ! grep -q 'nginx/proxy' "${out}"; then
+  ok "static-template"
+else
+  bad "static-template"
+  cat "${out}" >&2 || true
+fi
+if grep -F -q "$(printf 'undo=nginx-vhost\t%s' "${slink}")" "${HM_TX_JOURNAL}" \
+  && grep -F -q "vhost ${slink}" "${reslog}" \
+  && [[ -e "${slink}" ]]; then
+  probe_a="${root}/probe-target"
+  probe_b="${root}/probe-link"
+  printf 'x\n' > "${probe_a}"
+  ln -sfn "${probe_a}" "${probe_b}" || true
+  if ls -ld -- "${probe_b}" 2>/dev/null | grep -F -q -- '->'; then
+    if ls -ld -- "${slink}" 2>/dev/null | grep -F -q -- '->'; then
+      ok "nginx-enabled"
+    else
+      bad "nginx-enabled"
+      ls -ld -- "${slink}" >&2 || true
+    fi
+  else
+    ok "nginx-enabled-platform"
+  fi
+else
+  bad "nginx-enabled"
+  ls -ld -- "${slink}" >&2 || true
+  cat "${HM_TX_JOURNAL}" >&2 || true
+  cat "${reslog}" >&2 || true
+fi
+hm_os_nginx_sites_enabled() { return 1; }
+rlink="$(hm_site_web_nginx_enable rhel.example.pl "${root}/nginx/sites-available/rhel.example.pl.conf" || true)"
+if [[ -z "${rlink}" ]] && [[ ! -e "${root}/nginx/sites-enabled/rhel.example.pl.conf" ]]; then
+  ok "rhel-no-symlink"
+else
+  bad "rhel-no-symlink"
+fi
+unset -f hm_os_nginx_sites_enabled
+
 if [[ "${fail}" -eq 0 ]]; then
   echo "ALL PASSED"
 else

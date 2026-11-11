@@ -21,6 +21,8 @@ PASS='GenPass12xYzAb99'
 root="$(mktemp -d "${TMPDIR:-/tmp}/hmtools-dbenv.XXXXXX")"
 trap 'rm -rf "${root}"' EXIT
 export HM_SITE_HOME_BASE="${root}/home"
+export HM_SITE_MANIFEST_DIR="${root}/manifest"
+export HM_SITE_STATE_DIR="${root}/state"
 export HM_SITE_USER="api"
 export HM_SITE_DB_MOCK=1
 export HM_SITE_DB_ARGV_LOG="${root}/argv.log"
@@ -100,7 +102,7 @@ fi
 setout="$(printf '%s\n' "${PASS}" | cmd_site_env set CUSTOM_TOKEN 2>&1 || true)"
 assert_clean "env-set-stdin" "${setout}"
 
-man="${HM_SITE_HOME_BASE}/api.example.pl/.hmtools/service.json"
+man="$(hm_site_manifest_path api.example.pl)"
 assert_clean "manifest" "$(cat "${man}")"
 grep -q '"type":"postgres"' "${man}" && ok "manifest-pg" || bad "manifest-pg"
 grep -q '"name":"api_app"' "${man}" && ok "manifest-name" || bad "manifest-name"
@@ -113,7 +115,7 @@ grep -F -q "${PASS}" "${HM_SITE_DB_SQL_LOG}" && ok "sql-has-secret" || bad "sql-
 grep -q 'CREATE ROLE api_app' "${HM_SITE_DB_SQL_LOG}" && ok "sql-role" || bad "sql-role"
 grep -q 'REVOKE ALL ON DATABASE api_app FROM PUBLIC' "${HM_SITE_DB_SQL_LOG}" && ok "sql-revoke" || bad "sql-revoke"
 
-unit="${HM_SITE_HOME_BASE}/api.example.pl/.hmtools/app.service"
+unit="$(hm_site_state_dir api.example.pl)/app.service"
 grep -q "EnvironmentFile=-${envf}" "${unit}" && ok "unit-envfile" || bad "unit-envfile"
 assert_clean "unit" "$(cat "${unit}")"
 eco="${HM_SITE_HOME_BASE}/api.example.pl/shared/ecosystem.config.cjs"

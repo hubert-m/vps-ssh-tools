@@ -1,6 +1,25 @@
 #!/usr/bin/env bash
 # Adapter OS_FAMILY=rhel. Funkcje _hm_os_do_* — kontrakt lib/os_family.sh.
 
+_hm_os_do_web_user_for() {
+  case "${1:-nginx}" in
+    apache) printf 'apache' ;;
+    nginx) printf 'nginx' ;;
+    *) printf 'nobody' ;;
+  esac
+}
+
+_hm_os_do_web_group_for() {
+  case "${1:-nginx}" in
+    apache) printf 'apache' ;;
+    nginx) printf 'nginx' ;;
+    *) printf 'nobody' ;;
+  esac
+}
+
+_hm_os_do_nginx_conf_dir() { printf '/etc/nginx/conf.d'; }
+_hm_os_do_nginx_sites_enabled() { return 1; }
+
 _hm_os_do_web_group() {
   if getent group nobody >/dev/null 2>&1; then
     printf 'nobody'

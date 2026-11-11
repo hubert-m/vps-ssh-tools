@@ -113,6 +113,12 @@ else
   bad "pinned-url"
 fi
 [[ -f "${home}/.nvm/nvm.sh" ]] && ok "nvm-installed" || bad "nvm-installed"
+if grep -F -q "${home}/.cache/hm-nvm-install.sh" "${HM_SITE_NODE_LOG}" \
+  && ! grep -q '/tmp/hm-nvm' "${HM_SITE_NODE_LOG}"; then
+  ok "installer-in-home"
+else
+  bad "installer-in-home $(grep bash "${HM_SITE_NODE_LOG}" || true)"
+fi
 [[ -d "${home}/.nvm/versions/node/v24.11.1" && -d "${home}/.nvm/versions/node/v22.14.0" ]] \
   && ok "nvm-ls-versions" || bad "nvm-ls-versions"
 [[ "$(tr -d '[:space:]' < "${home}/.nvm/alias/default")" == "v24.11.1" ]] && ok "default-alias" || bad "default-alias"
@@ -141,7 +147,7 @@ grep -q '^PORT=' "${home}/shared/.env" && grep -q '^HOST=127.0.0.1$' "${home}/sh
 grep -q 'build=pnpm install --frozen-lockfile' "${home}/app/.hmtools-deploy" \
   && grep -q 'build=pnpm run build' "${home}/app/.hmtools-deploy" \
   && ok "deploy-steps" || bad "deploy-steps"
-grep -q 'upstream=127.0.0.1:' "${home}/.hmtools/proxy.snippet" && ok "proxy" || bad "proxy"
+grep -q 'upstream=127.0.0.1:' "$(hm_site_state_dir app.example.pl)/proxy.snippet" && ok "proxy" || bad "proxy"
 grep -q '"packageManager":"pnpm@' "${home}/app/package.json" && ok "package-manager" || bad "package-manager"
 
 hm_resolve_site_paths() {

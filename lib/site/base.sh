@@ -43,16 +43,65 @@ hm_site_base_ram_mb() {
 }
 
 hm_site_base_port_open() {
-  local port="$1" file="${HM_SITE_SS_FILE:-}"
+  local port="$1" kind
+  kind="$(hm_site_base_port_kind "${port}")"
+  [[ "${kind}" != "free" ]]
+}
+
+# web = nginx/apache/OLS, foreign = inny proces, open = słucha bez nazwy, free = nikt.
+hm_site_base_port_kind() {
+  local port="$1" file="${HM_SITE_SS_FILE:-}" line=""
   if [[ -n "${file}" && -f "${file}" ]]; then
-    grep -E -q ":${port}([^0-9]|$)" "${file}"
-    return $?
+    line="$(grep -E ":${port}([^0-9]|$)" "${file}" || true)"
+  elif hm_have_cmd ss; then
+    line="$(ss -ltnp 2>/dev/null | grep -E ":${port}([^0-9]|$)" || true)"
+    if [[ -z "${line}" ]]; then
+      line="$(ss -ltn 2>/dev/null | grep -E ":${port}([^0-9]|$)" || true)"
+    fi
   fi
-  if hm_have_cmd ss; then
-    ss -ltn 2>/dev/null | grep -E -q ":${port}([^0-9]|$)"
-    return $?
+  [[ -n "${line}" ]] || { printf 'free'; return 0; }
+  if printf '%s\n' "${line}" | grep -E -q 'nginx|apache2|httpd|lshttpd|litespeed|openlitespeed'; then
+    printf 'web'
+    return 0
   fi
-  return 1
+  if printf '%s\n' "${line}" | grep -q 'users:'; then
+    printf 'foreign'
+    return 0
+  fi
+  printf 'open'
+}
+
+hm_site_base_disk_mb() {
+  local path="${1:-/}" out="" file="${HM_SITE_DF_FILE:-}"
+  if [[ -n "${HM_SITE_DISK_MB:-}" ]]; then
+    printf '%s' "${HM_SITE_DISK_MB}"
+    return 0
+  fi
+  if [[ -n "${file}" && -f "${file}" ]]; then
+    out="$(awk 'NR==2 { print $1 }' "${file}")"
+    if [[ ! "${out}" =~ ^[0-9]+$ ]]; then
+      out="$(awk 'NR==2 { print $4 }' "${file}")"
+    fi
+    if [[ "${out}" =~ ^[0-9]+$ ]]; then
+      printf '%s' "${out}"
+      return 0
+    fi
+    printf '?'
+    return 0
+  fi
+  if hm_have_cmd df; then
+    out="$(df -Pm --output=avail "${path}" 2>/dev/null | awk 'NR==2 { print $1 }')"
+    if [[ "${out}" =~ ^[0-9]+$ ]]; then
+      printf '%s' "${out}"
+      return 0
+    fi
+    out="$(df -Pm "${path}" 2>/dev/null | awk 'NR==2 { print $4 }')"
+    if [[ "${out}" =~ ^[0-9]+$ ]]; then
+      printf '%s' "${out}"
+      return 0
+    fi
+  fi
+  printf '?'
 }
 
 hm_site_base_preflight() {
@@ -75,19 +124,33 @@ hm_site_base_preflight() {
     esac
   fi
   printf '%s\t%s MB\t%s\n' "RAM" "${ram:-?}" "${status}"
-  local disk="?"
-  if [[ -n "${HM_SITE_DISK_MB:-}" ]]; then
-    disk="${HM_SITE_DISK_MB}"
-  fi
-  status="OK"
-  [[ "${disk}" != "?" && "${disk}" -lt 2048 ]] && status="WARN"
-  printf '%s\t%s MB\t%s\n' "DYSK" "${disk}" "${status}"
-  if hm_site_base_port_open 80 && hm_site_base_port_open 443; then
+  local disk detail k80 k443
+  disk="$(hm_site_base_disk_mb /)"
+  if [[ "${disk}" == "?" ]]; then
+    status="WARN"
+  elif [[ "${disk}" =~ ^[0-9]+$ && "${disk}" -lt 2048 ]]; then
+    status="WARN"
+  else
     status="OK"
+  fi
+  printf '%s\t%s MB\t%s\n' "DYSK" "${disk}" "${status}"
+  k80="$(hm_site_base_port_kind 80)"
+  k443="$(hm_site_base_port_kind 443)"
+  detail="ss"
+  if [[ "${k80}" == "foreign" || "${k443}" == "foreign" ]]; then
+    status="WARN"
+    detail="obcy"
+  elif [[ "${k80}" == "web" || "${k443}" == "web" ]]; then
+    status="OK"
+    detail="nginx"
+  elif [[ "${k80}" == "open" || "${k443}" == "open" ]]; then
+    status="OK"
+    detail="ss"
   else
     status="WARN"
+    detail="wolny"
   fi
-  printf '%s\t%s\t%s\n' "PORT-80/443" "ss" "${status}"
+  printf '%s\t%s\t%s\n' "PORT-80/443" "${detail}" "${status}"
   if [[ "${HM_SITE_REPO_OK:-1}" == "1" ]]; then
     status="OK"
   else
@@ -189,15 +252,50 @@ hm_site_base_layout() {
     else
       mkdir -p "${home}/public_html"
     fi
-    chmod 0750 "${home}" "${home}/logs" "${home}/shared" || true
+    chmod 0750 "${home}" "${home}/logs" || true
     if [[ ! -e "${home}/shared/.env" ]]; then
       ( umask 077; : > "${home}/shared/.env"; )
     fi
     chmod 0600 "${home}/shared/.env" || true
   )
   umask "${saved}"
+  hm_site_base_own 2750 "${user}" "${group}" "${home}/releases" "${home}/shared"
+  if [[ "${releases}" == "1" ]]; then
+    local stampdir
+    stampdir="$(ls -d "${home}/releases/"[0-9]* 2>/dev/null | head -1 || true)"
+    if [[ -n "${stampdir}" && -d "${stampdir}/public_html" ]]; then
+      hm_site_base_own 2750 "${user}" "${group}" "${stampdir}/public_html"
+    fi
+  elif [[ ! -L "${home}/public_html" ]]; then
+    hm_site_base_own 2750 "${user}" "${group}" "${home}/public_html"
+  fi
+  hm_site_base_own 0700 "${user}" "${group}" "${home}/tmp"
   if hm_site_base_user_exists "${user}"; then
-    chown "${user}:${group}" "${home}" "${home}/shared" "${home}/logs" "${home}/shared/.env" 2>/dev/null || true
+    chown "${user}:${group}" "${home}" "${home}/logs" "${home}/shared/.env" 2>/dev/null || true
+  fi
+}
+
+hm_site_base_own() {
+  local mode="$1" user="$2" group="$3"
+  shift 3
+  [[ "$#" -gt 0 ]] || return 0
+  if [[ -n "${HM_SITE_OWN_LOG:-}" ]]; then
+    printf 'own %s %s:%s %s\n' "${mode}" "${user}" "${group}" "$*" >> "${HM_SITE_OWN_LOG}"
+  fi
+  if hm_have_cmd install; then
+    install -d -o "${user}" -g "${group}" -m "${mode}" "$@"
+    return $?
+  fi
+  mkdir -p "$@"
+  chmod "${mode}" "$@" 2>/dev/null || {
+    case "${mode}" in
+      2750) chmod 0750 "$@" 2>/dev/null || true ;;
+      0700) chmod 0700 "$@" 2>/dev/null || true ;;
+      *) true ;;
+    esac
+  }
+  if hm_site_base_user_exists "${user}"; then
+    chown "${user}:${group}" "$@" 2>/dev/null || true
   fi
 }
 

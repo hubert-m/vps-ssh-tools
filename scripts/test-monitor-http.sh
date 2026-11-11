@@ -20,8 +20,9 @@ export HM_MONITOR_LOG="${TMP}/mon.log"
 export HM_NOTIFY_LOG="${TMP}/notify.log"
 export HM_MONITOR_CURL="${TMP}/curl.sh"
 export HM_MONITOR_FIXTURES="${TMP}/fix"
+export HM_MONITOR_TLS_DIR="${TMP}/tls"
 export LOG_DIR="${TMP}/logs"
-mkdir -p "${HM_MONITOR_FIXTURES}" "${LOG_DIR}" "$(dirname "${HM_MONITOR_CRON}")"
+mkdir -p "${HM_MONITOR_FIXTURES}" "${HM_MONITOR_TLS_DIR}" "${LOG_DIR}" "$(dirname "${HM_MONITOR_CRON}")"
 : > "${HM_NOTIFY_LOG}"
 : > "${HM_MONITOR_LOG}"
 
@@ -53,18 +54,22 @@ host="${host%%/*}"
 host="${host%%:*}"
 spec="${HM_MONITOR_FIXTURES}/${host}"
 if [[ ! -f "${spec}" ]]; then
-  echo "0 0 0 0"
+  echo "0 0 0"
   exit 28
 fi
-IFS=' ' read -r rc code secs redirs tls < "${spec}"
+IFS=' ' read -r rc code secs redirs _tls < "${spec}"
 tail -n +2 "${spec}" > "${out}"
-printf '%s %s %s %s\n' "${code}" "${secs}" "${redirs}" "${tls}"
+printf '%s %s %s\n' "${code}" "${secs}" "${redirs}"
 exit "${rc}"
 EOF
+chmod +x "${HM_MONITOR_CURL}"
 
 fix() {
   local host="$1" rc="$2" code="$3" secs="$4" redirs="$5" tls="$6" body="$7"
   printf '%s %s %s %s %s\n%s\n' "${rc}" "${code}" "${secs}" "${redirs}" "${tls}" "${body}" > "${HM_MONITOR_FIXTURES}/${host}"
+  if [[ -n "${tls}" ]]; then
+    printf '%s\n' "${tls}" > "${HM_MONITOR_TLS_DIR}/${host}"
+  fi
 }
 
 fix example.pl 0 200 0.020 1 40 "hello from page"
@@ -88,6 +93,7 @@ cmd_monitor add secret.pl --keyword hello --expect 200 --fails 2 \
 js="$(cmd_monitor http example.pl --json)" || true
 printf '%s\n' "${js}" | grep -q '"status":"OK"' && ok "200 OK" || bad "200: ${js}"
 printf '%s\n' "${js}" | grep -q '"code":"200"' && ok "kod w json" || bad "brak kodu"
+printf '%s\n' "${js}" | grep -q '"tls":"40"' && ok "tls dni" || bad "tls dni: ${js}"
 grep -q 'example.pl:443:127.0.0.1' "${HM_MONITOR_LOG}.curl" && bad "resolve bez flagi" || true
 : > "${HM_MONITOR_LOG}.curl"
 cmd_monitor http example.pl --resolve --json >/dev/null || true
@@ -117,6 +123,14 @@ loop_out="$(cmd_monitor http loop.pl --json || true)"
 printf '%s\n' "${loop_out}" | grep -q 'pętla przekierowań' && ok "pętla FAIL" || bad "pętla: ${loop_out}"
 tout_out="$(cmd_monitor http tout.pl --json || true)"
 printf '%s\n' "${tout_out}" | grep -q 'timeout' && ok "timeout FAIL" || bad "timeout: ${tout_out}"
+fix tlserr.pl 60 000 0.010 0 20 "x"
+tls_out="$(cmd_monitor http tlserr.pl --json || true)"
+printf '%s\n' "${tls_out}" | grep -q 'tls błąd' && ok "tls błąd" || bad "tls błąd: ${tls_out}"
+printf '%s\n' "${tls_out}" | grep -q '"tls":"20"' && ok "tls dni przy błędzie" || bad "tls dni przy błędzie: ${tls_out}"
+fix expired.pl 60 000 0.010 0 -2 "x"
+exp_out="$(cmd_monitor http expired.pl --json || true)"
+printf '%s\n' "${exp_out}" | grep -q 'tls wygasł' && ok "tls wygasł" || bad "tls wygasł: ${exp_out}"
+
 kw_out="$(cmd_monitor http kw.pl --json || true)"
 printf '%s\n' "${kw_out}" | grep -q 'brak keyword' && ok "keyword FAIL" || bad "keyword: ${kw_out}"
 

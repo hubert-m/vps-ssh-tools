@@ -123,7 +123,7 @@ hm_site_ops_cron_exec() {
       printf '/usr/bin/php %s/artisan schedule:run' "${home}"
       ;;
     wp)
-      printf 'DISABLE_WP_CRON=true\n' > "${home}/.hmtools/wp-cron.env"
+      printf 'DISABLE_WP_CRON=true\n' | hm_site_write_nofollow "$(hm_site_state_dir "${domain}")/wp-cron.env" || return 1
       printf '/usr/bin/wp cron event run --due-now --path=%s' "${home}"
       ;;
     django)
@@ -162,7 +162,7 @@ hm_site_ops_apply() {
     hm_err "Port firewalla musi być liczbą."
     return 1
   fi
-  mkdir -p "${home}/logs" "${home}/.hmtools" "${unitdir}" "${lrdir}" "${fwdir}"
+  mkdir -p "${home}/logs" "$(hm_site_state_dir "${domain}")" "${unitdir}" "${lrdir}" "${fwdir}"
 
   lr="${lrdir}/hm-${safe}"
   cat > "${lr}" <<EOF
@@ -251,7 +251,12 @@ EOF
     if [[ -n "${HM_SITE_HEALTH_REG:-}" ]]; then
       reg="${HM_SITE_HEALTH_REG}"
     else
-      reg="${home}/.hmtools/health.units"
+      reg="$(hm_site_state_dir "${domain}")/health.units"
+    fi
+    if [[ -L "${reg}" ]]; then
+      hm_site_ops_rollback "${domain}"
+      hm_err "Odmowa zapisu health.units przez symlink."
+      return 1
     fi
     : > "${reg}"
     for ((i = 1; i <= workers; i++)); do
@@ -260,7 +265,7 @@ EOF
   fi
 
   if [[ -n "${health_path}" ]]; then
-    printf 'https://%s%s\n' "${domain}" "${health_path}" > "${home}/.hmtools/health.url"
+    printf 'https://%s%s\n' "${domain}" "${health_path}" | hm_site_write_nofollow "$(hm_site_state_dir "${domain}")/health.url"
   fi
 
   pub="${fwdir}/public.rules"
@@ -277,7 +282,12 @@ EOF
     hm_warn "Docker omija UFW — porty kontenera mogą być publiczne."
   fi
   if [[ "${HM_SITE_BACKUP:-}" == "1" ]]; then
-    printf '%s\n' "${domain}" >> "${HM_SITE_BACKUP_LIST:-${home}/.hmtools/backup.list}"
+    local blist="${HM_SITE_BACKUP_LIST:-$(hm_site_state_dir "${domain}")/backup.list}"
+    if [[ -L "${blist}" ]]; then
+      hm_err "Odmowa zapisu listy backupu przez symlink."
+      return 1
+    fi
+    printf '%s\n' "${domain}" >> "${blist}"
   fi
   if [[ -n "${HM_TX_JOURNAL:-}" && -f "${HM_TX_JOURNAL}" && -n "${created}" ]]; then
     printf 'undo=rm -f %s\n' "${created}" >> "${HM_TX_JOURNAL}"

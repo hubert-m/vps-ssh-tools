@@ -475,9 +475,11 @@ hm_chrome_version_passive() {
 }
 
 # Niezaufaną binarkę uruchamiaj tylko jako jej właściciel (nigdy jako root).
+# timeout jest poleceniem systemowym, nie argumentem Chrome.
 # Odmowa zrzucenia uprawnień: kod 126, bez exec.
 hm_chrome_run_as_owner() {
-  local bin="$1" pair="" uid="" rest="" mode="" user=""
+  local bin="$1" pair="" uid="" rest="" mode="" user="" limit=""
+  local -a argv=()
   shift
   [[ -n "${bin}" && -x "${bin}" ]] || return 126
   pair="$(hm_chrome_stat_owner_mode "${bin}")" || return 126
@@ -489,12 +491,19 @@ hm_chrome_run_as_owner() {
   if [[ "$(id -u)" -ne 0 || -z "${user}" || "${user}" == "root" || "${uid}" == "0" ]]; then
     return 126
   fi
+  limit="${HM_CHROME_TIMEOUT:-15}"
+  [[ "${limit}" =~ ^[0-9]+$ ]] || limit=15
+  if hm_have_cmd timeout; then
+    argv=(timeout "${limit}" "${bin}" "$@")
+  else
+    argv=("${bin}" "$@")
+  fi
   if hm_have_cmd runuser; then
-    runuser -u "${user}" -- "${bin}" "$@"
+    runuser -u "${user}" -- "${argv[@]}"
     return $?
   fi
   if hm_have_cmd sudo; then
-    sudo -u "${user}" -- "${bin}" "$@"
+    sudo -u "${user}" -- "${argv[@]}"
     return $?
   fi
   return 126

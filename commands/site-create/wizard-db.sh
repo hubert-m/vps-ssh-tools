@@ -382,10 +382,23 @@ cmd_site_new() {
   if [[ "${php_on}" -eq 1 ]]; then
     plan+=("PHP: ${php_ver:-domyślna active} (${php_sapi}, preset ${php_preset:-minimal})")
   fi
+  if [[ "${web_on}" -eq 1 && -z "${vhost_kind}" ]]; then
+    case "${runtime}" in
+      php) vhost_kind="php-fpm" ;;
+      static) vhost_kind="static" ;;
+      spa) vhost_kind="spa" ;;
+      *) vhost_kind="proxy" ;;
+    esac
+    if [[ "${preset_app}" == "static" || "${preset_app}" == "spa" ]]; then
+      vhost_kind="${preset_app}"
+    elif [[ "${preset}" == "static" || "${preset}" == "spa" ]]; then
+      vhost_kind="${preset}"
+    fi
+  fi
   if [[ "${web_on}" -eq 1 ]]; then
     plan+=("Vhost: ${webserver:-nginx} / ${vhost_kind:-auto}")
   fi
-  plan+=("Manifest bez haseł (.hmtools/service.json)")
+  plan+=("Manifest bez haseł (/etc/hmtools/sites)")
   if [[ "${yes}" -eq 1 ]]; then
     hm_confirm_plan "site new — ${domain}" "Sekrety tylko w shared/.env." --yes "${plan[@]}" || return 1
   else
@@ -422,7 +435,10 @@ cmd_site_new() {
       hm_err "Brak lib/site/node.sh."
       return 1
     fi
-    hm_site_node_provision "${domain}" "${node_spec}" "${node_default}" "${pkg}" "${process}" "${start}" "${port}" "${preset}" "${instances}" "${memory}" || return 1
+    if ! hm_site_node_provision "${domain}" "${node_spec}" "${node_default}" "${pkg}" "${process}" "${start}" "${port}" "${preset}" "${instances}" "${memory}"; then
+      [[ -n "${HM_TX_JOURNAL:-}" ]] && hm_tx_rollback "${domain}" || true
+      return 1
+    fi
   fi
   if [[ "${php_on}" -eq 1 ]]; then
     if ! declare -F hm_site_php_provision >/dev/null 2>&1; then
@@ -432,7 +448,11 @@ cmd_site_new() {
     if [[ "${php_harden}" -eq 1 ]]; then
       HM_SITE_PHP_HARDEN=1
     fi
-    hm_site_php_provision "${domain}" "${php_ver}" "${php_preset:-minimal}" "${php_ext}" "${php_skel}" "${yes}" "${php_sapi}" "${php_composer}" || return 1
+    if ! hm_site_php_provision "${domain}" "${php_ver}" "${php_preset:-minimal}" "${php_ext}" "${php_skel}" "${yes}" "${php_sapi}" "${php_composer}"; then
+      [[ -n "${HM_TX_JOURNAL:-}" ]] && hm_tx_rollback "${domain}" || true
+      hm_err "site new nieudany — cofnięto wdrożenie po błędzie PHP."
+      return 1
+    fi
   fi
   if [[ "${web_on}" -eq 1 ]]; then
     if ! declare -F hm_site_web_provision >/dev/null 2>&1; then
@@ -442,12 +462,22 @@ cmd_site_new() {
     if [[ -z "${vhost_kind}" ]]; then
       case "${runtime}" in
         php) vhost_kind="php-fpm" ;;
+        static) vhost_kind="static" ;;
+        spa) vhost_kind="spa" ;;
         *) vhost_kind="proxy" ;;
       esac
-      [[ "${preset}" == "static" || "${preset_app}" == "static" || "${preset_app}" == "spa" ]] && vhost_kind="${preset_app:-static}"
+      if [[ "${preset_app}" == "static" || "${preset_app}" == "spa" ]]; then
+        vhost_kind="${preset_app}"
+      elif [[ "${preset}" == "static" || "${preset}" == "spa" ]]; then
+        vhost_kind="${preset}"
+      fi
     fi
     [[ -n "${webserver}" ]] || webserver="nginx"
-    hm_site_web_provision "${domain}" "${webserver}" "${vhost_kind}" "${proxy_port:-auto}" "${web_ssl}" "${yes}" "${php_ver}" || return 1
+    if ! hm_site_web_provision "${domain}" "${webserver}" "${vhost_kind}" "${proxy_port:-auto}" "${web_ssl}" "${yes}" "${php_ver}"; then
+      [[ -n "${HM_TX_JOURNAL:-}" ]] && hm_tx_rollback "${domain}" || true
+      hm_err "site new nieudany — cofnięto wdrożenie po błędzie vhosta."
+      return 1
+    fi
   fi
   if declare -F hm_tx_commit >/dev/null 2>&1 && [[ -n "${HM_TX_JOURNAL:-}" ]]; then
     hm_tx_commit "${domain}" "${HM_SITE_USER:-${site_user:-${domain%%.*}}}" "${runtime}" "${webserver}" "$(hm_site_home "${domain}")/shared/.env" || return 1

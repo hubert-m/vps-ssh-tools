@@ -1,6 +1,23 @@
 #!/usr/bin/env bash
 # Adapter OS_FAMILY=debian. Funkcje _hm_os_do_* — kontrakt lib/os_family.sh.
 
+_hm_os_do_web_user_for() {
+  case "${1:-nginx}" in
+    apache|nginx) printf 'www-data' ;;
+    *) printf 'nobody' ;;
+  esac
+}
+
+_hm_os_do_web_group_for() {
+  case "${1:-nginx}" in
+    apache|nginx) printf 'www-data' ;;
+    *) printf 'nogroup' ;;
+  esac
+}
+
+_hm_os_do_nginx_conf_dir() { printf '/etc/nginx/sites-available'; }
+_hm_os_do_nginx_sites_enabled() { return 0; }
+
 _hm_os_do_web_group() {
   # preferencja Debian; runtime OLS nadpisuje w hm_os_web_group
   if getent group nogroup >/dev/null 2>&1; then

@@ -1,5 +1,13 @@
 # hmtools vX.Y.Z
 
+- Fix: `monitor http` — dni TLS z certyfikatu, kody curl 35/51/60 jako błąd TLS
+- Fix: `site new` — błąd PHP/vhost cofa journal; undo bazy i vhosta bez powłoki
+- Fix: `site new` — katalogi serwisu należą do usera, dysk z df, port 80/443 nginx nie jest ostrzeżeniem
+- Fix: `site new --webserver nginx` — vhost w sites-enabled; `--runtime static` bez proxy i bez portu
+- Fix: `site new --php` — listen.owner to user WWW, lista wersji z repo OS, brak gpg doinstalowuje gnupg
+- Fix: `site new --runtime node` — instalator nvm jest w HOME usera (0500) po sprawdzeniu SHA-256; błąd cofa journal
+- Fix: `site new` / `webs delete` — manifest i lista zasobów poza HOME; kasowanie tylko ze allowlisty, bez symlinków
+- Fix: `chrome test` — timeout ogranicza headless właściciela binarki i nie trafia do argv Chrome
 - Feat: `site new` — cron/timery, workery kolejek, logrotate, health i firewall bez publicznych portów aplikacji
 - Feat: `site runtime` / `site doctor` / `webs delete` — zmiana wersji z cofnięciem, dryf manifestu i usuwanie zasobów kreatora (współdzielone zostają)
 - Feat: `site new` — `--json` dla `--dry-run` i `site show`, alias `new-site`, testy mock i `docs/site-wizard.md`

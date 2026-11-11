@@ -102,6 +102,22 @@ hm_site_php_versions() {
       _hm_site_php_take "${ver}" "${kind}"
     done < <(hm_site_php_parse_dnf_list "${HM_PHP_DNF_FILE}")
   fi
+  if [[ -z "${HM_PHP_POLICY_FILE:-}" && -z "${HM_PHP_DNF_FILE:-}" ]] && declare -F hm_pkg_php_fpm_query >/dev/null 2>&1; then
+    local dump
+    dump="$(mktemp)"
+    hm_pkg_php_fpm_query > "${dump}" 2>/dev/null || true
+    if grep -q 'Installed:' "${dump}" 2>/dev/null; then
+      while IFS=$'\t' read -r ver kind; do
+        [[ "${kind}" == "missing" ]] && continue
+        _hm_site_php_take "${ver}" "${kind}"
+      done < <(hm_site_php_parse_apt_policy "${dump}")
+    else
+      while IFS=$'\t' read -r ver kind; do
+        _hm_site_php_take "${ver}" "${kind}"
+      done < <(hm_site_php_parse_dnf_list "${dump}" || true)
+    fi
+    rm -f "${dump}"
+  fi
   if [[ -n "${HM_PHP_EXTRA_FILE:-}" && -f "${HM_PHP_EXTRA_FILE}" ]]; then
     while read -r ver _; do
       [[ "${ver}" =~ ^[0-9]+\.[0-9]+$ ]] || continue
@@ -220,9 +236,11 @@ hm_site_php_write_pool() {
   local domain="$1" ver="$2" user="$3" home="$4" sapi="${5:-fpm}"
   local dir pool bak group kids sock
   if [[ "${sapi}" == "lsphp" ]]; then
-    mkdir -p "${home}/.hmtools" "${home}/logs"
-    sock="${home}/.hmtools/${user}.sock"
-    cat > "${home}/.hmtools/extprocessor.conf" <<EOF
+    local state
+    state="$(hm_site_state_dir "${domain}")"
+    mkdir -p "${state}" "${home}/logs"
+    sock="${state}/${user}.sock"
+    hm_site_write_nofollow "${state}/extprocessor.conf" <<EOF
 extprocessor ${user} {
   type                    lsapi
   address                 ${sock}
@@ -235,9 +253,9 @@ extprocessor ${user} {
 }
 EOF
     if declare -F hm_site_resource_add >/dev/null 2>&1; then
-      hm_site_resource_add "${domain}" fpm "${home}/.hmtools/extprocessor.conf" 0 || true
+      hm_site_resource_add "${domain}" fpm "${state}/extprocessor.conf" 0 || true
     fi
-    printf '%s' "${home}/.hmtools/extprocessor.conf"
+    printf '%s' "${state}/extprocessor.conf"
     return 0
   fi
   dir="$(hm_pkg_php_pool_dir "${ver}")" || return 1
@@ -248,11 +266,18 @@ EOF
   if [[ -f "${pool}" ]]; then
     cp "${pool}" "${bak}"
   fi
-  group="${HM_SITE_PHP_WEB_GROUP:-}"
-  if [[ -z "${group}" ]] && declare -F hm_os_web_group >/dev/null 2>&1; then
-    group="$(hm_os_web_group 2>/dev/null || true)"
+  local owner wgroup webkind
+  webkind="${HM_SITE_WEBSERVER:-nginx}"
+  owner="${HM_SITE_PHP_WEB_USER:-}"
+  wgroup="${HM_SITE_PHP_WEB_GROUP:-}"
+  if [[ -z "${owner}" ]] && declare -F hm_os_web_user_for >/dev/null 2>&1; then
+    owner="$(hm_os_web_user_for "${webkind}" 2>/dev/null || true)"
   fi
-  [[ -n "${group}" ]] || group="www-data"
+  if [[ -z "${wgroup}" ]] && declare -F hm_os_web_group_for >/dev/null 2>&1; then
+    wgroup="$(hm_os_web_group_for "${webkind}" 2>/dev/null || true)"
+  fi
+  [[ -n "${owner}" ]] || owner="www-data"
+  [[ -n "${wgroup}" ]] || wgroup="${owner}"
   kids="$(hm_site_php_children)"
   sock="/run/php/${domain}.sock"
   cat > "${pool}" <<EOF
@@ -260,8 +285,8 @@ EOF
 user = ${user}
 group = ${user}
 listen = ${sock}
-listen.owner = ${group}
-listen.group = ${group}
+listen.owner = ${owner}
+listen.group = ${wgroup}
 listen.mode = 0660
 pm = ondemand
 pm.max_children = ${kids}
@@ -288,6 +313,9 @@ EOF
   chmod 0750 "${home}" 2>/dev/null || true
   if declare -F hm_site_resource_add >/dev/null 2>&1; then
     hm_site_resource_add "${domain}" fpm "${pool}" 0 || true
+  fi
+  if declare -F hm_tx_note_undo >/dev/null 2>&1; then
+    hm_tx_note_undo "$(printf 'fpm-pool\t%s' "${pool}")"
   fi
   printf '%s' "${pool}"
 }

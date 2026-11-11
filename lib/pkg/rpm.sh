@@ -286,6 +286,18 @@ _hm_pkg_do_php_pool_dir() {
   printf '%s/etc/opt/remi/php%s/php-fpm.d' "${HM_PKG_ROOT:-}" "${ver//./}"
 }
 
+_hm_pkg_do_php_fpm_query() {
+  if hm_have_cmd dnf; then
+    dnf list --available --installed 'php*-php-fpm' 2>/dev/null || true
+    return 0
+  fi
+  if hm_have_cmd yum; then
+    yum list 'php*-php-fpm' 2>/dev/null || true
+    return 0
+  fi
+  return 1
+}
+
 _hm_pkg_do_php_fpm_check() {
   if [[ "${HM_SITE_PHP_FPM_TEST:-}" == "fail" ]]; then
     return 1

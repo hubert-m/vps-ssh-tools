@@ -144,29 +144,16 @@ cmd_chrome_test() {
     )" || rc=$?
   else
     hm_status_line "Headless jako właściciel binarki (nie jako root)..."
-    if hm_have_cmd timeout; then
-      out="$(
-        hm_chrome_run_as_owner "${CHROME_BIN}" timeout 15 "${CHROME_BIN}" \
-          --headless \
-          --disable-gpu \
-          --no-sandbox \
-          --disable-dev-shm-usage \
-          --dump-dom \
-          about:blank \
-          2>/dev/null
-      )" || rc=$?
-    else
-      out="$(
-        hm_chrome_run_as_owner "${CHROME_BIN}" "${CHROME_BIN}" \
-          --headless \
-          --disable-gpu \
-          --no-sandbox \
-          --disable-dev-shm-usage \
-          --dump-dom \
-          about:blank \
-          2>/dev/null
-      )" || rc=$?
-    fi
+    out="$(
+      hm_chrome_run_as_owner "${CHROME_BIN}" \
+        --headless \
+        --disable-gpu \
+        --no-sandbox \
+        --disable-dev-shm-usage \
+        --dump-dom \
+        about:blank \
+        2>/dev/null
+    )" || rc=$?
     if [[ "${rc}" -eq 126 ]]; then
       hm_status_clear
       hm_err "Nie uruchamiam --headless na binarce spoza zaufanej ścieżki jako root."

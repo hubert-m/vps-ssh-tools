@@ -7,6 +7,51 @@ if [[ -n "${HMTOOLS_SITE_DB_LOADED:-}" ]]; then
 fi
 HMTOOLS_SITE_DB_LOADED=1
 
+if ! declare -F hm_site_state_dir >/dev/null 2>&1; then
+  hm_site_state_dir() {
+    local base="${HM_SITE_STATE_DIR:-}"
+    if [[ -z "${base}" && "${HMTOOLS_TEST:-}" == "1" ]]; then
+      base="${TMPDIR:-/tmp}/hmtools-site-state"
+    fi
+    [[ -n "${base}" ]] || base="/var/lib/hmtools/sites"
+    printf '%s/%s' "${base}" "${1:-}"
+  }
+fi
+if ! declare -F hm_site_manifest_path >/dev/null 2>&1; then
+  hm_site_manifest_path() {
+    printf '%s/%s.json' "${HM_SITE_MANIFEST_DIR:-/etc/hmtools/sites}" "${1:-}"
+  }
+fi
+if ! declare -F hm_site_write_nofollow >/dev/null 2>&1; then
+  hm_site_path_has_symlink() {
+    local path="$1" cur line
+    [[ -n "${path}" ]] || return 1
+    cur="${path}"
+    while [[ -n "${cur}" && "${cur}" != "/" ]]; do
+      if [[ -e "${cur}" || -L "${cur}" ]]; then
+        line="$(ls -ld -- "${cur}" 2>/dev/null || true)"
+        [[ "${line}" == *"->"* ]] && return 0
+      fi
+      cur="$(dirname "${cur}")"
+    done
+    return 1
+  }
+  hm_site_write_nofollow() {
+    local path="$1" dir tmp
+    dir="$(dirname "${path}")"
+    if [[ -L "${path}" ]] || hm_site_path_has_symlink "${dir}"; then
+      hm_err "Odmowa zapisu przez symlink: ${path}"
+      return 1
+    fi
+    mkdir -p "${dir}"
+    chmod 0700 "${dir}" 2>/dev/null || true
+    tmp="$(mktemp "${dir}/.write.XXXXXX")"
+    cat > "${tmp}"
+    chmod 0600 "${tmp}" 2>/dev/null || true
+    mv -f "${tmp}" "${path}"
+  }
+fi
+
 hm_site_db_ident() {
   local user="$1" kind="${2:-app}" name
   name="${user}_${kind}"
@@ -44,7 +89,7 @@ hm_site_db_apply_sql() {
 }
 
 hm_site_db_ledger_path() {
-  printf '%s/.hmtools/db-created.tsv' "$(hm_site_home "${1:-}")"
+  printf '%s/db-created.tsv' "$(hm_site_state_dir "${1:-}")"
 }
 
 hm_site_db_ledger_add() {
@@ -65,10 +110,6 @@ hm_site_db_ledger_add() {
   HM_SITE_DB_SESSION_LEDGER+="${typ}"$'\t'"${name}"$'\t'"${user}"$'\t'"${extra}"$'\n'
 }
 
-hm_site_manifest_path() {
-  printf '%s/.hmtools/service.json' "$(hm_site_home "${1:-}")"
-}
-
 hm_site_manifest_add_db() {
   local domain="$1" typ="$2" name="$3" user="$4" host="$5" port="${6:-}" extra="${7:-}"
   local path nd dir line obj
@@ -85,17 +126,22 @@ hm_site_manifest_add_db() {
   path="$(hm_site_manifest_path "${domain}")"
   dir="$(dirname "${path}")"
   nd="${dir}/databases.ndjson"
+  if [[ -L "${path}" || -L "${nd}" ]]; then
+    hm_err "Odmowa zapisu manifestu przez symlink."
+    return 1
+  fi
   mkdir -p "${dir}"
-  chmod 0750 "${dir}" || true
+  chmod 0700 "${dir}" || true
   obj="{\"type\":\"$(hm_json_escape_str "${typ}")\",\"name\":\"$(hm_json_escape_str "${name}")\",\"user\":\"$(hm_json_escape_str "${user}")\",\"host\":\"$(hm_json_escape_str "${host}")\",\"port\":\"$(hm_json_escape_str "${port}")\""
   if [[ -n "${extra}" ]]; then
     obj+=",\"extra\":\"$(hm_json_escape_str "${extra}")\""
   fi
   obj+="}"
   printf '%s\n' "${obj}" >> "${nd}"
+  local tmpm first=1
+  tmpm="$(mktemp "${dir}/.manifest.XXXXXX")"
   {
     printf '{\n  "databases": [\n'
-    local first=1
     while IFS= read -r line || [[ -n "${line}" ]]; do
       [[ -n "${line}" ]] || continue
       if [[ "${first}" -eq 0 ]]; then
@@ -105,9 +151,9 @@ hm_site_manifest_add_db() {
       printf '    %s' "${line}"
     done < "${nd}"
     printf '\n  ]\n}\n'
-  } > "${path}.tmp"
-  mv -f "${path}.tmp" "${path}"
-  chmod 0640 "${path}" "${nd}" || true
+  } > "${tmpm}"
+  mv -f "${tmpm}" "${path}"
+  chmod 0600 "${path}" "${nd}" || true
 }
 
 hm_site_mysql_harden() {
@@ -226,6 +272,10 @@ hm_site_mysql_provision() {
   [[ -n "${HM_MYSQL_CREATE_PASS}" ]] || { hm_err "MySQL: brak hasła po utworzeniu."; return 1; }
   hm_site_db_ledger_add "${domain}" mysql "${dbname}" "${dbuser}" "127.0.0.1"
   hm_site_manifest_add_db "${domain}" mysql "${dbname}" "${dbuser}" "127.0.0.1" "3306"
+  if declare -F hm_tx_note_undo >/dev/null 2>&1; then
+    hm_tx_note_undo "$(printf 'mysql-drop-user\t%s' "${dbuser}")"
+    hm_tx_note_undo "$(printf 'mysql-drop-db\t%s' "${dbname}")"
+  fi
 }
 
 hm_site_pg_provision() {
@@ -242,6 +292,9 @@ REVOKE ALL ON DATABASE ${dbname} FROM PUBLIC;"
   HM_SITE_DB_PASS="${pass}"
   hm_site_db_ledger_add "${domain}" postgres "${dbname}" "${dbuser}" "127.0.0.1"
   hm_site_manifest_add_db "${domain}" postgres "${dbname}" "${dbuser}" "127.0.0.1" "5432"
+  if declare -F hm_tx_note_undo >/dev/null 2>&1; then
+    hm_tx_note_undo "$(printf 'pg-drop\t%s\t%s' "${dbname}" "${dbuser}")"
+  fi
 }
 
 hm_site_sqlite_provision() {
@@ -484,10 +537,14 @@ hm_site_db_provision() {
   if [[ "${runtime}" == "node" ]]; then
     hm_site_env_write_pm2_stub "${home}/shared/ecosystem.config.cjs" "${envpath}" || true
   fi
-  local unit="${home}/.hmtools/app.service"
-  mkdir -p "$(dirname "${unit}")"
+  local unit
+  unit="$(hm_site_state_dir "${domain}")/app.service"
+  if [[ -L "${unit}" ]]; then
+    hm_err "Odmowa: ${unit} jest symlinkiem."
+    return 1
+  fi
   if [[ ! -f "${unit}" ]]; then
-    printf '%s\n' '[Service]' 'ExecStart=/usr/bin/true' > "${unit}"
+    printf '%s\n' '[Service]' 'ExecStart=/usr/bin/true' | hm_site_write_nofollow "${unit}" || return 1
   fi
   hm_site_env_attach_systemd "${unit}" "${envpath}" || true
 

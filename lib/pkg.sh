@@ -249,6 +249,12 @@ hm_pkg_php_repo_add() {
   _hm_pkg_do_php_repo_add "$@"
 }
 
+# Lista php*-fpm z repozytorium OS (apt-cache policy albo dnf list). Stdout do parsera.
+hm_pkg_php_fpm_query() {
+  hm_pkg_bind || return 1
+  _hm_pkg_do_php_fpm_query "$@"
+}
+
 # $1=X.Y $2=fpm|lsphp  reszta: nazwy rozszerzeń. Stdout: paczki, jedna na linię.
 hm_pkg_php_package_names() {
   hm_pkg_bind || return 1

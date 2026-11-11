@@ -16,7 +16,7 @@ source "${ROOT}/lib/detect.sh"
 
 hm_have_cmd() {
   case "$1" in
-    google-chrome-stable|google-chrome|chromium|chromium-browser|chrome|systemctl|curl|runuser|sudo|timeout)
+    google-chrome-stable|google-chrome|chromium|chromium-browser|chrome|systemctl|curl|sudo)
       return 1 ;;
     *) command -v "$1" >/dev/null 2>&1 ;;
   esac
@@ -160,8 +160,83 @@ else
   bad "zaufana binarka nie wystartowała"
 fi
 
+# timeout jest poleceniem przed binarką, argv[1] Chrome zaczyna się od --.
+# Mock śpiący 30 s kończy się po ~15 s z rc 124.
+bin="${TMP}/bin"
+mkdir -p "${bin}"
+cat > "${bin}/id" <<'EOF'
+#!/bin/sh
+if [ "$1" = "-u" ]; then
+  echo 0
+  exit 0
+fi
+echo siteuser
+EOF
+cat > "${bin}/runuser" <<'EOF'
+#!/bin/sh
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--" ]; then
+    shift
+    break
+  fi
+  shift
+done
+exec "$@"
+EOF
+cat > "${bin}/timeout" <<'EOF'
+#!/bin/bash
+dur="${1:-15}"
+shift
+"$@" &
+pid=$!
+elapsed=0
+while kill -0 "${pid}" 2>/dev/null; do
+  if [ "${elapsed}" -ge "${dur}" ]; then
+    kill -TERM "${pid}" 2>/dev/null || true
+    wait "${pid}" 2>/dev/null || true
+    exit 124
+  fi
+  sleep 1
+  elapsed=$((elapsed + 1))
+done
+wait "${pid}"
+status=$?
+exit "${status}"
+EOF
+chmod +x "${bin}/id" "${bin}/runuser" "${bin}/timeout"
+export PATH="${bin}:${PATH}"
+unset CHROME_CDP_URL || true
+write_chain "${fake}" 1000 755 siteuser > "${STAT}"
+export FORCE_CHROME_BIN="${fake}"
+export CHROME_BIN="${fake}"
+rm -f "${MARKER}"
+cmd_chrome test >/dev/null 2>&1 || true
+if [[ -f "${MARKER}" ]] && grep -q 'args=--' "${MARKER}" && ! grep -q 'args=timeout' "${MARKER}"; then
+  ok "chrome test: argv Chrome zaczyna się od --"
+else
+  bad "chrome test argv='$(cat "${MARKER}" 2>/dev/null || true)'"
+fi
+
+sleeper="${TMP}/home/siteuser/.cache/puppeteer/chrome/linux-1.0/chrome-linux64/chrome"
+mkdir -p "$(dirname "${sleeper}")"
+cat > "${sleeper}" <<'EOF'
+#!/bin/sh
+sleep 30
+EOF
+chmod +x "${sleeper}"
+write_chain "${sleeper}" 1000 755 siteuser > "${STAT}"
+rc=0
+start="${SECONDS}"
+hm_chrome_run_as_owner "${sleeper}" --headless --dump-dom about:blank || rc=$?
+elapsed=$((SECONDS - start))
+if [[ "${rc}" -eq 124 && "${elapsed}" -ge 12 && "${elapsed}" -le 22 ]]; then
+  ok "timeout 15 s kończy sen 30 s (rc 124, ${elapsed}s)"
+else
+  bad "timeout rc=${rc} elapsed=${elapsed}"
+fi
+
 rm -rf "${TMP}"
-unset HM_CHROME_STAT_FILE HM_CHROME_LPE_MARKER FORCE_CHROME_BIN
+unset HM_CHROME_STAT_FILE HM_CHROME_LPE_MARKER FORCE_CHROME_BIN CHROME_BIN PATH
 
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"
