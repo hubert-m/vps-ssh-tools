@@ -16,6 +16,8 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [vX.Y.Z]
 
+- Fix: `ssl issue` przed issueSSL czyści live/archive/renewal, gdy cert jest self-signed
+- Fix: `ssl` oznacza SELF-SIGNED; `ssl acme-update` odświeża acme.sh (CA Let's Encrypt); bez self-signed
 - Feat: `dashboard build` — statyczny HTML z `--json`, nasłuch tylko na loopback
 - Feat: `--json` list i statusów oraz `metrics export` (atomowy plik Prometheus)
 - Fix: `chrome clean` kasuje zweryfikowaną ścieżkę; `chrome ps` obcina znaki sterujące i hasło proxy

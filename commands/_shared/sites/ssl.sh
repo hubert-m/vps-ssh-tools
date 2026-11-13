@@ -58,12 +58,38 @@ hm_ssl_days_left() {
   echo $(( (exp - now) / 86400 ))
 }
 
+hm_ssl_is_self_signed() {
+  # Issuer == subject, albo długi okres bez Let's Encrypt / ISRG w issuer.
+  local cert="${1:-}" subj iss days=""
+  [[ -n "${cert}" && -f "${cert}" ]] || return 1
+  subj="$(openssl x509 -noout -subject -in "${cert}" 2>/dev/null | sed 's/^subject=[[:space:]]*//; s/[[:space:]]*=[[:space:]]*/=/g')"
+  iss="$(openssl x509 -noout -issuer -in "${cert}" 2>/dev/null | sed 's/^issuer=[[:space:]]*//; s/[[:space:]]*=[[:space:]]*/=/g')"
+  [[ -n "${subj}" && -n "${iss}" ]] || return 1
+  if [[ "${subj}" == "${iss}" ]]; then
+    return 0
+  fi
+  case "${iss}" in
+    *"Let's Encrypt"*|*ISRG*)
+      return 1
+      ;;
+  esac
+  days="$(hm_ssl_days_left "${cert}" 2>/dev/null || true)"
+  if [[ "${days}" =~ ^[0-9]+$ && "${days}" -ge 1000 ]]; then
+    return 0
+  fi
+  return 1
+}
+
 hm_ssl_status() {
-  # stdout: ok | soon | expired | missing | unknown
+  # stdout: ok | soon | expired | selfsigned | missing | unknown
   local cert="${1:-}"
   local days warn_days="${2:-14}"
   if [[ -z "${cert}" || ! -f "${cert}" ]]; then
     echo "missing"
+    return 0
+  fi
+  if hm_ssl_is_self_signed "${cert}"; then
+    echo "selfsigned"
     return 0
   fi
   days="$(hm_ssl_days_left "${cert}" 2>/dev/null || true)"

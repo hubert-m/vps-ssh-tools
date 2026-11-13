@@ -695,7 +695,7 @@ hm_tab_complete() {
         ;;
       ssl)
         local re_ssl_dns='ssl[[:space:]]+issue[[:space:]].*--dns[[:space:]]+$'
-        local re_ssl_dom='ssl[[:space:]]+(renew|renewal|issue|mail|self-signed|selfsigned|diagnose|diag)[[:space:]]'
+        local re_ssl_dom='ssl[[:space:]]+(renew|renewal|issue|mail|diagnose|diag)[[:space:]]'
         if [[ "${prefix}" =~ $re_ssl_dns ]]; then
           for m in pdns cloudflare; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
@@ -717,7 +717,7 @@ hm_tab_complete() {
             [[ -n "${m}" ]] && matches+=("${m}")
           done < <(hm_complete_filter_sites "${partial}")
         else
-          for m in issue renew renewal hostname mail self-signed diagnose help; do
+          for m in issue renew renewal hostname mail acme-update diagnose help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi

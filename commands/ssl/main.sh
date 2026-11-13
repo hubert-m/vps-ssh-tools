@@ -15,13 +15,14 @@ Użycie:
                                    Wildcard DNS-01 (PowerDNS / Cloudflare)
   ssl hostname [fqdn]              Certyfikat hostname panelu (hostNameSSL)
   ssl mail [domena]                Postfix/Dovecot (mailServerSSL)
-  ssl self-signed [domena]         Awaryjny certyfikat self-signed
+  ssl acme-update [--yes]          Odśwież acme.sh i ustaw CA Let's Encrypt
   ssl diagnose [domena]            Ostatni błąd ACME → czytelna przyczyna
   ssl renew [domena]               Alias: renew-ssl
   renew-ssl [domena]               Odnów Let's Encrypt (potwierdzenie)
 
 W kontekście strony: ssl = szczegóły certu; argument domeny opcjonalny.
-Wygasły cert → wyraźny komunikat na czerwono + podpowiedź renew-ssl / ssl issue.
+Wygasły / self-signed → czerwony status + podpowiedź ssl issue.
+hmtools wydaje wyłącznie Let's Encrypt (bez self-signed).
 
 Kolejność wydawania: pre-check → cyberpanel CLI → acme.sh → (renew: certbot).
 EOF
@@ -55,6 +56,11 @@ cmd_ssl() {
     self-signed|selfsigned|self)
       shift || true
       cmd_ssl_self_signed "$@"
+      return
+      ;;
+    acme-update|acme|acme-refresh|acme_update)
+      shift || true
+      cmd_ssl_acme_update "$@"
       return
       ;;
     diagnose|diag|doctor)
@@ -122,6 +128,9 @@ cmd_ssl() {
       soon)
         hm_table_row "${domain}" "${C_YELLOW}WKRÓTCE${C_RESET}" "${days}" "${expiry}"
         ;;
+      selfsigned)
+        hm_table_row "${domain}" "${C_RED}SELF-SIGNED${C_RESET}" "${days}" "${expiry}"
+        ;;
       ok)
         hm_table_row "${domain}" "${C_GREEN}OK${C_RESET}" "${days}" "${expiry}"
         ;;
@@ -133,7 +142,8 @@ cmd_ssl() {
   hm_progress_done
   hm_table_print
   echo
-  echo "  ${C_DIM}Wydanie: ssl issue [domena]   |   Odnawianie: renew-ssl [domena]   |   Diagnoza: ssl diagnose${C_RESET}"
+  echo "  ${C_DIM}Wydanie: ssl issue [domena]   |   Odnawianie: renew-ssl [domena]   |   ACME: ssl acme-update   |   Diagnoza: ssl diagnose${C_RESET}"
+  echo "  ${C_DIM}SELF-SIGNED → zamień na Let's Encrypt: ssl issue <domena>${C_RESET}"
 }
 
 cmd_renew_ssl() {
@@ -169,6 +179,9 @@ cmd_renew_ssl() {
           hm_warn "  Status : wygasa za ${days} dni"
         fi
         ;;
+      selfsigned)
+        hm_err "  Status : SELF-SIGNED — zamień przez ssl issue ${domain}"
+        ;;
       ok)
         if [[ "${days}" == "1" ]]; then
           hm_ok "  Status : ważny (jeszcze 1 dzień)"
@@ -186,6 +199,7 @@ cmd_renew_ssl() {
 
   if ! hm_confirm_plan "renew-ssl — ${domain}" \
     "Wystawienie/odnowienie certyfikatu Let's Encrypt." \
+    "Przy self-signed: usunięcie /etc/letsencrypt/{live,archive,renewal}/${domain}" \
     "Odnowienie/wystawienie certyfikatu Let's Encrypt dla ${domain} (cyberpanel issueSSL → acme.sh → certbot)" \
     "Zapisanie plików certyfikatu w /etc/letsencrypt/live/${domain}/" \
     "Przeładowanie OpenLiteSpeed (ols reload)"; then
@@ -195,6 +209,7 @@ cmd_renew_ssl() {
   local ok=0 rc
   # 1) CyberPanel CLI
   if hm_have_cmd cyberpanel; then
+    hm_ssl_clear_self_signed_before_issue "${domain}" || return 1
     hm_info "CyberPanel: issueSSL --domainName ${domain}"
     set +e
     hm_run cyberpanel issueSSL --domainName "${domain}"
@@ -213,6 +228,7 @@ cmd_renew_ssl() {
     local acme=""
     acme="$(hm_ssl_find_acme 2>/dev/null || true)"
     if [[ -n "${acme}" ]]; then
+      hm_ssl_clear_self_signed_before_issue "${domain}" || return 1
       hm_info "acme.sh renew/issue dla ${domain}…"
       "${acme}" --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
       set +e

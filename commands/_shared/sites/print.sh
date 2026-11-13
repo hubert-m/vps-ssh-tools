@@ -147,6 +147,15 @@ hm_print_site_ssl() {
       hm_err "════════════════════════════════════════════"
       echo
       ;;
+    selfsigned)
+      echo
+      hm_err "════════════════════════════════════════════"
+      hm_err "  CERTYFIKAT SELF-SIGNED (nie Let's Encrypt)"
+      hm_err "  Domena: ${domain}"
+      hm_err "  Zamień: ssl issue ${domain}"
+      hm_err "════════════════════════════════════════════"
+      echo
+      ;;
     soon)
       echo
       if [[ "${days}" == "1" ]]; then

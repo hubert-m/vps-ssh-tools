@@ -61,9 +61,10 @@
 | `applog [N]` | Ostatnie N linii logu hmtools (domyślnie 50) |
 | `disk` [`--drive`] [`--inodes`] [`--home`] [`--heavy` [`--count N`] [`--deep N`]] | `df` / inody / top `/home`; `--heavy` — rekurencyjnie najcięższe pliki/katalogi od `/` (domyślnie count=3, deep=5) |
 | `ols …` | OLS: `status`/`reload`/`restart`/`log`, `stats`/`top`, `htaccess`, `cache`, `proxy`, `admin`, `vhost` |
-| `ssl` | Certyfikaty SSL (status / dni; wygasły na czerwono) |
-| `ssl issue [domena]` | Wydaj LE (HTTP-01) z pre-check DNS/HTTP; `--with-www` / `--aliases`; `--wildcard --dns pdns\|cloudflare` |
-| `ssl hostname` / `ssl mail` / `ssl self-signed` / `ssl diagnose` | Hostname panelu, poczta, awaryjny self-signed, diagnoza ACME |
+| `ssl` | Certyfikaty SSL (status / dni; WYGASŁ i SELF-SIGNED na czerwono) |
+| `ssl issue [domena]` | Wydaj Let's Encrypt (HTTP-01) z pre-check DNS/HTTP; `--with-www` / `--aliases`; `--wildcard --dns pdns\|cloudflare` |
+| `ssl hostname` / `ssl mail` / `ssl diagnose` | Hostname panelu, poczta, diagnoza ACME |
+| `ssl acme-update [--yes]` | Odśwież klienta acme.sh i ustaw domyślne CA na Let's Encrypt |
 | `renew-ssl [domena]` | Odnów Let's Encrypt (z potwierdzeniem) |
 | `mysql` / `dbs` | Lista baz; `heavy [--min-size X]` (bazy/tabele ≥ X, domyślnie 1G); `dump`/`dump-local`/`import`/`cli`/`top`/`optimize`/`create` |
 | `cron` / `crons` | Crony systemowe / users / strony; `cron edit`; `cron monitor` i `cron-run` |
@@ -131,8 +132,8 @@ Serie: `hmtools_backup_age_seconds`, `hmtools_cert_days_left`, `hmtools_service_
 | `info` | Pełne info: ścieżki, rozmiar, DB, SSL, PHP |
 | `size` | Rozmiary katalogów + top `du` |
 | `dbs` | Bazy (CyberPanel confirmed + heurystyka); też `dbs cli` itd. |
-| `ssl` | Certyfikat; wygasły → czerwony alert |
-| `ssl issue` / `diagnose` | Wydanie LE / diagnostyka ACME |
+| `ssl` | Certyfikat; WYGASŁ / SELF-SIGNED → czerwony alert |
+| `ssl issue` / `acme-update` / `diagnose` | Wydanie LE / odświeżenie acme.sh / diagnostyka ACME |
 | `renew-ssl` | Odnów Let's Encrypt dla strony |
 | `php` | `set` / `ext` / `ini` / `restart` / `ps` — `php help` |
 | `logs [N\|errors\|stats\|follow]` | Logi vhosta + OLS `stderr.log`; analityka / live |

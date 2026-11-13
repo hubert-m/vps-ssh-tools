@@ -310,7 +310,7 @@ hm_health_overview() {
   fi
 
   echo
-  echo "${C_BOLD}Certyfikaty wygasające < 14 dni${C_RESET}"
+  echo "${C_BOLD}Certyfikaty — wygasające < 14 dni / self-signed${C_RESET}"
   hm_discover_sites
   local domain cert status days expiry found=0
   local total="${#HM_SITES_LIST[@]}" i=0
@@ -322,12 +322,14 @@ hm_health_overview() {
     [[ -n "${cert}" ]] || continue
     status="$(hm_ssl_status "${cert}" 14)"
     case "${status}" in
-      expired|soon)
+      expired|soon|selfsigned)
         found=1
         days="$(hm_ssl_days_left "${cert}" 2>/dev/null || echo "?")"
         expiry="$(hm_ssl_expiry "${cert}")"
         if [[ "${status}" == "expired" ]]; then
           alerts+=("EXPIRED|${domain}|${expiry}|${days}")
+        elif [[ "${status}" == "selfsigned" ]]; then
+          alerts+=("SELF-SIGNED|${domain}|${expiry}|${days}")
         else
           alerts+=("SOON|${domain}|${expiry}|${days}")
         fi
@@ -340,12 +342,14 @@ hm_health_overview() {
     IFS='|' read -r status domain expiry days <<<"${a}"
     if [[ "${status}" == "EXPIRED" ]]; then
       hm_err "  EXPIRED  ${domain}  (${expiry}, ${days} dni)"
+    elif [[ "${status}" == "SELF-SIGNED" ]]; then
+      hm_err "  SELF-SIGNED  ${domain}  (${expiry}, ${days} dni) — ssl issue ${domain}"
     else
       hm_warn "  SOON     ${domain}  (${expiry}, ${days} dni)"
     fi
   done
   if [[ "${found}" -eq 0 ]]; then
-    hm_ok "Brak certyfikatów wygasających w ciągu 14 dni."
+    hm_ok "Brak certyfikatów wygasających w ciągu 14 dni / self-signed."
   fi
 
   echo
@@ -424,7 +428,7 @@ hm_health_check() {
     [[ -n "${cert}" && -f "${cert}" ]] || continue
     status="$(hm_ssl_status "${cert}" "${ssl_days}" 2>/dev/null || echo unknown)"
     case "${status}" in
-      expired|soon)
+      expired|soon|selfsigned)
         days="$(hm_ssl_days_left "${cert}" 2>/dev/null || echo '?')"
         alerts+=("ssl:${domain}:${status}:days=${days}")
         ;;

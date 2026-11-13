@@ -110,6 +110,128 @@ else
   echo "OK   mail-requires-cyberpanel"
 fi
 
+# --- self-signed wyłączone ---
+if cmd_ssl_self_signed example.test 2>/dev/null; then
+  echo "FAIL self-signed-should-refuse"
+  fail=1
+else
+  echo "OK   self-signed-refuse"
+fi
+if hm_ssl_issue_via_cyberpanel example.test selfsigned 2>/dev/null; then
+  echo "FAIL cyberpanel-selfsigned-should-refuse"
+  fail=1
+else
+  echo "OK   cyberpanel-selfsigned-refuse"
+fi
+if hm_ssl_self_signed_openssl example.test 2>/dev/null; then
+  echo "FAIL openssl-selfsigned-should-refuse"
+  fail=1
+else
+  echo "OK   openssl-selfsigned-refuse"
+fi
+
+# --- wykrywanie self-signed ---
+# shellcheck disable=SC1091
+source commands/_shared/sites/ssl.sh
+ssdir="$(mktemp -d)"
+# Na MSYS/Git bash pojedyncze /CN= jest traktowane jak ścieżka Windows.
+openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+  -keyout "${ssdir}/key.pem" -out "${ssdir}/cert.pem" \
+  -subj "//CN=self.test" >/dev/null 2>&1 \
+  || openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+    -keyout "${ssdir}/key.pem" -out "${ssdir}/cert.pem" \
+    -subj "/CN=self.test" >/dev/null 2>&1 || true
+if [[ -s "${ssdir}/cert.pem" ]]; then
+  if hm_ssl_is_self_signed "${ssdir}/cert.pem"; then
+    echo "OK   detect-self-signed"
+  else
+    echo "FAIL detect-self-signed"
+    fail=1
+  fi
+  st="$(hm_ssl_status "${ssdir}/cert.pem")"
+  assert_eq "status-selfsigned" "${st}" "selfsigned"
+else
+  echo "FAIL make-self-signed-cert"
+  fail=1
+fi
+# --- purge LE przed issueSSL przy self-signed ---
+le="$(mktemp -d)"
+mkdir -p "${le}/live/self.test" "${le}/archive/self.test" "${le}/renewal"
+cp -f "${ssdir}/cert.pem" "${le}/live/self.test/fullchain.pem"
+printf 'x\n' >"${le}/archive/self.test/fullchain1.pem"
+printf 'x\n' >"${le}/renewal/self.test"
+printf 'x\n' >"${le}/renewal/self.test.conf"
+printf 'keep\n' >"${le}/live/other.test"
+export HM_SSL_LE_ROOT="${le}"
+hm_ssl_paths_for_domain() { printf '%s' "${le}/live/self.test/fullchain.pem"; }
+hm_ssl_clear_self_signed_before_issue "self.test" >/dev/null
+[[ ! -e "${le}/live/self.test" ]] && echo "OK   purge-live" || {
+  echo "FAIL purge-live"
+  fail=1
+}
+[[ ! -e "${le}/archive/self.test" ]] && echo "OK   purge-archive" || {
+  echo "FAIL purge-archive"
+  fail=1
+}
+[[ ! -e "${le}/renewal/self.test" && ! -e "${le}/renewal/self.test.conf" ]] && echo "OK   purge-renewal" || {
+  echo "FAIL purge-renewal"
+  fail=1
+}
+[[ -f "${le}/live/other.test" ]] && echo "OK   purge-other-kept" || {
+  echo "FAIL purge-other-kept"
+  fail=1
+}
+# LE cert (issuer ≠ subject) → bez purge
+openssl req -x509 -nodes -newkey rsa:2048 -days 90 \
+  -keyout "${ssdir}/cakey.pem" -out "${ssdir}/cacert.pem" \
+  -subj "//CN=Fake CA" >/dev/null 2>&1 \
+  || openssl req -x509 -nodes -newkey rsa:2048 -days 90 \
+    -keyout "${ssdir}/cakey.pem" -out "${ssdir}/cacert.pem" \
+    -subj "/CN=Fake CA" >/dev/null 2>&1 || true
+# LE-like: osobny issuer przez skopiowanie innego CN nie wystarczy; symuluj subject≠issuer
+# przez drugi cert i ręczny plik — hm_ssl_is_self_signed wymaga openssl subject/issuer.
+# Tu sprawdzamy brak purge, gdy status nie jest selfsigned (stub).
+mkdir -p "${le}/live/ok.test"
+printf 'placeholder\n' >"${le}/live/ok.test/fullchain.pem"
+hm_ssl_is_self_signed() { return 1; }
+hm_ssl_paths_for_domain() { printf '%s' "${le}/live/ok.test/fullchain.pem"; }
+hm_ssl_clear_self_signed_before_issue "ok.test" >/dev/null
+[[ -f "${le}/live/ok.test/fullchain.pem" ]] && echo "OK   no-purge-when-not-ss" || {
+  echo "FAIL no-purge-when-not-ss"
+  fail=1
+}
+unset HM_SSL_LE_ROOT
+rm -rf "${ssdir}" "${le}"
+
+# --- acme-update: confirm cancel ---
+hm_confirm_plan() { return 1; }
+if cmd_ssl_acme_update 2>/dev/null; then
+  echo "FAIL acme-update-cancel"
+  fail=1
+else
+  echo "OK   acme-update-cancel"
+fi
+# dry ścieżka testowa
+hm_confirm_plan() { return 0; }
+export HMTOOLS_TEST=1
+out="$(cmd_ssl_acme_update --yes 2>/dev/null || true)"
+if [[ "${out}" == *acme-update*ok* ]]; then
+  echo "OK   acme-update-test"
+else
+  echo "FAIL acme-update-test: [${out}]"
+  fail=1
+fi
+unset HMTOOLS_TEST
+
+grep -q 'acme-update' commands/ssl/main.sh && echo "OK   help-acme" || {
+  echo "FAIL help-acme"
+  fail=1
+}
+grep -q 'SELF-SIGNED' commands/ssl/main.sh && echo "OK   list-selfsigned-label" || {
+  echo "FAIL list-selfsigned-label"
+  fail=1
+}
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"
   exit 1

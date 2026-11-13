@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ssl issue / hostname / mail / self-signed / diagnose — helpers
+# ssl issue / hostname / mail / acme-update / diagnose — helpers (tylko Let's Encrypt)
 
 hm_ssl_find_acme() {
   local acme
@@ -298,12 +298,71 @@ hm_ssl_load_dns_provider_env() {
   esac
 }
 
+hm_ssl_le_root() {
+  printf '%s' "${HM_SSL_LE_ROOT:-/etc/letsencrypt}"
+}
+
+# Przed issueSSL / acme: usuń ścieżki LE, gdy obecny cert jest self-signed.
+hm_ssl_purge_le_dirs() {
+  local domain="${1:-}" le_root=""
+  [[ -n "${domain}" ]] || return 1
+  if declare -F hm_is_valid_domain >/dev/null 2>&1; then
+    hm_is_valid_domain "${domain}" || return 1
+  else
+    [[ "${domain}" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+  fi
+  case "${domain}" in
+    *..*|*/*|*\\*) return 1 ;;
+  esac
+  le_root="$(hm_ssl_le_root)"
+  rm -rf -- "${le_root}/live/${domain}"
+  rm -rf -- "${le_root}/archive/${domain}"
+  rm -f -- "${le_root}/renewal/${domain}"
+  rm -f -- "${le_root}/renewal/${domain}.conf"
+  return 0
+}
+
+hm_ssl_clear_self_signed_before_issue() {
+  # Uwaga: nie nazywaj lokalnych zmiennych jak le/root używanych w stubach testów
+  # (bash ma dynamiczny scope — zasłoniłyby ${le} w hm_ssl_paths_for_domain).
+  local domain="${1:-}" cert="" le_fullchain="" le_root=""
+  [[ -n "${domain}" ]] || return 0
+  le_root="$(hm_ssl_le_root)"
+  if declare -F hm_ssl_paths_for_domain >/dev/null 2>&1; then
+    cert="$(hm_ssl_paths_for_domain "${domain}" 2>/dev/null || true)"
+  fi
+  le_fullchain="${le_root}/live/${domain}/fullchain.pem"
+  if [[ -z "${cert}" && -f "${le_fullchain}" ]]; then
+    cert="${le_fullchain}"
+  fi
+  if [[ -z "${cert}" || ! -f "${cert}" ]]; then
+    return 0
+  fi
+  if ! declare -F hm_ssl_is_self_signed >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! hm_ssl_is_self_signed "${cert}"; then
+    if [[ -f "${le_fullchain}" && "${cert}" != "${le_fullchain}" ]] && hm_ssl_is_self_signed "${le_fullchain}"; then
+      :
+    else
+      return 0
+    fi
+  fi
+  hm_info "Certyfikat self-signed — czyszczę ${le_root}/{live,archive,renewal}/${domain} przed issueSSL."
+  hm_ssl_purge_le_dirs "${domain}" || {
+    hm_err "Nie udało się wyczyścić starych ścieżek Let's Encrypt dla ${domain}."
+    return 1
+  }
+  return 0
+}
+
 hm_ssl_issue_via_cyberpanel() {
   local domain="$1"
-  local mode="${2:-domain}" # domain|hostname|mail|selfsigned
+  local mode="${2:-domain}" # domain|hostname|mail
   hm_have_cmd cyberpanel || return 1
   case "${mode}" in
     domain)
+      hm_ssl_clear_self_signed_before_issue "${domain}" || return 1
       hm_info "CyberPanel: issueSSL --domainName ${domain}"
       hm_run cyberpanel issueSSL --domainName "${domain}"
       ;;
@@ -315,9 +374,9 @@ hm_ssl_issue_via_cyberpanel() {
       hm_info "CyberPanel: mailServerSSL --domainName ${domain}"
       hm_run cyberpanel mailServerSSL --domainName "${domain}"
       ;;
-    selfsigned)
-      hm_info "CyberPanel: issueSelfSignedSSL --domainName ${domain}"
-      hm_run cyberpanel issueSelfSignedSSL --domainName "${domain}"
+    selfsigned|self-signed|self)
+      hm_err "Self-signed jest wyłączone. Użyj: ssl issue ${domain}"
+      return 1
       ;;
     *)
       return 1
@@ -405,22 +464,29 @@ hm_ssl_issue_via_acme_dns() {
 }
 
 hm_ssl_self_signed_openssl() {
-  local domain="$1"
-  local outdir key cert
-  outdir="/etc/letsencrypt/live/${domain}"
-  mkdir -p "${outdir}"
-  key="${outdir}/privkey.pem"
-  cert="${outdir}/fullchain.pem"
-  openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
-    -keyout "${key}" -out "${cert}" \
-    -subj "/CN=${domain}" \
-    -addext "subjectAltName=DNS:${domain},DNS:www.${domain}" 2>/dev/null \
-    || openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
-      -keyout "${key}" -out "${cert}" \
-      -subj "/CN=${domain}"
-  chmod 600 "${key}" 2>/dev/null || true
-  cp -f "${cert}" "${outdir}/cert.pem" 2>/dev/null || true
-  [[ -s "${cert}" && -s "${key}" ]]
+  # Zachowane tylko jako stub — hmtools nigdy nie wydaje self-signed.
+  hm_err "Self-signed jest wyłączone. Użyj: ssl issue ${1:-}"
+  return 1
+}
+
+hm_ssl_acme_bin() {
+  local acme
+  acme="$(hm_ssl_find_acme 2>/dev/null || true)"
+  if [[ -n "${acme}" ]]; then
+    printf '%s' "${acme}"
+    return 0
+  fi
+  if [[ -x /root/.acme.sh/acme.sh ]]; then
+    printf '%s' /root/.acme.sh/acme.sh
+    return 0
+  fi
+  return 1
+}
+
+hm_ssl_acme_set_letsencrypt() {
+  local acme="${1:-}"
+  [[ -n "${acme}" && -x "${acme}" ]] || return 1
+  "${acme}" --set-default-ca --server letsencrypt
 }
 
 # --- komendy ---
@@ -531,6 +597,7 @@ cmd_ssl_issue() {
     "Wydanie certyfikatu Let's Encrypt (HTTP-01)." \
     "Pre-check DNS A/AAAA → IP VPS dla: ${names_csv}" \
     "Pre-check HTTP .well-known w ${docroot:-?}" \
+    "Przy self-signed: usunięcie /etc/letsencrypt/{live,archive,renewal}/${domain}" \
     "cyberpanel issueSSL / acme.sh --issue" \
     "ols reload"; then
     return 1
@@ -562,6 +629,8 @@ cmd_ssl_issue() {
       hm_err "Brak docroot dla acme.sh HTTP-01."
       return 1
     fi
+    # Gdy cyberpanel nie był dostępny — i tak wyczyść self-signed przed acme.
+    hm_ssl_clear_self_signed_before_issue "${domain}" || return 1
     local -a more=()
     for e in "${plan_names[@]}"; do
       [[ "${e}" != "${domain}" ]] && more+=("${e}")
@@ -681,32 +750,82 @@ cmd_ssl_mail() {
 
 cmd_ssl_self_signed() {
   local domain="${1:-${HM_SITE_DOMAIN:-}}"
-  [[ -n "${domain}" ]] || { hm_err "Użycie: ssl self-signed <domena>"; return 1; }
-  if ! hm_is_valid_domain "${domain}"; then
-    hm_err "Nieprawidłowa domena: ${domain}"
-    return 1
-  fi
-  local resolved
-  resolved="$(hm_find_site_by_arg_exact "${domain}" 2>/dev/null || true)"
-  [[ -n "${resolved}" ]] && domain="${resolved}"
-
-  if ! hm_confirm_plan "ssl self-signed — ${domain}" \
-    "Awaryjny certyfikat self-signed (przeglądarki będą ostrzegać)." \
-    "cyberpanel issueSelfSignedSSL lub openssl req -x509" \
-    "Zapis /etc/letsencrypt/live/${domain}/ + ols reload"; then
-    return 1
-  fi
-
-  if hm_ssl_issue_via_cyberpanel "${domain}" selfsigned; then
-    hm_ok "issueSelfSignedSSL OK."
-  elif hm_ssl_self_signed_openssl "${domain}"; then
-    hm_ok "Wygenerowano self-signed (openssl)."
+  hm_err "hmtools nie wydaje certyfikatów self-signed — tylko Let's Encrypt."
+  if [[ -n "${domain}" ]]; then
+    hm_info "Zamień: ssl issue ${domain}"
   else
-    hm_err "Nie udało się utworzyć self-signed dla ${domain}."
+    hm_info "Zamień: ssl issue <domena>"
+  fi
+  hm_info "Klient ACME: ssl acme-update"
+  return 1
+}
+
+cmd_ssl_acme_update() {
+  local yes=0 a acme="" get_url="https://get.acme.sh"
+  for a in "$@"; do
+    case "${a}" in
+      --yes|-y) yes=1 ;;
+      help|-h|--help)
+        hm_info "Użycie: ssl acme-update [--yes]"
+        hm_info "Instaluje/odświeża acme.sh i ustawia domyślne CA na Let's Encrypt."
+        return 0
+        ;;
+      *)
+        hm_err "Nieznana flaga: ${a}"
+        return 1
+        ;;
+    esac
+  done
+  if [[ "${yes}" -eq 1 ]]; then
+    hm_confirm_plan "ssl acme-update" \
+      "Pobranie instalatora z get.acme.sh i ustawienie CA Let's Encrypt." \
+      --yes \
+      "wget -O - ${get_url} | sh" \
+      "acme.sh --set-default-ca --server letsencrypt" || return 1
+  else
+    hm_confirm_plan "ssl acme-update" \
+      "Pobranie instalatora z get.acme.sh i ustawienie CA Let's Encrypt." \
+      "wget -O - ${get_url} | sh" \
+      "acme.sh --set-default-ca --server letsencrypt" || return 1
+  fi
+
+  if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+    printf 'acme-update\tok\n'
+    return 0
+  fi
+
+  if ! hm_have_cmd wget && ! hm_have_cmd curl; then
+    hm_err "Brak wget i curl — nie mogę pobrać get.acme.sh."
     return 1
   fi
-  hm_ols_reload_soft || hm_warn "ols reload nieudany"
-  hm_print_site_ssl "${domain}" 2>/dev/null || true
+
+  if hm_have_cmd wget; then
+    if ! wget -O - "${get_url}" | sh; then
+      hm_err "Instalacja/aktualizacja acme.sh nie powiodła się."
+      return 1
+    fi
+  else
+    if ! curl -fsSL "${get_url}" | sh; then
+      hm_err "Instalacja/aktualizacja acme.sh nie powiodła się."
+      return 1
+    fi
+  fi
+
+  # shellcheck disable=SC1090
+  [[ -f /root/.bashrc ]] && source /root/.bashrc 2>/dev/null || true
+  # shellcheck disable=SC1090
+  [[ -f /root/.acme.sh/acme.sh.env ]] && source /root/.acme.sh/acme.sh.env 2>/dev/null || true
+
+  acme="$(hm_ssl_acme_bin 2>/dev/null || true)"
+  if [[ -z "${acme}" ]]; then
+    hm_err "Brak acme.sh po instalacji (oczekiwano /root/.acme.sh/acme.sh)."
+    return 1
+  fi
+  if ! hm_ssl_acme_set_letsencrypt "${acme}"; then
+    hm_err "Nie ustawiono domyślnego CA Let's Encrypt."
+    return 1
+  fi
+  hm_ok "acme.sh gotowy (${acme}), CA: Let's Encrypt."
 }
 
 cmd_ssl_diagnose() {
