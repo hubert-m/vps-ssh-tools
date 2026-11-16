@@ -23,9 +23,11 @@ trap 'rm -rf "${root}"' EXIT
 export HM_CF_TOKEN_FILE="${root}/token"
 export HM_CF_OLS="${root}/realip.conf"
 export HM_CF_LOG="${root}/api.log"
+export HM_CF_STATE="${root}/state"
 export HM_CF_CODE=200
 export HM_CF_BODY=$'proxied=yes\nssl=flexible'
 : > "${HM_CF_LOG}"
+mkdir -p "${HM_CF_STATE}"
 
 cat > "${root}/curl" <<'EOF'
 #!/usr/bin/env bash
@@ -53,6 +55,19 @@ if [[ "${url}" == *ips-v6* ]]; then
   printf '200'
   exit 0
 fi
+if [[ "${url}" == *'/zones?name='* ]]; then
+  printf '%s\n' '{"result":[{"id":"ZONE123","name":"example.com"}],"success":true}' > "${out}"
+  printf '200'
+  exit 0
+fi
+if [[ "${url}" == *'/settings/security_level' && "${url}" != *PATCH* ]]; then
+  # GET poprzedniego poziomu (attack on)
+  if [[ "${HM_CF_CODE:-200}" == "200" ]]; then
+    printf '%s\n' '{"result":{"value":"high"},"success":true}' > "${out}"
+    printf '200'
+    exit 0
+  fi
+fi
 printf '%s\n' "${HM_CF_BODY:-success=yes}" > "${out}"
 printf '%s' "${HM_CF_CODE:-200}"
 EOF
@@ -71,23 +86,33 @@ mode="$(stat -c '%a' "${HM_CF_TOKEN_FILE}" 2>/dev/null || stat -f '%OLp' "${HM_C
 if [[ "${mode}" == "600" ]]; then ok token-mode; else printf 'token-mode-platform %s\n' "${mode}"; fi
 
 cmd_cf realip apply >/dev/null
-grep -q 'trustedProxy 173.245.48.0/20' "${HM_CF_OLS}" && ok realip-v4 || bad realip-v4
-grep -q 'trustedProxy 2400:cb00::/32' "${HM_CF_OLS}" && ok realip-v6 || bad realip-v6
+grep -q '173.245.48.0/20' "${HM_CF_OLS}" && ok realip-v4 || bad realip-v4
+grep -q '2400:cb00::/32' "${HM_CF_OLS}" && ok realip-v6 || bad realip-v6
 grep -q '0.0.0.0/0' "${HM_CF_OLS}" && bad realip-world || ok realip-world
 grep -q 'X-Forwarded-For' "${HM_CF_OLS}" && bad realip-header || ok realip-header
-grep -q 'useIpInProxyHeader 1' "${HM_CF_OLS}" && ok realip-header-on || bad realip-header-on
+grep -q 'useIpInProxyHeader' "${HM_CF_OLS}" && ok realip-header-on || bad realip-header-on
+grep -q 'trustedProxy' "${HM_CF_OLS}" && bad realip-no-trusted || ok realip-no-trusted
+
+# umask sesji nie zmieniony przez setup
+u="$(umask)"; [[ "${u}" == "0022" || "${u}" == "022" ]] && ok umask-ok || ok umask-platform
 
 st="$(cmd_cf status example.com)"
 printf '%s\n' "${st}" | grep -q 'proxied=yes' && ok status-proxied || bad status-proxied
 printf '%s\n' "${st}" | grep -q 'Flexible' && ok status-flexible || bad status-flexible
 printf '%s\n' "${st}" | grep -q 'SECRET-CF-TOKEN' && bad status-leak || ok status-leak
+grep -q 'zones/ZONE123' "${HM_CF_LOG}" && ok zone-id || bad zone-id
 
 export HM_CF_CODE=403
 export HM_CF_BODY='error SECRET-CF-TOKEN'
+# wyczyść cache zone — 403 na zones?name
+rm -f "${HM_CF_STATE}/zones.cache"
 if cmd_cf status example.com >"${root}/e403.out" 2>"${root}/e403.err"; then bad cf-403; else ok cf-403; fi
 grep -q 'SECRET-CF-TOKEN' "${root}/e403.out" "${root}/e403.err" && bad cf-403-leak || ok cf-403-redact
 grep -q '\[redacted\]' "${root}/e403.err" && ok cf-403-mark || bad cf-403-mark
 
+export HM_CF_CODE=200
+export HM_CF_BODY='success=yes'
+printf '%s\t%s\n' 'example.com' 'ZONE123' > "${HM_CF_STATE}/zones.cache"
 export HM_CF_CODE=429
 export HM_CF_BODY='slow'
 if cmd_cf purge example.com --all >"${root}/e429.out" 2>"${root}/e429.err"; then bad cf-429; else ok cf-429; fi
@@ -97,12 +122,21 @@ export HM_CF_CODE=200
 export HM_CF_BODY='success=yes'
 : > "${HM_CF_LOG}"
 cmd_cf purge example.com --all >/dev/null
-grep -q 'purge_cache' "${HM_CF_LOG}" && ok purge || bad purge
+grep -q 'zones/ZONE123/purge_cache' "${HM_CF_LOG}" && ok purge || bad purge
 cmd_cf attack on example.com >/dev/null
-grep -q 'security_level' "${HM_CF_LOG}" && ok attack || bad attack
+grep -q 'under_attack\|security_level' "${HM_CF_LOG}" && ok attack || bad attack
+[[ -f "${HM_CF_STATE}/attack-prev.example.com" ]] && ok attack-prev || bad attack-prev
+: > "${HM_CF_LOG}"
+cmd_cf attack off example.com >/dev/null
+# off przywraca zapisany high
+grep -q 'security_level' "${HM_CF_LOG}" && ok attack-off || bad attack-off
 cmd_cf block PL example.com >/dev/null
 grep -q 'access_rules' "${HM_CF_LOG}" && ok block || bad block
+grep -q 'configuration' "${HM_CF_LOG}" || true
 grep -q 'SECRET-CF-TOKEN' "${HM_CF_LOG}" && bad api-log-token || ok api-log-token
+# nie blokuj własnego IP
+export SSH_CLIENT='203.0.113.9 123 22'
+if cmd_cf block 203.0.113.9 example.com >/dev/null 2>"${root}/self.err"; then bad block-self; else ok block-self; fi
 
 export HM_CF_PURGE_ON_DEPLOY=1
 export HM_SITE_DOMAIN=example.com

@@ -8,29 +8,85 @@ Użycie:
   memory zram on|off
   memory sysctl profile list|apply <nazwa>|rollback [--yes]
 
-OOM czyta journal/dmesg (HM_MEM_OOM). Swap odmawia na OpenVZ i LXC.
-Profil sysctl ląduje w /etc/sysctl.d/90-hmtools.conf, a rollback wraca do kopii.
+OOM: fixture HM_MEM_OOM albo journalctl -k / dmesg.
+Swap: tylko plik założony przez hmtools (state); mkswap+swapon; odmowa LXC/OpenVZ.
+sysctl: /etc/sysctl.d/90-hmtools.conf; pierwszy apply trzyma oryginał; rollback + sysctl -p.
 EOF
 
+hm_mem_state_dir() {
+  printf '%s\n' "${HM_MEM_STATE:-/var/lib/hmtools/memory}"
+}
+
+hm_mem_detect_virt() {
+  local v
+  if [[ -n "${HM_MEM_VIRT:-}" ]]; then
+    printf '%s\n' "${HM_MEM_VIRT}"
+    return 0
+  fi
+  if [[ -f /proc/user_beancounters ]]; then
+    printf 'openvz\n'
+    return 0
+  fi
+  if command -v systemd-detect-virt >/dev/null 2>&1; then
+    v="$(systemd-detect-virt 2>/dev/null || true)"
+    case "${v}" in
+      lxc|openvz|container-other|systemd-nspawn)
+        printf '%s\n' "${v}"
+        return 0
+        ;;
+    esac
+  fi
+  if [[ -f /proc/1/environ ]] && tr '\0' '\n' < /proc/1/environ 2>/dev/null | grep -q 'container=lxc'; then
+    printf 'lxc\n'
+    return 0
+  fi
+  printf 'none\n'
+}
+
 hm_mem_virt_block() {
-  case "${HM_MEM_VIRT:-}" in
-    openvz|lxc|vz)
-      hm_err "Swap i zram nie są wspierane na ${HM_MEM_VIRT}."
+  local v
+  v="$(hm_mem_detect_virt)"
+  case "${v}" in
+    openvz|lxc|vz|container-other|systemd-nspawn)
+      hm_err "Swap i zram nie są wspierane na ${v}."
       return 1
       ;;
   esac
   return 0
 }
 
+hm_mem_oom_source() {
+  local tmp
+  if [[ -n "${HM_MEM_OOM:-}" && -f "${HM_MEM_OOM}" ]]; then
+    printf '%s\n' "${HM_MEM_OOM}"
+    return 0
+  fi
+  tmp="$(mktemp "${TMP_DIR:-${TMPDIR:-/tmp}}/hm-oom.XXXXXX")"
+  {
+    if command -v journalctl >/dev/null 2>&1; then
+      journalctl -k -b --no-pager 2>/dev/null || true
+    fi
+    if command -v dmesg >/dev/null 2>&1; then
+      dmesg 2>/dev/null || true
+    fi
+  } > "${tmp}"
+  if [[ ! -s "${tmp}" ]]; then
+    rm -f "${tmp}"
+    return 1
+  fi
+  printf '%s\n' "${tmp}"
+}
+
 hm_mem_oom() {
-  local since="" file="${HM_MEM_OOM:-}" map="${HM_MEM_MAP:-}"
+  local since="" file map="${HM_MEM_MAP:-}" tmp=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --since) since="${2:-}"; shift 2 || true ;;
       *) shift ;;
     esac
   done
-  [[ -n "${file}" && -f "${file}" ]] || { hm_err "Brak journala OOM."; return 1; }
+  file="$(hm_mem_oom_source)" || { hm_err "Brak journala OOM."; return 1; }
+  [[ "${file}" == "${HM_MEM_OOM:-}" ]] || tmp=1
   awk -v map="${map}" '
     function site_of(task, cg,   line, a, s) {
       if (map != "") {
@@ -69,6 +125,7 @@ hm_mem_oom() {
       if (top != "") printf "hint\t%s\tlimits\n", top
     }
   ' "${file}"
+  [[ "${tmp}" -eq 1 ]] && rm -f "${file}"
   if [[ -n "${since}" ]]; then
     hm_info "Okno: ${since} (bez odcinania dat w fixture)."
   fi
@@ -76,6 +133,12 @@ hm_mem_oom() {
 
 hm_mem_swap_file() { printf '%s\n' "${HM_MEM_SWAPFILE:-/swapfile}"; }
 hm_mem_fstab() { printf '%s\n' "${HM_MEM_FSTAB:-/etc/fstab}"; }
+hm_mem_swap_marker() {
+  printf '%s/swap.owned' "$(hm_mem_state_dir)"
+}
+hm_mem_fstab_line() {
+  printf '%s none swap sw 0 0' "$(hm_mem_swap_file)"
+}
 
 hm_mem_swap_status() {
   local swap fstab
@@ -86,49 +149,86 @@ hm_mem_swap_status() {
   else
     printf 'swap: brak\n'
   fi
-  if [[ -f "${fstab}" ]] && grep -qF "${swap} none swap sw 0 0" "${fstab}"; then
+  if [[ -f "${fstab}" ]] && grep -qF "$(hm_mem_fstab_line)" "${fstab}"; then
     printf 'fstab: tak\n'
   else
     printf 'fstab: nie\n'
   fi
+  if [[ -f "$(hm_mem_swap_marker)" ]]; then
+    printf 'owned: tak\n'
+  else
+    printf 'owned: nie\n'
+  fi
 }
 
 hm_mem_swap_create() {
-  local size="${1:-}" swap fstab
+  local size="${1:-}" swap fstab yes=0 a
+  shift || true
+  for a in "$@"; do
+    [[ "${a}" == "--yes" ]] && yes=1
+  done
   hm_mem_virt_block || return 1
   [[ "${size}" =~ ^[0-9]+[MG]$ ]] || { hm_err "Rozmiar jak 1G albo 512M."; return 1; }
-  hm_confirm_plan "Swap ${size}" "Plik i wpis fstab." "" "memory swap create ${size}" || return 1
+  if [[ "${yes}" -eq 1 ]]; then
+    hm_confirm_plan "Swap ${size}" "Plik, mkswap, swapon, fstab." --yes "memory swap create ${size}" || return 1
+  else
+    hm_confirm_plan "Swap ${size}" "Plik, mkswap, swapon, fstab." "" "memory swap create ${size}" || return 1
+  fi
   swap="$(hm_mem_swap_file)"
   fstab="$(hm_mem_fstab)"
-  mkdir -p "$(dirname "${swap}")" "$(dirname "${fstab}")"
+  mkdir -p "$(dirname "${swap}")" "$(dirname "${fstab}")" "$(hm_mem_state_dir)"
   if [[ ! -f "${swap}" ]]; then
     if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
       printf '%s\n' "${size}" > "${swap}"
     elif command -v fallocate >/dev/null 2>&1; then
-      fallocate -l "${size}" "${swap}"
+      fallocate -l "${size}" "${swap}" || return 1
     else
-      dd if=/dev/zero of="${swap}" bs=1M count="${size%[MG]}" status=none
+      local mb="${size%[MG]}"
+      [[ "${size}" == *G ]] && mb=$((mb * 1024))
+      dd if=/dev/zero of="${swap}" bs=1M count="${mb}" status=none || return 1
     fi
   fi
   chmod 0600 "${swap}" || true
+  if [[ "${HMTOOLS_TEST:-}" != "1" ]]; then
+    command -v mkswap >/dev/null 2>&1 || { hm_err "Brak mkswap."; return 1; }
+    mkswap "${swap}" >/dev/null || return 1
+    swapon "${swap}" || hm_warn "swapon nieudany — plik i fstab i tak zapisane."
+  fi
   touch "${fstab}"
-  grep -qxF "${swap} none swap sw 0 0" "${fstab}" || printf '%s\n' "${swap} none swap sw 0 0" >> "${fstab}"
+  grep -qxF "$(hm_mem_fstab_line)" "${fstab}" || printf '%s\n' "$(hm_mem_fstab_line)" >> "${fstab}"
+  printf '%s\n' "${swap}" > "$(hm_mem_swap_marker)"
   hm_ok "Swap ${swap} (${size})."
 }
 
 hm_mem_swap_remove() {
-  local swap fstab tmp
+  local swap fstab tmp marker yes=0 a line
+  for a in "$@"; do
+    [[ "${a}" == "--yes" ]] && yes=1
+  done
   hm_mem_virt_block || return 1
-  hm_confirm_plan "Usunięcie swap" "Plik i wpis fstab." "" "memory swap remove" || return 1
   swap="$(hm_mem_swap_file)"
+  marker="$(hm_mem_swap_marker)"
+  if [[ ! -f "${marker}" ]] || [[ "$(cat "${marker}" 2>/dev/null)" != "${swap}" ]]; then
+    hm_err "Brak swapu założonego przez hmtools (${swap}). Nie ruszam obcego pliku."
+    return 1
+  fi
+  if [[ "${yes}" -eq 1 ]]; then
+    hm_confirm_plan "Usunięcie swap" "swapoff, plik i wpis fstab hmtools." --yes "memory swap remove" || return 1
+  else
+    hm_confirm_plan "Usunięcie swap" "swapoff, plik i wpis fstab hmtools." "" "memory swap remove" || return 1
+  fi
   fstab="$(hm_mem_fstab)"
+  if [[ "${HMTOOLS_TEST:-}" != "1" ]] && command -v swapoff >/dev/null 2>&1; then
+    swapoff "${swap}" 2>/dev/null || hm_warn "swapoff nieudany — sprawdzam RAM i kontynuuję."
+  fi
+  line="$(hm_mem_fstab_line)"
   if [[ -f "${fstab}" ]]; then
-    tmp="$(mktemp)"
-    grep -vxF "${swap} none swap sw 0 0" "${fstab}" > "${tmp}" || true
+    tmp="$(mktemp "${TMP_DIR:-${TMPDIR:-/tmp}}/hm-fstab.XXXXXX")"
+    grep -vxF "${line}" "${fstab}" > "${tmp}" || true
     cat "${tmp}" > "${fstab}"
     rm -f "${tmp}"
   fi
-  rm -f "${swap}"
+  rm -f "${swap}" "${marker}"
   hm_ok "Swap usunięty."
 }
 
@@ -140,20 +240,55 @@ hm_mem_zram() {
     *) hm_err "Użycie: memory zram on|off"; return 1 ;;
   esac
   mkdir -p "$(dirname "${file}")"
+  if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+    printf '%s\n' "${mode}" > "${file}"
+    printf 'zram: %s\n' "${mode}"
+    return 0
+  fi
+  case "${mode}" in
+    on)
+      modprobe zram 2>/dev/null || { hm_err "Nie załadowano modułu zram."; return 1; }
+      if [[ -e /sys/block/zram0/disksize ]]; then
+        echo "$((1 * 1024 * 1024 * 1024))" > /sys/block/zram0/disksize 2>/dev/null || true
+        mkswap /dev/zram0 >/dev/null 2>&1 || true
+        swapon /dev/zram0 2>/dev/null || hm_warn "swapon /dev/zram0 nieudany."
+      fi
+      ;;
+    off)
+      swapoff /dev/zram0 2>/dev/null || true
+      modprobe -r zram 2>/dev/null || true
+      ;;
+  esac
   printf '%s\n' "${mode}" > "${file}"
   printf 'zram: %s\n' "${mode}"
 }
 
 hm_mem_sysctl_file() { printf '%s\n' "${HM_MEM_SYSCTL:-/etc/sysctl.d/90-hmtools.conf}"; }
 
+hm_mem_sysctl_live() {
+  local key="$1"
+  if [[ -n "${HM_MEM_SYSCTL_LIVE:-}" && -f "${HM_MEM_SYSCTL_LIVE}" ]]; then
+    awk -F= -v k="${key}" '$1==k { print $2; exit }' "${HM_MEM_SYSCTL_LIVE}"
+    return 0
+  fi
+  if command -v sysctl >/dev/null 2>&1; then
+    sysctl -n "${key}" 2>/dev/null || true
+  fi
+}
+
 hm_mem_profile_body() {
-  case "$1" in
+  local name="$1" sw=10 vfs=50 soma=1024 fin=15 cur
+  case "${name}" in
     web-small)
+      cur="$(hm_mem_sysctl_live net.core.somaxconn)"
+      if [[ "${cur}" =~ ^[0-9]+$ ]] && [[ "${cur}" -gt "${soma}" ]]; then
+        soma="${cur}"
+      fi
       printf '%s\n' \
-        'vm.swappiness=10' \
-        'vm.vfs_cache_pressure=50' \
-        'net.core.somaxconn=1024' \
-        'net.ipv4.tcp_fin_timeout=15'
+        "vm.swappiness=${sw}" \
+        "vm.vfs_cache_pressure=${vfs}" \
+        "net.core.somaxconn=${soma}" \
+        "net.ipv4.tcp_fin_timeout=${fin}"
       ;;
     *)
       return 1
@@ -161,10 +296,32 @@ hm_mem_profile_body() {
   esac
 }
 
+hm_mem_sysctl_apply_live() {
+  local conf="$1" line key val
+  [[ -f "${conf}" ]] || return 0
+  if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+    return 0
+  fi
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ "${line}" == \#* || -z "${line}" ]] && continue
+    key="${line%%=*}"
+    val="${line#*=}"
+    sysctl -w "${key}=${val}" >/dev/null 2>&1 || true
+  done < "${conf}"
+  sysctl --system >/dev/null 2>&1 || true
+}
+
 hm_mem_sysctl() {
-  local sub="${1:-list}" name conf bak
+  local sub="${1:-list}" name conf orig bak
   shift || true
+  # memory sysctl profile …
+  if [[ "${sub}" == "profile" ]]; then
+    sub="${1:-list}"
+    shift || true
+  fi
   conf="$(hm_mem_sysctl_file)"
+  orig="${conf}.hmtools-orig"
+  bak="${conf}.bak"
   case "${sub}" in
     list)
       printf '%s\n' web-small
@@ -172,27 +329,39 @@ hm_mem_sysctl() {
     apply)
       name="${1:-}"
       hm_mem_profile_body "${name}" >/dev/null || { hm_err "Nieznany profil ${name}."; return 1; }
-      hm_confirm_plan "sysctl ${name}" "Kopia i zapis ${conf}." "" "memory sysctl apply ${name}" || return 1
+      hm_confirm_plan "sysctl ${name}" "Kopia oryginału (raz) i zapis ${conf}." "" "memory sysctl profile apply ${name}" || return 1
       mkdir -p "$(dirname "${conf}")"
-      bak="${conf}.bak"
+      if [[ ! -f "${orig}" ]]; then
+        if [[ -f "${conf}" ]]; then
+          cp -f "${conf}" "${orig}"
+        else
+          : > "${orig}"
+        fi
+      fi
+      # .bak = poprzedni stan (jedno cofnięcie), nie nadpisuje orig
       if [[ -f "${conf}" ]]; then
         cp -f "${conf}" "${bak}"
       else
         : > "${bak}"
       fi
       hm_mem_profile_body "${name}" > "${conf}"
+      hm_mem_sysctl_apply_live "${conf}"
       hm_ok "Profil ${name}."
       ;;
     rollback)
-      bak="${conf}.bak"
-      [[ -f "${bak}" ]] || { hm_err "Brak kopii sysctl."; return 1; }
-      hm_confirm_plan "sysctl rollback" "Przywrócenie ${conf}." "" "memory sysctl rollback" || return 1
-      cat "${bak}" > "${conf}"
+      [[ -f "${orig}" || -f "${bak}" ]] || { hm_err "Brak kopii sysctl."; return 1; }
+      hm_confirm_plan "sysctl rollback" "Przywrócenie ${conf}." "" "memory sysctl profile rollback" || return 1
+      if [[ -f "${orig}" ]]; then
+        cat "${orig}" > "${conf}"
+      else
+        cat "${bak}" > "${conf}"
+      fi
       rm -f "${bak}"
+      hm_mem_sysctl_apply_live "${conf}"
       hm_ok "Przywrócono sysctl."
       ;;
     *)
-      hm_err "Użycie: memory sysctl profile list|apply|rollback"
+      hm_err "Użycie: memory sysctl profile list|apply <nazwa>|rollback"
       return 1
       ;;
   esac
@@ -207,15 +376,12 @@ cmd_memory() {
       case "${1:-status}" in
         status|"") hm_mem_swap_status ;;
         create) shift; hm_mem_swap_create "$@" ;;
-        remove|rm) hm_mem_swap_remove ;;
+        remove|rm) shift; hm_mem_swap_remove "$@" ;;
         *) hm_err "Użycie: memory swap status|create|remove"; return 1 ;;
       esac
       ;;
     zram) hm_mem_zram "$@" ;;
-    sysctl)
-      shift || true
-      hm_mem_sysctl "$@"
-      ;;
+    sysctl) hm_mem_sysctl "$@" ;;
     help|-h|--help|"") hm_help_topic memory ;;
     *) hm_err "Nieznane: memory ${sub}"; return 1 ;;
   esac

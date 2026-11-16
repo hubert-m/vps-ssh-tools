@@ -23,6 +23,6 @@ context /.well-known/acme-challenge/ {
   allowBrowse             1
 }
 
-context exp:^/\\.(env|git) {
+context exp:^/\.(env|git) {
   allowBrowse             0
 }

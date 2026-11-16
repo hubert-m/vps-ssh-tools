@@ -33,6 +33,14 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: mail spam/senders/quota/dmarc — dedup user+dzień (`grep -Fx`), domyślne logi/doveadm, DMARC minified, „brak danych”
 - Docs: site-wizard — SSL MVP (`--ssl` = acme/certbot jak `ssl issue`), flaga w tabeli
 - Feat: `ssl renew [domena]` jako główne odnawianie (alias `renew-ssl`); help issue vs renew; podpowiedzi z `[domena]`
+- Fix: OLS proxy Node — unikalny extprocessor, vhAliases tylko z www, Proto wg SSL, regex `/.env`, tuning/cache, map w httpd_config
+- Fix: site new .NET — realna instalacja (hm_pkg / dotnet-install.sh) przed verify; unit w journalu; worker `current/<dll>`
+- Fix: memory — mkswap/swapon, tylko swap hmtools, zram/modprobe, sysctl orig+live, virt detect, OOM z journalctl
+- Fix: site new Python — prawdziwy venv, port z rejestru, SECRET_KEY bez duplikatu, unit w journalu, /static po proxy
+- Fix: cf — zone ID (`/zones?name=`), DNS POST/PATCH/DELETE, attack-prev, access_rules `configuration`, realip include bez 0.0.0.0/0, umask w subshell, ochrona własnego IP
+- Fix: docker compose — `-p`/`-f` z labeli, digesty z inspect, rollback (tag + force-recreate), health bez samej flagi testowej, redakcja wartości, audit/updates z `ps`/`inspect`
+- Fix: cron-run/monitor — nazwy bez `.`/`..`, lock PID+flock (stale→OK, zajęty→rc≠0+alert), timeout zabija grupę (setsid), szersza redakcja, bez trap RETURN
+- Fix: config history — bezpieczny rollback (cat-file, tmp+mv, absolutny dest, allowlista), bez `--yes`, sekrety (gshadow/hmtools.conf/token/debian.cnf), usuwanie znikniętych plików z repo
 
 ## [v0.1.13]
 

@@ -55,9 +55,12 @@ export HM_SITE_WEB_UPSTREAM=127.0.0.1:3007
 export HM_SITE_WEB_SOCK=/run/php/app.example.pl.sock
 export HM_SITE_WEB_LOGDIR=/home/app.example.pl/logs
 export HM_SITE_WEB_USER=app
+unset HM_SITE_WEB_PROXY_NAME HM_SITE_WEB_ALIASES_LINE HM_SITE_WEB_FORWARDED_PROTO HM_SITE_SSL HM_SITE_WEB_SSL
+export HM_SITE_ALIASES=www
 for s in nginx apache ols; do
   for t in php-fpm proxy static spa; do
     got="${root}/${s}-${t}.conf"
+    unset HM_SITE_WEB_PROXY_NAME HM_SITE_WEB_ALIASES_LINE HM_SITE_WEB_FORWARDED_PROTO
     hm_site_web_render "${s}" "${t}" > "${got}"
     if diff -u "scripts/fixtures/vhost/${s}-${t}.conf" "${got}" >/dev/null; then
       ok "snap-${s}-${t}"
@@ -92,6 +95,23 @@ asked="$(hm_site_web_reserve_port d.example.pl 3002)"
 [[ "${asked}" == "3004" ]] && ok "port-ask" || { bad "port-ask"; echo "asked=${asked}" >&2; }
 unset HM_SITE_PORT_ANSWER
 grep -q 'X-Real-IP' "${root}/ols-proxy.conf" && grep -q '127.0.0.1:3007' "${root}/ols-proxy.conf" && ok "ols-node-headers" || bad "ols-node-headers"
+grep -q 'extprocessor node_app_example_pl' "${root}/ols-proxy.conf" && ok "ols-proxy-unique" || bad "ols-proxy-unique"
+# Jeden backslash przed kropką (nie \\.) — inaczej OLS nie blokuje /.env
+if awk '/context exp:/{ print; exit }' "${root}/ols-proxy.conf" | grep -F 'exp:^/\.(env|git)' >/dev/null \
+  && ! awk '/context exp:/{ print; exit }' "${root}/ols-proxy.conf" | grep -F 'exp:^/\\.(env|git)' >/dev/null; then
+  ok "ols-dotfile-re"
+else
+  bad "ols-dotfile-re"
+fi
+grep -q 'module cache' "${root}/ols-proxy.conf" && grep -q 'maxReqBodySize' "${root}/ols-proxy.conf" && ok "ols-proxy-tuning" || bad "ols-proxy-tuning"
+# --no-www: brak vhAliases; SSL → https w X-Forwarded-Proto
+unset HM_SITE_WEB_PROXY_NAME HM_SITE_WEB_ALIASES_LINE HM_SITE_WEB_FORWARDED_PROTO
+export HM_SITE_ALIASES=none HM_SITE_SSL=1
+hm_site_web_render ols proxy > "${root}/ols-proxy-nowww.conf"
+grep -q 'vhAliases' "${root}/ols-proxy-nowww.conf" && bad "ols-no-www" || ok "ols-no-www"
+grep -q 'X-Forwarded-Proto "https"' "${root}/ols-proxy-nowww.conf" && ok "ols-proto-ssl" || bad "ols-proto-ssl"
+unset HM_SITE_ALIASES HM_SITE_SSL
+export HM_SITE_ALIASES=www
 
 dest="${HM_SITE_WEB_CONF_DIR}/old.example.pl.conf"
 printf 'OLD\n' > "${dest}"

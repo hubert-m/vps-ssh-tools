@@ -112,9 +112,30 @@ hm_dotnet_unit_path() {
   printf '%s/hm-app-%s.service' "${HM_SYSTEMD_UNIT_DIR:-/etc/systemd/system}" "${domain}"
 }
 
+hm_dotnet_bin() {
+  if [[ -n "${HM_DOTNET_BIN:-}" && -x "${HM_DOTNET_BIN}" ]]; then
+    printf '%s' "${HM_DOTNET_BIN}"
+    return 0
+  fi
+  if command -v dotnet >/dev/null 2>&1; then
+    command -v dotnet
+    return 0
+  fi
+  if [[ -x /usr/share/dotnet/dotnet ]]; then
+    printf '%s' /usr/share/dotnet/dotnet
+    return 0
+  fi
+  if [[ -x /usr/bin/dotnet ]]; then
+    printf '%s' /usr/bin/dotnet
+    return 0
+  fi
+  return 1
+}
+
 hm_dotnet_write_unit() {
-  local domain="$1" dll="$2" port="$3" home="$4" unit
+  local domain="$1" dll="$2" port="$3" home="$4" unit bin
   unit="$(hm_dotnet_unit_path "${domain}")"
+  bin="$(hm_dotnet_bin 2>/dev/null || printf '%s' /usr/bin/dotnet)"
   mkdir -p "$(dirname "${unit}")"
   cat > "${unit}" <<EOF
 [Unit]
@@ -125,7 +146,7 @@ After=network.target
 Type=simple
 User=${HM_SITE_USER:-www-data}
 WorkingDirectory=${home}/current
-ExecStart=/usr/bin/dotnet ${home}/current/${dll}
+ExecStart=${bin} ${home}/current/${dll}
 Environment=ASPNETCORE_URLS=http://127.0.0.1:${port}
 Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=DOTNET_CLI_TELEMETRY_OPTOUT=1
@@ -141,6 +162,102 @@ ReadWritePaths=${home}/shared
 [Install]
 WantedBy=multi-user.target
 EOF
+}
+
+# Instalacja SDK / aspnetcore-runtime przed zapisem unitu (inaczej systemd-analyze pada).
+hm_dotnet_install() {
+  local source="$1" kind="$2" channel="$3" pkg script tmp dir
+  if [[ -n "${HM_DOTNET_INSTALL_LOG:-}" ]]; then
+    printf '%s %s %s\n' "${source}" "${kind}" "${channel}" >> "${HM_DOTNET_INSTALL_LOG}"
+    if [[ -n "${HM_DOTNET_BIN:-}" ]]; then
+      mkdir -p "$(dirname "${HM_DOTNET_BIN}")"
+      if [[ ! -x "${HM_DOTNET_BIN}" ]]; then
+        printf '%s\n' '#!/bin/sh' 'exit 0' > "${HM_DOTNET_BIN}"
+        chmod 0755 "${HM_DOTNET_BIN}"
+      fi
+    fi
+    return 0
+  fi
+  if [[ "${HMTOOLS_TEST:-}" == "1" || "${HM_DOTNET_MOCK:-}" == "1" ]]; then
+    return 0
+  fi
+  if hm_dotnet_bin >/dev/null 2>&1; then
+    hm_info "dotnet już dostępny: $(hm_dotnet_bin)"
+    return 0
+  fi
+  case "${kind}" in
+    sdk) pkg="dotnet-sdk-${channel}" ;;
+    aspnetcore-runtime) pkg="aspnetcore-runtime-${channel}" ;;
+    *) hm_err "Nieznany kind .NET: ${kind}"; return 1 ;;
+  esac
+  case "${source}" in
+    microsoft-repo)
+      if declare -F hm_pkg_install >/dev/null 2>&1; then
+        hm_info "Instaluję ${pkg} (microsoft-repo / hm_pkg_install)…"
+        hm_pkg_install "${pkg}" || {
+          hm_err "Nie udało się zainstalować ${pkg}. Dodaj feed packages.microsoft.com albo użyj --dotnet-source dotnet-install."
+          return 1
+        }
+      else
+        hm_err "Brak hm_pkg_install — nie mogę zainstalować ${pkg}."
+        return 1
+      fi
+      ;;
+    dotnet-install)
+      dir="${HM_DOTNET_INSTALL_DIR:-/usr/share/dotnet}"
+      mkdir -p "${dir}"
+      tmp="$(mktemp "${TMP_DIR:-${TMPDIR:-/tmp}}/dotnet-install.XXXXXX.sh")"
+      script_url="${HM_DOTNET_INSTALL_URL:-https://dot.net/v1/dotnet-install.sh}"
+      hm_info "Pobieram dotnet-install.sh → ${dir} (${kind} ${channel})…"
+      if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --max-time 60 "${script_url}" -o "${tmp}" || {
+          rm -f "${tmp}"
+          hm_err "Nie pobrano dotnet-install.sh."
+          return 1
+        }
+      elif command -v wget >/dev/null 2>&1; then
+        wget -q -O "${tmp}" --timeout=60 "${script_url}" || {
+          rm -f "${tmp}"
+          hm_err "Nie pobrano dotnet-install.sh."
+          return 1
+        }
+      else
+        hm_err "Brak curl/wget do pobrania dotnet-install.sh."
+        return 1
+      fi
+      # Odrzuć pusty / HTML (bez uruchamiania na ślepo)
+      if ! grep -q 'dotnet-install' "${tmp}" || grep -qi '<html' "${tmp}"; then
+        rm -f "${tmp}"
+        hm_err "dotnet-install.sh wygląda na uszkodzony."
+        return 1
+      fi
+      chmod 0755 "${tmp}"
+      if [[ "${kind}" == "sdk" ]]; then
+        bash "${tmp}" --channel "${channel}" --install-dir "${dir}" || {
+          rm -f "${tmp}"
+          return 1
+        }
+      else
+        bash "${tmp}" --channel "${channel}" --runtime aspnetcore --install-dir "${dir}" || {
+          rm -f "${tmp}"
+          return 1
+        }
+      fi
+      rm -f "${tmp}"
+      if [[ ! -e /usr/local/bin/dotnet && -x "${dir}/dotnet" ]]; then
+        ln -sfn "${dir}/dotnet" /usr/local/bin/dotnet
+      fi
+      ;;
+    *)
+      hm_err "Źródło .NET: microsoft-repo albo dotnet-install."
+      return 1
+      ;;
+  esac
+  if ! hm_dotnet_bin >/dev/null 2>&1; then
+    hm_err "Po instalacji nadal brak binarki dotnet."
+    return 1
+  fi
+  hm_ok "dotnet: $(hm_dotnet_bin)"
 }
 
 hm_dotnet_systemctl() {
@@ -182,9 +299,8 @@ hm_site_dotnet_provision() {
   if [[ "${kind}" == "sdk" && "${mem}" -lt 2048 ]]; then
     hm_warn "dotnet publish przy mniej niż 2 GB RAM może zostać ubity."
   fi
-  if [[ -n "${HM_DOTNET_INSTALL_LOG:-}" ]]; then
-    printf '%s %s %s\n' "${source}" "${kind}" "${channel}" >> "${HM_DOTNET_INSTALL_LOG}"
-  fi
+  # Najpierw instalacja — verify wymaga istniejącego ExecStart.
+  hm_dotnet_install "${source}" "${kind}" "${channel}" || return 1
   home="$(hm_site_dotnet_home "${domain}")"
   mkdir -p "${home}/shared/keys" "${home}/current"
   if [[ -n "${HM_DOTNET_SECRET:-}" ]]; then
@@ -192,6 +308,12 @@ hm_site_dotnet_provision() {
   fi
   hm_dotnet_write_unit "${domain}" "${dll}" "${port}" "${home}"
   unit="$(hm_dotnet_unit_path "${domain}")"
+  if declare -F hm_site_resource_add >/dev/null 2>&1; then
+    hm_site_resource_add "${domain}" unit "${unit}" 0 || true
+  fi
+  if declare -F hm_tx_note_undo >/dev/null 2>&1; then
+    hm_tx_note_undo "$(printf 'systemd-unit\t%s' "${unit}")"
+  fi
   if command -v systemd-analyze >/dev/null 2>&1; then
     systemd-analyze verify "${unit}" || {
       hm_err "Unit nie przechodzi systemd-analyze verify."
@@ -201,7 +323,9 @@ hm_site_dotnet_provision() {
   hm_dotnet_systemctl enable --now "hm-app-${domain}.service"
   hm_info "ASP.NET wymaga UseForwardedHeaders dla X-Forwarded-For i X-Forwarded-Proto."
   if ! hm_dotnet_publish_allowed; then
-    hm_info "Bez SDK wgraj artefakt rsync do releases/, bez dotnet publish na tym hoście."
+    hm_info "Bez SDK wgraj artefakt rsync do ${home}/current/ (dotnet publish wymaga SDK)."
   fi
   HM_DOTNET_KIND="${kind}"
+  HM_SITE_RUNTIME_VERSION="${channel}"
+  HM_SITE_DOTNET_DLL="${dll}"
 }

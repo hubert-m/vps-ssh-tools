@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# config history — lokalne git, bez sekretów, rollback jednego pliku.
+# config history — lokalne git, bez sekretów, bezpieczny rollback.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export HMTOOLS_ROOT="$PWD"
@@ -19,7 +19,7 @@ root="$(mktemp -d)"
 trap 'rm -rf "${root}"' EXIT
 src="${root}/src"
 repo="${root}/git"
-mkdir -p "${src}/etc" "${src}/vhost"
+mkdir -p "${src}/etc" "${src}/vhost" "${root}/cwd"
 export HM_CONFIG_GIT="${repo}"
 export HM_CONFIG_SRC="${src}"
 export HM_CONFIG_PATHS="${root}/paths.txt"
@@ -27,46 +27,83 @@ export HM_CONFIG_LIMIT_KB=1
 printf '%s\n' 'alpha' > "${src}/etc/a.conf"
 printf '%s\n' 'beta-b' > "${src}/etc/b.conf"
 printf '%s\n' 'SECRET-SHADOW' > "${src}/etc/shadow"
+printf '%s\n' 'SECRET-GSHADOW' > "${src}/etc/gshadow"
 printf '%s\n' 'SECRET-KEY' > "${src}/etc/id_rsa"
 printf '%s\n' 'SECRET-RCLONE' > "${src}/etc/rclone.conf"
 printf '%s\n' '-----BEGIN PRIVATE KEY-----' > "${src}/etc/custom.pem"
+printf '%s\n' 'PASS=SECRET-HM' > "${src}/etc/hmtools.conf"
+printf '%s\n' 'SECRET-DEB' > "${src}/etc/debian.cnf"
+printf '%s\n' 'cf-token-value' > "${src}/etc/cloudflare.token"
 chmod 0640 "${src}/etc/a.conf" || true
 cat > "${HM_CONFIG_PATHS}" <<EOF
 ${src}/etc/a.conf
 ${src}/etc/b.conf
 ${src}/etc/shadow
+${src}/etc/gshadow
 ${src}/etc/id_rsa
 ${src}/etc/rclone.conf
 ${src}/etc/custom.pem
+${src}/etc/hmtools.conf
+${src}/etc/debian.cnf
+${src}/etc/cloudflare.token
+${src}/etc/gone.conf
 EOF
+printf '%s\n' 'will-delete' > "${src}/etc/gone.conf"
 
 # shellcheck disable=SC1091
 source commands/confighist/main.sh
 # shellcheck disable=SC1091
 source lib/common/ui.sh
 
+# potwierdzenie NIE dostaje --yes na sztywno
+confirm_args=()
+hm_confirm_plan() {
+  confirm_args=("$@")
+  # wywołaj prawdziwy hook before jak ui.sh
+  if declare -F hm_config_before >/dev/null 2>&1; then
+    hm_config_before "${1:-}" || true
+  fi
+  return 0
+}
+
 cmd_config track init >/dev/null
 [[ -d "${repo}/.git" ]] && ok init || bad init
+mode_repo="$(stat -c '%a' "${repo}" 2>/dev/null || echo unknown)"
+[[ "${mode_repo}" == "700" || "${mode_repo}" == "0700" ]] && ok repo-0700 || printf 'repo-mode-platform %s\n' "${mode_repo}"
 git -C "${repo}" remote | grep -q . && bad remote || ok remote
 git -C "${repo}" grep -F SECRET-SHADOW >/dev/null 2>&1 && bad shadow || ok shadow
+git -C "${repo}" grep -F SECRET-GSHADOW >/dev/null 2>&1 && bad gshadow || ok gshadow
 git -C "${repo}" grep -F SECRET-KEY >/dev/null 2>&1 && bad key || ok key
 git -C "${repo}" grep -F SECRET-RCLONE >/dev/null 2>&1 && bad rclone || ok rclone
 git -C "${repo}" grep -F 'BEGIN PRIVATE KEY' >/dev/null 2>&1 && bad pem || ok pem
+git -C "${repo}" grep -F SECRET-HM >/dev/null 2>&1 && bad hmtools-conf || ok hmtools-conf
+git -C "${repo}" grep -F SECRET-DEB >/dev/null 2>&1 && bad debian-cnf || ok debian-cnf
+git -C "${repo}" grep -F 'cf-token-value' >/dev/null 2>&1 && bad token-file || ok token-file
 [[ -f "${repo}/etc/rclone.conf.meta" ]] && ok meta || bad meta
 [[ ! -f "${repo}/etc/shadow" ]] && ok no-shadow-file || bad no-shadow-file
+[[ ! -f "${repo}/etc/hmtools.conf" ]] && ok no-hmtools-file || bad no-hmtools-file
 grep -q 'git push' commands/confighist/main.sh && bad no-push || ok no-push
+
+# usunięcie pliku ze źródła → znika z repo przy następnym snapshocie
+rm -f "${src}/etc/gone.conf"
+# usuń z paths albo zostaw — pliku nie ma, each go nie zwróci
+hm_config_commit "po: delete-gone" >/dev/null
+[[ ! -f "${repo}/etc/gone.conf" ]] && ok deleted-from-repo || bad deleted-from-repo
 
 mode0="$(stat -c '%a' "${src}/etc/a.conf" 2>/dev/null || echo unknown)"
 printf '%s\n' 'beta-a' > "${src}/etc/a.conf"
 printf '%s\n' 'gamma-b' > "${src}/etc/b.conf"
-hm_confirm_plan "hook" "" --yes "krok" >/dev/null
+# symulacja confirm z ui (hook)
+hm_confirm_plan "hook" "" "krok" >/dev/null
 printf '%s\n' 'beta-a2' > "${src}/etc/a.conf"
 log="$(cmd_config log)"
 printf '%s\n' "${log}" | grep -q 'przed: hook' && ok hook-before || bad hook-before
 printf '%s\n' "${log}" | grep -q 'po: hook' && ok hook-after || bad hook-after
 
 first="$(git -C "${repo}" rev-list --max-parents=0 HEAD)"
+confirm_args=()
 cmd_config rollback "${first}" "${src}/etc/a.conf" >/dev/null
+printf '%s\n' "${confirm_args[*]}" | grep -q -- '--yes' && bad rollback-forced-yes || ok rollback-no-forced-yes
 grep -qx 'alpha' "${src}/etc/a.conf" && ok rollback-a || bad rollback-a
 grep -qx 'gamma-b' "${src}/etc/b.conf" && ok rollback-keeps-b || bad rollback-keeps-b
 mode1="$(stat -c '%a' "${src}/etc/a.conf" 2>/dev/null || echo unknown)"
@@ -74,6 +111,40 @@ if [[ "${mode0}" == "640" && "${mode1}" == "640" ]]; then
   ok rollback-mode
 else
   printf 'rollback-mode-platform %s->%s\n' "${mode0}" "${mode1}"
+fi
+
+# zła rewizja — NIE obcina pliku
+printf '%s\n' 'KEEP-ME' > "${src}/etc/a.conf"
+if cmd_config rollback 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef' "${src}/etc/a.conf" >/dev/null 2>"${root}/badrev.err"; then
+  bad rollback-badrev-rc
+else
+  ok rollback-badrev-rc
+fi
+grep -qx 'KEEP-ME' "${src}/etc/a.conf" && ok rollback-badrev-intact || bad rollback-badrev-intact
+
+# zła ścieżka — nie tworzy/zeruje
+printf '%s\n' 'SHADOW-LIVE' > "${src}/etc/shadow"
+if cmd_config rollback "${first}" "${src}/etc/nope.conf" >/dev/null 2>"${root}/badpath.err"; then
+  bad rollback-badpath-rc
+else
+  ok rollback-badpath-rc
+fi
+grep -qx 'SHADOW-LIVE' "${src}/etc/shadow" && ok rollback-shadow-intact || bad rollback-shadow-intact
+
+# bez HM_CONFIG_SRC — dest absolutny względem „/” mapowany na fake root przez HM_CONFIG_SRC unset
+# używamy osobnego repo z paths w /... — symulacja: dest musi zaczynać się od /
+unset HM_CONFIG_SRC
+export HM_CONFIG_SRC=""
+# funkcja dest_abs
+d="$(hm_config_dest_abs 'etc/a.conf')"
+[[ "${d}" == "/etc/a.conf" ]] && ok dest-abs || bad dest-abs
+export HM_CONFIG_SRC="${src}"
+
+# odmowa rollbacku sekretu
+if cmd_config rollback "${first}" "${src}/etc/shadow" >/dev/null 2>"${root}/sec.err"; then
+  bad rollback-secret-rc
+else
+  ok rollback-secret-rc
 fi
 
 gc="$(cmd_config track gc 2>"${root}/gc.err")"

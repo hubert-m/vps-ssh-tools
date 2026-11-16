@@ -307,14 +307,14 @@ cmd_docker_compose() {
         hm_err "Użycie: docker compose ${sub} <stack>"
         return 1
       }
-      local wd
-      wd="$(hm_docker_stack_workdir "${stack}")" || {
-        hm_err "Nie znaleziono working_dir dla stacka „${stack}” (label compose)."
+      hm_docker_compose_resolve "${stack}" || {
+        hm_err "Nie znaleziono working_dir / projektu dla stacka „${stack}” (label compose)."
         return 1
       }
       local -a plan=(
-        "Katalog stacka: ${wd}"
-        "docker compose ${sub} (tylko ten projekt)"
+        "Katalog stacka: ${_hm_dc_wd}"
+        "Projekt: ${_hm_dc_project}"
+        "docker compose -p ${_hm_dc_project} ${sub}"
       )
       if [[ "${sub}" == "pull" ]]; then
         plan+=("Pobranie nowszych obrazów z rejestru")
@@ -322,14 +322,14 @@ cmd_docker_compose() {
         plan+=("Odświeżenie kontenerów (up -d)")
       fi
       if ! hm_confirm_plan "docker compose ${sub} — ${stack}" \
-        "Operacja na stacku compose w ${wd}." \
+        "Operacja na stacku compose w ${_hm_dc_wd}." \
         "${plan[@]}"; then
         return 1
       fi
       if [[ "${sub}" == "pull" ]]; then
-        hm_docker_run_compose "${wd}" pull || return 1
+        hm_docker_compose_exec pull || return 1
       else
-        hm_docker_run_compose "${wd}" up -d || return 1
+        hm_docker_compose_exec up -d || return 1
       fi
       hm_ok "compose ${sub} ${stack} OK."
       ;;

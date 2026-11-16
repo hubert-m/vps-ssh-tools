@@ -175,10 +175,44 @@ hm_site_web_reserve_port() {
   return 1
 }
 
+# Unikalna nazwa extprocessor OLS (bez kropek) — unika kolizji wielu Node na jednym LSWS.
+hm_site_web_proxy_slug() {
+  local d="${1:-${HM_SITE_WEB_DOMAIN:-node}}"
+  d="$(printf '%s' "${d}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '_')"
+  d="$(printf '%s' "${d}" | sed 's/__*/_/g; s/^_//; s/_$//')"
+  [[ -n "${d}" ]] || d="node"
+  printf '%s' "${d}"
+}
+
+hm_site_web_render_prepare() {
+  local domain="${HM_SITE_WEB_DOMAIN:-}" aliases="${HM_SITE_ALIASES:-www}" ssl="${HM_SITE_SSL:-${HM_SITE_WEB_SSL:-0}}"
+  if [[ -z "${HM_SITE_WEB_PROXY_NAME:-}" ]]; then
+    HM_SITE_WEB_PROXY_NAME="node_$(hm_site_web_proxy_slug "${domain}")"
+  fi
+  if [[ -z "${HM_SITE_WEB_ALIASES_LINE+x}" ]]; then
+    case "${aliases}" in
+      ""|none|off|0|no|false)
+        HM_SITE_WEB_ALIASES_LINE=""
+        ;;
+      *)
+        HM_SITE_WEB_ALIASES_LINE="vhAliases                 www.${domain}"
+        ;;
+    esac
+  fi
+  if [[ -z "${HM_SITE_WEB_FORWARDED_PROTO:-}" ]]; then
+    if [[ "${ssl}" == "1" || "${ssl}" == "true" || "${ssl}" == "yes" ]]; then
+      HM_SITE_WEB_FORWARDED_PROTO="https"
+    else
+      HM_SITE_WEB_FORWARDED_PROTO="http"
+    fi
+  fi
+}
+
 hm_site_web_render() {
   local server="$1" kind="$2" tpl text
   tpl="$(hm_site_web_templates)/${server}/${kind}.tpl"
   [[ -f "${tpl}" ]] || { hm_err "Brak szablonu ${server}/${kind}."; return 1; }
+  hm_site_web_render_prepare
   text="$(cat "${tpl}")"
   text="${text//\{\{DOMAIN\}\}/${HM_SITE_WEB_DOMAIN}}"
   text="${text//\{\{ROOT\}\}/${HM_SITE_WEB_ROOT}}"
@@ -186,6 +220,14 @@ hm_site_web_render() {
   text="${text//\{\{SOCK\}\}/${HM_SITE_WEB_SOCK}}"
   text="${text//\{\{LOGDIR\}\}/${HM_SITE_WEB_LOGDIR}}"
   text="${text//\{\{USER\}\}/${HM_SITE_WEB_USER}}"
+  text="${text//\{\{PROXY_NAME\}\}/${HM_SITE_WEB_PROXY_NAME}}"
+  text="${text//\{\{FORWARDED_PROTO\}\}/${HM_SITE_WEB_FORWARDED_PROTO}}"
+  # Pusta linia zamiast vhAliases przy --no-www
+  if [[ -n "${HM_SITE_WEB_ALIASES_LINE}" ]]; then
+    text="${text//\{\{VH_ALIASES\}\}/${HM_SITE_WEB_ALIASES_LINE}}"
+  else
+    text="${text//\{\{VH_ALIASES\}\}/}"
+  fi
   printf '%s\n' "${text}"
 }
 
@@ -362,11 +404,15 @@ hm_site_web_apply_proxy() {
   HM_SITE_WEB_LOGDIR="$(hm_site_home "${domain}")/logs"
   HM_SITE_WEB_USER="$(hm_site_unix_user "${domain}")"
   HM_SITE_WEB_SOCK="/run/php/${domain}.sock"
+  unset HM_SITE_WEB_PROXY_NAME HM_SITE_WEB_ALIASES_LINE HM_SITE_WEB_FORWARDED_PROTO
   local server="${HM_SITE_WEBSERVER:-nginx}"
   local body dest
   body="$(hm_site_web_render "${server}" "${kind}")" || return 1
   dest="$(hm_site_web_conf_path "${server}" "${domain}")"
-  hm_site_web_apply_file "${server}" "${kind}" "${dest}" "${body}" >/dev/null
+  hm_site_web_apply_file "${server}" "${kind}" "${dest}" "${body}" >/dev/null || return 1
+  if [[ "${server}" == "ols" ]] && declare -F hm_sc_ols_append_vhost_block >/dev/null 2>&1; then
+    hm_sc_ols_append_vhost_block "${domain}" || return 1
+  fi
 }
 
 hm_site_web_offer_install() {
@@ -451,6 +497,9 @@ hm_site_web_provision() {
   HM_SITE_WEB_LOGDIR="${home}/logs"
   HM_SITE_WEB_USER="${user}"
   HM_SITE_WEB_SOCK="/run/php/${domain}.sock"
+  HM_SITE_WEB_SSL="${ssl}"
+  HM_SITE_SSL="${ssl}"
+  unset HM_SITE_WEB_PROXY_NAME HM_SITE_WEB_ALIASES_LINE HM_SITE_WEB_FORWARDED_PROTO
   if [[ "${server}" == "ols" && "${kind}" == "php-fpm" && -n "${php_ver}" && -n "${OLS_VHOSTS:-}" ]] \
     && declare -F hm_sc_write_vhconf >/dev/null 2>&1; then
     hm_sc_write_vhconf "${domain}" "${php_ver}" "${user}" "admin@${domain}" || return 1
@@ -461,6 +510,9 @@ hm_site_web_provision() {
     body="$(hm_site_web_render "${server}" "${kind}")" || return 1
     dest="$(hm_site_web_conf_path "${server}" "${domain}")"
     hm_site_web_apply_file "${server}" "${kind}" "${dest}" "${body}" >/dev/null || return 1
+    if [[ "${server}" == "ols" ]] && declare -F hm_sc_ols_append_vhost_block >/dev/null 2>&1; then
+      hm_sc_ols_append_vhost_block "${domain}" || return 1
+    fi
   fi
   if [[ "${ssl}" == "1" ]]; then
     hm_site_web_ssl "${domain}" "${server}" "${HM_SITE_WEB_ROOT}" || return 1

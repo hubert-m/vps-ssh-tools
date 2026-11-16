@@ -3,6 +3,11 @@
 
 hm_cron_mon_root() { printf '%s\n' "${HM_CRON_MON:-/var/lib/hmtools/cron-mon}"; }
 
+hm_cron_name_ok() {
+  # bez kropek / „.” / „..” — ochrona przed wyjściem poza spool
+  [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$ ]]
+}
+
 hm_cron_seconds() {
   local spec="$1" n
   case "${spec}" in
@@ -15,10 +20,16 @@ hm_cron_seconds() {
 
 hm_cron_redact_line() {
   local line="$1"
-  line="${line//SECRET-CRON/[redacted]}"
-  if [[ "${line}" == *PASSWORD=* ]]; then
-    line="${line%%PASSWORD=*}PASSWORD=[redacted]"
-  fi
+  # wartości sekretów — nie całe linie; typowe argv i nagłówki (bez \1 — portable sed)
+  line="$(printf '%s' "${line}" | sed -E \
+    -e 's/[Aa]uthorization:[[:space:]]*.*/Authorization=[redacted]/g' \
+    -e 's/[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]=[^[:space:]]+/PASSWORD=[redacted]/g' \
+    -e 's/[Tt][Oo][Kk][Ee][Nn]=[^[:space:]]+/token=[redacted]/g' \
+    -e 's/[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]=[^[:space:]]+/api_key=[redacted]/g' \
+    -e 's/[Ss][Ee][Cc][Rr][Ee][Tt]=[^[:space:]]+/secret=[redacted]/g' \
+    -e 's/--password[= ][^[:space:]]+/--password [redacted]/g' \
+    -e 's/ -p[^[:space:]-]+/ -p[redacted]/g' \
+    -e 's/SECRET-[A-Za-z0-9_-]+/[redacted]/g')"
   printf '%s\n' "${line}"
 }
 
@@ -67,8 +78,85 @@ hm_cron_exec() {
   "$@"
 }
 
+# Lock: PID + kill -0 (stary lock znika); opcjonalnie flock; mkdir jako znacznik.
+# Ustawia HM_CRON_LOCK_FD gdy flock; zwraca 1 gdy zajęty przez żywy proces.
+hm_cron_lock_acquire() {
+  local dir="$1" old
+  mkdir -p "${dir}"
+  if [[ -f "${dir}/lock.pid" ]]; then
+    old="$(tr -d '\r\n' < "${dir}/lock.pid" 2>/dev/null || true)"
+    if [[ -n "${old}" && "${old}" =~ ^[0-9]+$ ]] && kill -0 "${old}" 2>/dev/null; then
+      return 1
+    fi
+    rm -f "${dir}/lock.pid"
+    rmdir "${dir}/lock" 2>/dev/null || true
+  fi
+  if ! mkdir "${dir}/lock" 2>/dev/null; then
+    old="$(tr -d '\r\n' < "${dir}/lock.pid" 2>/dev/null || true)"
+    if [[ -n "${old}" && "${old}" =~ ^[0-9]+$ ]] && kill -0 "${old}" 2>/dev/null; then
+      return 1
+    fi
+    rmdir "${dir}/lock" 2>/dev/null || rm -rf "${dir}/lock"
+    mkdir "${dir}/lock" 2>/dev/null || return 1
+  fi
+  printf '%s\n' "$$" > "${dir}/lock.pid"
+  if command -v flock >/dev/null 2>&1 && [[ "${HM_CRON_NO_FLOCK:-}" != "1" ]]; then
+    exec {HM_CRON_LOCK_FD}>"${dir}/lock.flock"
+    if ! flock -n "${HM_CRON_LOCK_FD}"; then
+      eval "exec ${HM_CRON_LOCK_FD}>&-" 2>/dev/null || true
+      unset HM_CRON_LOCK_FD
+      rm -f "${dir}/lock.pid"
+      rmdir "${dir}/lock" 2>/dev/null || true
+      return 1
+    fi
+  fi
+  return 0
+}
+
+hm_cron_lock_release() {
+  local dir="$1"
+  if [[ -n "${HM_CRON_LOCK_FD:-}" ]]; then
+    flock -u "${HM_CRON_LOCK_FD}" 2>/dev/null || true
+    eval "exec ${HM_CRON_LOCK_FD}>&-" 2>/dev/null || true
+    unset HM_CRON_LOCK_FD
+  fi
+  rm -f "${dir}/lock.pid" "${dir}/lock.flock" 2>/dev/null || true
+  rmdir "${dir}/lock" 2>/dev/null || true
+}
+
+hm_cron_pgid_of() {
+  local pid="$1" pg
+  pg="$(ps -o pgid= -p "${pid}" 2>/dev/null | tr -d ' ' || true)"
+  if [[ -n "${pg}" && "${pg}" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "${pg}"
+  else
+    printf '%s\n' "${pid}"
+  fi
+}
+
+hm_cron_kill_tree() {
+  local pid="$1" pgid
+  pgid="$(hm_cron_pgid_of "${pid}")"
+  # cała grupa procesów (setsid)
+  kill -TERM -- "-${pgid}" 2>/dev/null || kill -TERM "${pid}" 2>/dev/null || true
+  local i=0
+  while kill -0 "${pid}" 2>/dev/null && [[ "${i}" -lt 10 ]]; do
+    sleep 1
+    i=$((i + 1))
+  done
+  if kill -0 "${pid}" 2>/dev/null; then
+    kill -KILL -- "-${pgid}" 2>/dev/null || kill -KILL "${pid}" 2>/dev/null || true
+  fi
+  # dobij sieroty sleep z tej grupy
+  if command -v pkill >/dev/null 2>&1; then
+    pkill -KILL -g "${pgid}" 2>/dev/null || true
+  fi
+  wait "${pid}" 2>/dev/null || true
+}
+
 hm_cron_run() {
   local name="" timeout="1h" user="" dir start=0 end=0 rc=0 dur=0 limit=0 pid=0 now=0 errf
+  unset HM_CRON_LOCK_FD 2>/dev/null || true
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --timeout) timeout="${2:-1h}"; shift 2 || true ;;
@@ -78,32 +166,53 @@ hm_cron_run() {
         ;;
     esac
   done
-  [[ "${name}" =~ ^[A-Za-z0-9_.-]+$ && $# -gt 0 ]] || {
+  if ! hm_cron_name_ok "${name}" || [[ $# -eq 0 ]]; then
     hm_err "Użycie: cron-run <nazwa> [--timeout 1h] -- <komenda>"
     return 1
-  }
+  fi
   dir="$(hm_cron_mon_root)/${name}"
   mkdir -p "${dir}"
   if [[ -f "${dir}/user" ]]; then
     user="$(tr -d '\r\n' < "${dir}/user")"
   fi
-  if ! mkdir "${dir}/lock" 2>/dev/null; then
+  if ! hm_cron_lock_acquire "${dir}"; then
     printf 'lock\t%s\n' "${name}"
-    return 0
+    hm_cron_alert "${name}" "lock" >/dev/null || true
+    return 1
   fi
-  # shellcheck disable=SC2064
-  trap "rmdir \"${dir}/lock\" 2>/dev/null || true" RETURN
+
   start="$(date +%s)"
   errf="${dir}/stderr"
   : > "${errf}"
   limit="$(hm_cron_seconds "${timeout}")"
-  hm_cron_exec "${user}" "$@" >"${errf}" 2>&1 &
-  pid=$!
+
+  # nowa grupa procesów — timeout zabija całą grupę, nie tylko subshell
+  if command -v setsid >/dev/null 2>&1 && [[ "${HM_CRON_NO_SETSID:-}" != "1" ]]; then
+    if [[ -n "${user}" && "${user}" != "root" && "${HMTOOLS_TEST:-}" != "1" ]]; then
+      if command -v runuser >/dev/null 2>&1; then
+        printf 'runuser -u %s\n' "${user}" >> "${HM_CRON_EXEC_LOG:-/dev/null}"
+        setsid runuser -u "${user}" -- "$@" >"${errf}" 2>&1 &
+      else
+        hm_cron_lock_release "${dir}"
+        hm_err "Brak runuser. Nie uruchamiam ${user} jako root."
+        return 1
+      fi
+    else
+      if [[ -n "${user}" && "${user}" != "root" ]]; then
+        printf 'runuser -u %s\n' "${user}" >> "${HM_CRON_EXEC_LOG:-/dev/null}"
+      fi
+      setsid "$@" >"${errf}" 2>&1 &
+    fi
+    pid=$!
+  else
+    hm_cron_exec "${user}" "$@" >"${errf}" 2>&1 &
+    pid=$!
+  fi
+
   while kill -0 "${pid}" 2>/dev/null; do
     now="$(date +%s)"
     if [[ $(( now - start )) -ge "${limit}" ]]; then
-      kill "${pid}" 2>/dev/null || true
-      wait "${pid}" 2>/dev/null || true
+      hm_cron_kill_tree "${pid}"
       rc=124
       break
     fi
@@ -112,6 +221,9 @@ hm_cron_run() {
   if [[ "${rc}" -ne 124 ]]; then
     wait "${pid}" || rc=$?
   fi
+  # lock dopiero po śmierci procesu / grupy
+  hm_cron_lock_release "${dir}"
+
   end="$(date +%s)"
   dur="$(( end - start ))"
   hm_cron_redact_file "${errf}"
@@ -125,6 +237,7 @@ hm_cron_run() {
     hm_cron_alert "${name}" "rc=${rc}" >/dev/null
     return "${rc}"
   fi
+  return 0
 }
 
 hm_cron_monitor_add() {
@@ -139,10 +252,10 @@ hm_cron_monitor_add() {
         ;;
     esac
   done
-  [[ "${name}" =~ ^[A-Za-z0-9_.-]+$ && -n "${every}" ]] || {
+  if ! hm_cron_name_ok "${name}" || [[ -z "${every}" ]]; then
     hm_err "Użycie: cron monitor add <nazwa> --every 1h [--grace 15m] [--user u]"
     return 1
-  }
+  fi
   local dir
   dir="$(hm_cron_mon_root)/${name}"
   mkdir -p "${dir}"
@@ -162,11 +275,12 @@ hm_cron_monitor_status() {
   for dir in "${root}"/*; do
     [[ -d "${dir}" ]] || continue
     name="$(basename "${dir}")"
+    hm_cron_name_ok "${name}" || continue
     [[ -f "${dir}/state" ]] || { printf '%s\tbrak-stanu\n' "${name}"; continue; }
     end="$(sed -n 's/^end=//p' "${dir}/state" | head -n 1)"
     rc="$(sed -n 's/^rc=//p' "${dir}/state" | head -n 1)"
-    every="$(tr -d '\r\n' < "${dir}/every")"
-    grace="$(tr -d '\r\n' < "${dir}/grace")"
+    every="$(tr -d '\r\n' < "${dir}/every" 2>/dev/null || echo 0)"
+    grace="$(tr -d '\r\n' < "${dir}/grace" 2>/dev/null || echo 0)"
     printf '%s\trc=%s\n' "${name}" "${rc}"
     if [[ "${rc}" != "0" ]]; then
       hm_cron_alert "${name}" "rc=${rc}"
@@ -192,21 +306,28 @@ hm_cron_monitor() {
   case "${sub}" in
     add) hm_cron_monitor_add "$@" ;;
     list|ls)
-      local root dir
+      local root dir name
       root="$(hm_cron_mon_root)"
       [[ -d "${root}" ]] || return 0
       for dir in "${root}"/*; do
         [[ -d "${dir}" ]] || continue
-        basename "${dir}"
+        name="$(basename "${dir}")"
+        hm_cron_name_ok "${name}" || continue
+        printf '%s\n' "${name}"
       done
       ;;
     status) hm_cron_monitor_status ;;
     remove|rm)
       local name="${1:-}" dir
-      [[ "${name}" =~ ^[A-Za-z0-9_.-]+$ ]] || { hm_err "Użycie: cron monitor remove <nazwa>"; return 1; }
+      if ! hm_cron_name_ok "${name}"; then
+        hm_err "Użycie: cron monitor remove <nazwa>"
+        return 1
+      fi
       hm_confirm_plan "cron monitor remove ${name}" "Usuwa historię zadania." "" "cron monitor remove ${name}" || return 1
       dir="$(hm_cron_mon_root)/${name}"
-      rm -rf "${dir}"
+      if [[ -e "${dir}" ]]; then
+        rm -rf "${dir}" || { hm_err "Nie usunięto ${name}."; return 1; }
+      fi
       hm_ok "Usunięto ${name}."
       ;;
     wrap) hm_cron_monitor_wrap "$@" ;;

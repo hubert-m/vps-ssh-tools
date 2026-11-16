@@ -594,6 +594,11 @@ cmd_site_new() {
       hm_err "site new nieudany — cofnięto wdrożenie po błędzie vhosta."
       return 1
     fi
+    # Django: location /static|/media po proxy (szablon nie nadpisuje snipetu)
+    if [[ "${python_on}" -eq 1 && "${framework:-django}" == "django" ]] \
+      && declare -F hm_python_write_vhost >/dev/null 2>&1; then
+      hm_python_write_vhost "${domain}" "$(hm_site_home "${domain}")" || true
+    fi
   fi
   if declare -F hm_tx_commit >/dev/null 2>&1 && [[ -n "${HM_TX_JOURNAL:-}" ]]; then
     hm_tx_commit "${domain}" "${HM_SITE_USER:-${site_user:-${domain%%.*}}}" "${runtime}" "${webserver}" "$(hm_site_home "${domain}")/shared/.env" || return 1

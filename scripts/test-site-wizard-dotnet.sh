@@ -24,9 +24,13 @@ export HM_DOTNET_SOURCES="${root}/sources"
 export HM_SITE_USER=app
 export HM_DOTNET_SECRET='Server=db;Password=SECRET-DOTNET'
 export HM_DOTNET_KIND=sdk
-mkdir -p "${root}/bin" "${HM_DOTNET_SOURCES}" "${HM_SYSTEMD_UNIT_DIR}"
+export HM_DOTNET_BIN="${root}/bin/dotnet"
+mkdir -p "${root}/bin" "${HM_DOTNET_SOURCES}" "${HM_SYSTEMD_UNIT_DIR}" "${root}/journal"
 : > "${HM_DOTNET_SYSTEMCTL_LOG}"
 : > "${HM_DOTNET_INSTALL_LOG}"
+# Journal + undo (jak w prawdziwym site new)
+hm_tx_note_undo() { printf 'undo=%s\n' "$1" >> "${root}/journal/open.log"; }
+hm_site_resource_add() { printf '%s\t%s\t%s\n' "$2" "$3" "$4" >> "${root}/resources"; }
 
 cat > "${root}/bin/systemd-analyze" <<'EOF'
 #!/usr/bin/env bash
@@ -63,6 +67,12 @@ grep -q 'http://127.0.0.1:5088' "${unit}" && ok bind-local || bad bind-local
 grep -q 'SECRET-DOTNET' "${unit}" && bad secret-unit || ok secret-unit
 grep -q 'enable --now hm-app-crm.example.pl.service' "${HM_DOTNET_SYSTEMCTL_LOG}" && ok systemctl || bad systemctl
 grep -q 'microsoft-repo sdk 8.0' "${HM_DOTNET_INSTALL_LOG}" && ok install-log || bad install-log
+# Instalacja przed unitem: stub binarki + undo w journalu
+[[ -x "${HM_DOTNET_BIN}" ]] && ok install-bin || bad install-bin
+grep -q "ExecStart=${HM_DOTNET_BIN}" "${unit}" && ok exec-bin || bad exec-bin
+grep -q 'current/Crm.Web.dll' "${unit}" && ok current-dll || bad current-dll
+grep -q "undo=systemd-unit	${unit}" "${root}/journal/open.log" && ok unit-undo || bad unit-undo
+grep -q "unit	${unit}" "${root}/resources" && ok unit-resource || bad unit-resource
 envf="${HM_SITE_HOME_BASE}/crm.example.pl/shared/.env"
 grep -q 'SECRET-DOTNET' "${envf}" && ok secret-env || bad secret-env
 mode="$(stat -c '%a' "${envf}" 2>/dev/null || stat -f '%OLp' "${envf}")"

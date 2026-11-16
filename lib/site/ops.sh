@@ -191,7 +191,7 @@ hm_site_ops_cron_exec() {
       printf '/usr/bin/wp cron event run --due-now --path=%s' "${home}"
       ;;
     django)
-      printf '%s/.hmtools/venv/bin/python %s/manage.py %s' "${home}" "${home}" "${cmd:-clearsessions}"
+      printf '%s/venv/bin/python %s/manage.py %s' "${home}" "${home}" "${cmd:-clearsessions}"
       ;;
     *)
       printf '%s' "${cmd:-/usr/bin/true}"
@@ -205,9 +205,15 @@ hm_site_ops_worker_exec() {
   node="$(hm_site_ops_node_bin "${home}" "${domain}")"
   case "${kind}" in
     queue) printf '%s %s/artisan queue:work --tries=3' "${php}" "${home}" ;;
-    celery) printf '%s/.hmtools/venv/bin/celery -A app worker' "${home}" ;;
+    celery) printf '%s/venv/bin/celery -A app worker' "${home}" ;;
     node) printf '%s %s/worker.js' "${node}" "${home}" ;;
-    dotnet) printf '/usr/bin/dotnet %s/app.dll' "${home}" ;;
+    dotnet)
+      printf '%s %s/current/%s' \
+        "$(command -v dotnet 2>/dev/null || echo /usr/bin/dotnet)" \
+        "${home}" \
+        "${HM_SITE_DOTNET_DLL:-App.dll}"
+      ;;
+
     *) return 1 ;;
   esac
 }
