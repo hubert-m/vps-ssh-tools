@@ -22,12 +22,20 @@ hm_ovpn_packages() {
 }
 
 hm_ovpn_subnet_pair() {
-  local cidr="${1:-10.8.0.0/24}" net mask
+  local cidr="${1:-10.8.0.0/24}" net bits mask
   net="${cidr%%/*}"
-  case "${cidr#*/}" in
-    24) mask="255.255.255.0" ;;
+  bits="${cidr#*/}"
+  [[ "${bits}" =~ ^[0-9]+$ ]] || bits=24
+  case "${bits}" in
+    8) mask="255.0.0.0" ;;
     16) mask="255.255.0.0" ;;
-    *) mask="255.255.255.0"; net="${net%%/*}" ;;
+    24) mask="255.255.255.0" ;;
+    28) mask="255.255.255.240" ;;
+    30) mask="255.255.255.252" ;;
+    *)
+      hm_err "Nieobsługiwana maska /${bits} (użyj /8,/16,/24,/28,/30)."
+      return 1
+      ;;
   esac
   printf '%s %s' "${net}" "${mask}"
 }
@@ -35,7 +43,7 @@ hm_ovpn_subnet_pair() {
 hm_ovpn_render_conf() {
   local etc="$1" port="$2" proto="$3" cidr="$4" group="$5" ver="${6:-2.6}" dns="${7:-}"
   local pair ciphers
-  pair="$(hm_ovpn_subnet_pair "${cidr}")"
+  pair="$(hm_ovpn_subnet_pair "${cidr}")" || return 1
   if [[ "${ver}" == 2.4* ]]; then
     ciphers=$'cipher AES-256-GCM\nncp-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305'
   else
@@ -56,7 +64,7 @@ tls-crypt $(hm_ovpn_tls_key_path)
 auth SHA256
 dh none
 remote-cert-tls client
-crl-verify ${etc}/crl.pem
+crl-verify ${etc}/hm/crl.pem
 user nobody
 group ${group}
 persist-key
@@ -94,15 +102,23 @@ hm_ovpn_port_busy() {
 }
 
 hm_ovpn_subnet_used() {
-  local cidr="${1%%/*}" file="${HM_OVPN_ROUTES:-}"
+  local full="${1:-}" net="${1%%/*}" bits file="${HM_OVPN_ROUTES:-}" line
+  bits="${full#*/}"
   if [[ -n "${file}" ]]; then
     [[ -f "${file}" ]] || return 1
-    grep -q "${cidr}" "${file}"
+    grep -Eq "(^| )${net}(/| |$)|${full}" "${file}"
     return
   fi
   [[ "${HMTOOLS_TEST:-}" == "1" ]] && return 1
   command -v ip >/dev/null 2>&1 || return 1
-  ip -o route show 2>/dev/null | grep -q "${cidr}"
+  while IFS= read -r line; do
+    [[ "${line}" == "${net}"* || "${line}" == *" ${net}/"* || "${line}" == "${full}"* ]] && return 0
+    # Nakładanie /24: ten sam prefiks trzech oktetów.
+    if [[ "${bits}" == "24" && "${net}" =~ ^([0-9]+\.[0-9]+\.[0-9]+)\. ]]; then
+      [[ "${line}" == "${BASH_REMATCH[1]}."* ]] && return 0
+    fi
+  done < <(ip -o route show 2>/dev/null || true)
+  return 1
 }
 
 hm_ovpn_os_ok() {
@@ -154,10 +170,10 @@ hm_ovpn_validate_install() {
 }
 
 hm_ovpn_foreign_conf() {
-  local etc f
+  local etc root f
   etc="$(hm_ovpn_etc)"
-  [[ -d "${etc}" ]] || return 1
-  for f in "${etc}"/*.conf; do
+  root="$(dirname "${etc}")"
+  for f in "${etc}"/*.conf "${root}"/*.conf; do
     [[ -f "${f}" ]] || continue
     [[ "$(basename "${f}")" == "hm.conf" ]] && continue
     return 0
@@ -172,6 +188,42 @@ hm_ovpn_same_install() {
   grep -q "^PORT=${port}$" "${file}" || return 1
   grep -q "^PROTO=${proto}$" "${file}" || return 1
   grep -q "^SUBNET=${cidr}$" "${file}" || return 1
+}
+
+# Już jest instalacja hmtools — nie wolno wołać init-pki (kasuje CA/klientów).
+hm_ovpn_already_installed() {
+  [[ -f "$(hm_ovpn_state_file)" || -f "$(hm_ovpn_conf_file)" ]] && return 0
+  local pki
+  pki="$(hm_ovpn_etc)/hm/pki"
+  [[ -f "${pki}/ca.crt" || -f "${pki}/index.txt" ]] && return 0
+  return 1
+}
+
+hm_ovpn_read_forward() {
+  local v
+  if [[ -n "${HM_OVPN_PREV_FORWARD:-}" ]]; then
+    printf '%s' "${HM_OVPN_PREV_FORWARD}"
+    return 0
+  fi
+  if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+    printf '0'
+    return 0
+  fi
+  v="$(sysctl -n net.ipv4.ip_forward 2>/dev/null || true)"
+  [[ "${v}" =~ ^[01]$ ]] || v=0
+  printf '%s' "${v}"
+}
+
+hm_ovpn_detect_fw() {
+  if [[ -n "${HM_OVPN_FW:-}" ]]; then
+    printf '%s' "${HM_OVPN_FW}"
+    return 0
+  fi
+  if declare -F hm_os_firewall_backend >/dev/null 2>&1; then
+    hm_os_firewall_backend
+    return $?
+  fi
+  printf 'iptables'
 }
 
 hm_ovpn_dns_ips() {
@@ -355,7 +407,7 @@ hm_ovpn_uninstall() {
     removed="${removed}jail fail2ban"$'\n'
   fi
   rm -f "$(hm_ovpn_nat_unit_path)" "$(hm_ovpn_nat_unit_path).sh"
-  rm -f "$(hm_ovpn_conf_file)" "${etc}/crl.pem" "$(hm_ovpn_tls_key_path)"
+  rm -f "$(hm_ovpn_conf_file)" "${etc}/hm/crl.pem" "$(hm_ovpn_tls_key_path)"
   rm -rf "${etc}/ccd"
   if [[ "${keep_pki}" -eq 1 ]]; then
     kept="${kept}PKI"$'\n'
@@ -408,15 +460,21 @@ hm_ovpn_uninstall() {
 }
 
 hm_ovpn_rollback() {
-  local etc pki
+  local etc pki sysctl unit_sh
   hm_warn "Wycofuję niedokończoną instalację OpenVPN."
   etc="$(hm_ovpn_etc)"
   pki="${etc}/hm/pki"
   hm_ovpn_systemctl disable --now "openvpn-server@$(hm_ovpn_instance)" >/dev/null 2>&1 || true
-  rm -f "$(hm_ovpn_conf_file)" "$(hm_ovpn_state_file)" "${etc}/crl.pem"
+  hm_ovpn_systemctl disable --now hmtools-openvpn-nat.service >/dev/null 2>&1 || true
+  rm -f "$(hm_ovpn_conf_file)" "$(hm_ovpn_state_file)" "${etc}/hm/crl.pem"
+  rm -f "$(hm_ovpn_tls_key_path)"
   case "${pki}" in
-    "${etc}/"*) rm -rf "${pki}" ;;
+    "${etc}/hm/"*|"${etc}/"*) rm -rf "${pki}" "${etc}/hm" 2>/dev/null || true ;;
   esac
+  sysctl="${HM_OVPN_SYSCTL_D:-/etc/sysctl.d}/99-hmtools-openvpn.conf"
+  rm -f "${sysctl}"
+  unit_sh="$(hm_ovpn_nat_unit_path 2>/dev/null || true)"
+  [[ -n "${unit_sh}" ]] && rm -f "${unit_sh}" "${unit_sh%.service}.sh" 2>/dev/null || true
   hm_ovpn_strip_markers "${HM_OVPN_UFW_RULES:-/etc/ufw/before.rules}"
   hm_ovpn_strip_markers "${HM_OVPN_CSF_POST:-/etc/csf/csfpost.sh}"
   rm -f "$(hm_ovpn_nat_unit_path)"
@@ -489,14 +547,15 @@ EOF
 }
 
 hm_ovpn_write_state() {
-  local port="$1" proto="$2" cidr="$3" endpoint="$4" pki="$5"
+  local port="$1" proto="$2" cidr="$3" endpoint="$4" pki="$5" prev
+  prev="$(hm_ovpn_read_forward)"
   cat > "$(hm_ovpn_state_file)" <<EOF
 PORT=${port}
 PROTO=${proto}
 SUBNET=${cidr}
 ENDPOINT=${endpoint}
 PKI=${pki}
-PREV_FORWARD=${HM_OVPN_PREV_FORWARD:-0}
+PREV_FORWARD=${prev}
 EOF
 }
 
@@ -543,13 +602,17 @@ hm_ovpn_install() {
     hm_err "Podsieć ${cidr} koliduje z istniejącą trasą."
     return 1
   fi
-  if [[ ! -f "$(hm_ovpn_state_file)" ]] && hm_ovpn_foreign_conf && [[ "${force}" -ne 1 ]]; then
-    hm_err "Obca konfiguracja OpenVPN. Nic nie nadpisuję. Użyj --force."
-    return 1
-  fi
   if hm_ovpn_same_install "${port}" "${proto}" "${cidr}"; then
     hm_info "bez zmian"
     return 0
+  fi
+  if hm_ovpn_already_installed; then
+    hm_err "OpenVPN hmtools już zainstalowany. Zmiany: openvpn config set … (nie init-pki — nie kasuję CA/klientów)."
+    return 1
+  fi
+  if hm_ovpn_foreign_conf && [[ "${force}" -ne 1 ]]; then
+    hm_err "Obca konfiguracja OpenVPN. Nic nie nadpisuję. Użyj --force."
+    return 1
   fi
   local -a steps=("pakiety openvpn easy-rsa" "PKI" "hm.conf" "NAT" "systemd openvpn-server@hm")
   [[ -n "${first}" ]] && steps+=("pierwszy klient ${first}")
@@ -559,25 +622,40 @@ hm_ovpn_install() {
     return 0
   fi
   if [[ "${force}" -eq 1 ]] && declare -F hm_confirm_plan_critical >/dev/null 2>&1; then
-    hm_confirm_plan_critical "openvpn install --force" "Nadpisanie obcej konfiguracji." "${steps[@]}" || return 1
+    if [[ "${yes}" -eq 1 ]]; then
+      hm_confirm_plan_critical "OPENVPN" "openvpn install --force" "Nadpisanie obcej konfiguracji." --yes "${steps[@]}" || return 1
+    else
+      hm_confirm_plan_critical "OPENVPN" "openvpn install --force" "Nadpisanie obcej konfiguracji." "${steps[@]}" || return 1
+    fi
   elif [[ "${yes}" -eq 1 ]]; then
     hm_confirm_plan "openvpn install" "Serwer VPN i NAT." --yes "${steps[@]}" || return 1
   else
     hm_confirm_plan "openvpn install" "Serwer VPN i NAT." "${steps[@]}" || return 1
   fi
-  local pkg
+  local pkg packages_installed=0
   while IFS= read -r pkg; do
     [[ -n "${pkg}" ]] || continue
     hm_pkg_install "${pkg}" || return 1
+    packages_installed=1
   done < <(hm_ovpn_packages)
-  local etc pki group ver dns_ips iface
+  local etc pki group ver dns_ips iface fw
   etc="$(hm_ovpn_etc)"
   pki="${etc}/hm/pki"
   group="$(hm_ovpn_group_name)"
-  ver="${HM_OVPN_VERSION:-2.6.0}"
+  ver="${HM_OVPN_VERSION:-}"
+  if [[ -z "${ver}" ]] && command -v openvpn >/dev/null 2>&1; then
+    ver="$(openvpn --version 2>/dev/null | head -1 | awk '{print $2}' || true)"
+  fi
+  [[ -n "${ver}" ]] || ver="2.6.0"
   dns_ips="$(hm_ovpn_dns_ips "${dns}")"
   iface="$(hm_ovpn_default_iface)"
-  mkdir -p "${pki}/issued" "${pki}/private" "${etc}/ccd"
+  fw="$(hm_ovpn_detect_fw)"
+  HM_OVPN_FW="${fw}"
+  mkdir -p "${pki}/issued" "${pki}/private" "${etc}/ccd" "${etc}/hm"
+  if [[ -f "${pki}/ca.crt" || -f "${pki}/index.txt" ]]; then
+    hm_err "PKI już istnieje (${pki}). Odmowa init-pki."
+    return 1
+  fi
   export EASYRSA_PKI="${pki}" EASYRSA_BATCH=1
   export EASYRSA_ALGO="ec" EASYRSA_CURVE="secp384r1"
   [[ "${rsa}" -eq 1 ]] && export EASYRSA_ALGO="rsa" EASYRSA_KEY_SIZE="3072"
@@ -591,18 +669,22 @@ hm_ovpn_install() {
   if [[ ! -f "${pki}/crl.pem" ]]; then
     printf 'CRL\n' > "${pki}/crl.pem"
   fi
-  cp -f "${pki}/crl.pem" "${etc}/crl.pem"
-  chmod 0644 "${etc}/crl.pem" || true
+  cp -f "${pki}/crl.pem" "${etc}/hm/crl.pem"
+  chmod 0644 "${etc}/hm/crl.pem" || true
   if ! hm_ovpn_gen_tls_key "$(hm_ovpn_tls_key_path)"; then
     hm_ovpn_rollback
     return 1
   fi
-  hm_ovpn_render_conf "${etc}" "${port}" "${proto}" "${cidr}" "${group}" "${ver}" "${dns_ips}" > "$(hm_ovpn_conf_file)"
+  hm_ovpn_render_conf "${etc}" "${port}" "${proto}" "${cidr}" "${group}" "${ver}" "${dns_ips}" > "$(hm_ovpn_conf_file)" || {
+    hm_ovpn_rollback
+    return 1
+  }
   if [[ "${ipv6}" -eq 1 ]]; then
     printf 'server-ipv6 fd42:42:42::/64\n' >> "$(hm_ovpn_conf_file)"
   fi
   local sysctl="${HM_OVPN_SYSCTL_D:-/etc/sysctl.d}/99-hmtools-openvpn.conf"
   mkdir -p "$(dirname "${sysctl}")"
+  HM_OVPN_PREV_FORWARD="$(hm_ovpn_read_forward)"
   printf 'net.ipv4.ip_forward=1\n' > "${sysctl}"
   [[ "${ipv6}" -eq 1 ]] && printf 'net.ipv6.conf.all.forwarding=1\n' >> "${sysctl}"
   hm_ovpn_nat_apply "${cidr}" "${iface}" "${port}" "${proto}"
@@ -611,7 +693,15 @@ hm_ovpn_install() {
     return 1
   fi
   hm_ovpn_write_state "${port}" "${proto}" "${cidr}" "${endpoint}" "${pki}"
-  printf 'FW=%s\nIFACE=%s\nPACKAGES=yes\n' "${HM_OVPN_FW:-iptables}" "${iface}" >> "$(hm_ovpn_state_file)"
+  {
+    printf 'FW=%s\n' "${fw}"
+    printf 'IFACE=%s\n' "${iface}"
+    if [[ "${packages_installed}" -eq 1 ]]; then
+      printf 'PACKAGES=yes\n'
+    else
+      printf 'PACKAGES=no\n'
+    fi
+  } >> "$(hm_ovpn_state_file)"
   if [[ -n "${first}" ]]; then
     if ! HM_OVPN_PKI="${pki}" hm_ovpn_client_add "${first}" --yes --no-export; then
       hm_err "Serwer jest zainstalowany, ale pierwszy klient nie powstał."

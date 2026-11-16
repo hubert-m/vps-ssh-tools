@@ -98,12 +98,14 @@ printf 'OLD\n' > "${dest}"
 export HM_SITE_WEB_VALIDATE=fail
 export HM_SITE_WEB_DOMAIN=old.example.pl
 export HM_SITE_WEB_UPSTREAM=127.0.0.1:3010
+export HM_SITE_WEB_ADOPT=1
 body="$(hm_site_web_render nginx proxy)"
 if hm_site_web_apply_file nginx proxy "${dest}" "${body}" >/dev/null 2>&1; then
   bad "validate-fail"
 else
   ok "validate-fail"
 fi
+unset HM_SITE_WEB_ADOPT
 if [[ "$(cat "${dest}")" == "OLD" ]] && grep -q "undo ${dest}" "${HM_SITE_WEB_JOURNAL}" \
   && ! grep -q 'reload nginx' "${HM_SITE_WEB_LOG}"; then
   ok "validate-restore"

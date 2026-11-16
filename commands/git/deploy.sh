@@ -193,28 +193,21 @@ hm_deploy_reload_services() {
 cmd_deploy() {
   local sub="${1:-}"
 
-  # Staging/clone: deploy <domena-prod> … albo rollback stamp ze snaps clone
-  if declare -F hm_clone_deploy >/dev/null 2>&1; then
-    if [[ -n "${sub}" ]] && hm_is_valid_domain "${sub}" 2>/dev/null; then
-      hm_clone_deploy "$@"
-      return $?
-    fi
-    if [[ "${sub}" == "rollback" || "${sub}" == "rb" || "${sub}" == "undo" ]]; then
-      local stamp="${2:-}" snap
-      if [[ -n "${stamp}" ]] && declare -F hm_clone_snap_root >/dev/null 2>&1; then
-        snap="$(hm_clone_snap_root "${HM_SITE_DOMAIN:-}")/${stamp}"
-        if [[ -d "${snap}" && -f "${snap}/meta.txt" ]]; then
-          hm_clone_deploy "$@"
-          return $?
-        fi
-      fi
-    fi
-  fi
-
-  # jeśli pierwszy arg to flaga lub puste → run deploy (git)
+  # Najpierw znane podkomendy — „log/config/release/rollback” też pasują do
+  # hm_is_valid_domain i wcześniej wpadały w clone-deploy („Produkcja log nie istnieje”).
   case "${sub}" in
     rollback|rb|undo)
       shift || true
+      if declare -F hm_clone_deploy >/dev/null 2>&1; then
+        local stamp="${1:-}" snap
+        if [[ -n "${stamp}" ]] && declare -F hm_clone_snap_root >/dev/null 2>&1; then
+          snap="$(hm_clone_snap_root "${HM_SITE_DOMAIN:-}")/${stamp}"
+          if [[ -d "${snap}" && -f "${snap}/meta.txt" ]]; then
+            hm_clone_deploy rollback "$@"
+            return $?
+          fi
+        fi
+      fi
       if [[ -L "$(hm_deploy_home)/current" ]] && { [[ -z "${1:-}" ]] || [[ -d "$(hm_deploy_home)/releases/${1:-}" ]]; }; then
         hm_deploy_release_rollback "$@"
         return $?
@@ -222,7 +215,7 @@ cmd_deploy() {
       hm_deploy_rollback "$@"
       return $?
       ;;
-    release)
+    release|releases)
       shift || true
       hm_deploy_release_apply "$@"
       return $?
@@ -247,6 +240,34 @@ cmd_deploy() {
       hm_help_topic deploy
       return 0
       ;;
+    clone)
+      # Jawne: deploy clone <domena-prod> …
+      shift || true
+      if declare -F hm_clone_deploy >/dev/null 2>&1; then
+        hm_clone_deploy "$@"
+        return $?
+      fi
+      hm_err "Brak clone-deploy."
+      return 1
+      ;;
+  esac
+
+  # Staging/clone: deploy <domena-prod> … (nie dla zastrzeżonych słów powyżej)
+  if declare -F hm_clone_deploy >/dev/null 2>&1; then
+    if [[ -n "${sub}" ]] && hm_is_valid_domain "${sub}" 2>/dev/null; then
+      case "${sub}" in
+        log|logs|config|cfg|release|releases|rollback|rb|undo|clone|help)
+          ;;
+        *)
+          hm_clone_deploy "$@"
+          return $?
+          ;;
+      esac
+    fi
+  fi
+
+  # jeśli pierwszy arg to flaga lub puste → run deploy (git)
+  case "${sub}" in
     ""|--*)
       ;;
     *)

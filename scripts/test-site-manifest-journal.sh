@@ -116,13 +116,29 @@ second="$(cmd_site_new spa.example --from "${root}/spa.json" --yes 2>&1 || true)
 printf '%s\n' "${second}" | grep -q 'pomijam — już jest' && ok idempotent || bad idempotent
 [[ "$(cat "$(hm_site_manifest_path spa.example)")" == "${before}" ]] && ok idempotent-file || bad idempotent-file
 
-# --resume domyka otwarty journal
+# --resume domyka otwarty journal (katalog per domena)
 dom="go.example"
-dir="$(hm_site_journal_dir)"
+dir="$(hm_tx_journal_domain_dir "${dom}")"
 mkdir -p "${dir}"
-printf 'BEGIN tx %s\nBEGIN layout\nundo=\nDONE layout\n' "${dom}" > "${dir}/${dom}-1.log"
+printf 'domain=%s\nBEGIN tx %s\nBEGIN layout\nundo=\nDONE layout\n' "${dom}" "${dom}" > "${dir}/20260101-000001.log"
 cmd_site_new "${dom}" --resume --db none --yes >/dev/null
-grep -q '^COMMIT$' "${dir}/${dom}-1.log" && ok resume-commit || bad resume-commit
+grep -q '^COMMIT$' "${dir}/20260101-000001.log" && ok resume-commit || bad resume-commit
+
+# C2: journal my.test-old.pl nie trafia do my.test
+mkdir -p "$(hm_tx_journal_domain_dir "my.test-old.pl")"
+printf 'domain=my.test-old.pl\nBEGIN tx my.test-old.pl\nundo=rm -rf %s/victim\n' "${root}" \
+  > "$(hm_tx_journal_domain_dir "my.test-old.pl")/20260101-000002.log"
+mkdir -p "${root}/victim"
+if hm_tx_latest_open "my.test" >/dev/null 2>&1; then
+  bad journal-prefix
+else
+  ok journal-prefix
+fi
+# Legacy flat: dokładne dopasowanie nazwy, nie prefiks
+printf 'domain=my.test-old.pl\nBEGIN tx my.test-old.pl\n' > "${HM_SITE_JOURNAL_DIR}/my.test-old.pl-20260101000003.log"
+printf 'domain=my.test\nBEGIN tx my.test\nundo=\n' > "${HM_SITE_JOURNAL_DIR}/my.test-20260101000004.log"
+got="$(hm_tx_latest_open my.test || true)"
+[[ "${got}" == *"/my.test-20260101000004.log" ]] && ok journal-legacy-exact || bad journal-legacy-exact
 
 # YAML bez parsera
 printf 'preset: spa\n' > "${root}/p.yml"
@@ -142,12 +158,10 @@ hm_site_db_provision() { return 0; }
 mkdir -p "${root}/safe"
 hm_tx_begin evil.example
 printf 'undo=rm -rf %s; echo PWNED\n' "${root}/safe" >> "${HM_TX_JOURNAL}"
-if hm_tx_rollback evil.example >/dev/null 2>&1; then
-  bad undo-meta
-else
-  ok undo-meta
-fi
+# Odrzucone undo nie przerywa rollbacku — katalog zostaje, ROLLBACK zapisany.
+hm_tx_rollback evil.example >/dev/null 2>&1 || true
 [[ -d "${root}/safe" ]] && ok undo-meta-kept || bad undo-meta-kept
+grep -q '^ROLLBACK$' "$(hm_tx_journal_domain_dir evil.example)"/*.log && ok undo-meta-cont || bad undo-meta-cont
 
 mysql_log="${root}/mysql.log"
 : > "${mysql_log}"
@@ -171,13 +185,39 @@ hm_site_php_provision() { return 1; }
 if cmd_site_new phpfail.example --php 8.4 --db none --yes >/dev/null 2>&1; then
   bad php-rollback
 else
-  grep -q '^ROLLBACK$' "${HM_SITE_JOURNAL_DIR}"/phpfail.example-*.log && ok php-rollback || bad php-rollback
+  grep -q '^ROLLBACK$' "$(hm_tx_journal_domain_dir phpfail.example)"/*.log && ok php-rollback || bad php-rollback
 fi
 hm_site_web_provision() { return 1; }
 if cmd_site_new webfail.example --webserver nginx --db none --yes >/dev/null 2>&1; then
   bad web-rollback
 else
-  grep -q '^ROLLBACK$' "${HM_SITE_JOURNAL_DIR}"/webfail.example-*.log && ok web-rollback || bad web-rollback
+  grep -q '^ROLLBACK$' "$(hm_tx_journal_domain_dir webfail.example)"/*.log && ok web-rollback || bad web-rollback
 fi
+
+# userdel jako kind\\tuser przechodzi undo_ok (wcześniej odrzucane → user zostawał)
+hm_tx_undo_ok "$(printf 'userdel\tkrtest')" && ok undo-userdel-tab || bad undo-userdel-tab
+hm_tx_undo_ok "$(printf 'port-release\tnd.test')" && ok undo-port-tab || bad undo-port-tab
+
+# Rollback kontynuuje po odrzuconym undo i czyści resources
+mkdir -p "${HM_SITE_MANIFEST_DIR}"
+printf '{"kind":"vhost","path":"/tmp/x","shared":false}\n' > "${HM_SITE_MANIFEST_DIR}/nd.test.resources.ndjson"
+# shellcheck disable=SC1091
+source lib/site/lifecycle.sh
+hm_tx_begin nd.test
+hm_tx_note_undo "$(printf 'rm -rf %s/safe; echo PWNED' "${root}")"
+hm_tx_note_undo "$(printf 'port-release\tnd.test')"
+hm_tx_unlock
+HM_TX_JOURNAL=""
+hm_site_web_port_write() { :; }
+hm_site_web_port_release() { printf 'released:%s\n' "$1" >> "${root}/ports-released.log"; }
+hm_tx_rollback nd.test >/dev/null 2>&1 || true
+[[ ! -s "${HM_SITE_MANIFEST_DIR}/nd.test.resources.ndjson" ]] && ok resources-cleared || bad resources-cleared
+grep -q 'released:nd.test' "${root}/ports-released.log" && ok port-released || bad port-released
+
+# runtime.version w manifeście
+HM_SITE_RUNTIME_VERSION="8.4"
+path="$(hm_site_manifest_write ver.example appuser php nginx "${root}/homes/ver.example/shared/.env" www)"
+grep -q '"version":"8.4"' "${path}" && ok manifest-runtime-ver || bad manifest-runtime-ver
+unset HM_SITE_RUNTIME_VERSION
 
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

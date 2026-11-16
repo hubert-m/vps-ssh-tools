@@ -8,7 +8,7 @@ Alias: `new-site` (to samo co `site new`). `site create` zostaje osobną, krótk
 
 Kolejność prac: silnik kreatora, manifest i journal, preflight z użytkownikiem, vhost, PHP, Node, bazy i `.env`, Python, .NET, deploy z `releases/current`, operacje (cron, workery, logi, health, firewall), cykl życia wg manifestu, statyczna/SPA i Docker, testy z dokumentacją.
 
-MVP to preflight, manifest, vhost OLS i nginx, PHP, Node, MySQL/MariaDB z `.env` oraz testy tych części. SSL w MVP idzie przez istniejące `ssl issue`. Python, .NET, Docker, releases, workery i usuwanie wg manifestu są drugą fazą.
+MVP to preflight, manifest, vhost OLS i nginx, PHP, Node, MySQL/MariaDB z `.env` oraz testy tych części. SSL w MVP przy `--ssl`: `hm_site_web_ssl` woła acme webroot albo certbot (ten sam tor co `ssl issue`); przy braku narzędzia ostrzega i zostawia HTTP. Python, .NET, Docker, releases, workery i usuwanie wg manifestu są drugą fazą.
 
 Domyślne w kodzie, dopóki decyzje nie zostaną zmienione: Python przez `uv`, .NET przez `microsoft-repo` (mieszany feed Ubuntu jest odrzucany), układ releases tylko z `--releases`.
 
@@ -37,6 +37,7 @@ Drugie uruchomienie na istniejący manifest nic nie dopisuje. `--resume` pomija 
 | `--dotnet`, `--dotnet-kind`, `--dotnet-source`, `--app-dll` | Kanał .NET i plik DLL dla Kestrela |
 | `--releases` | Katalogi `releases/` i symlink `current` |
 | `--webserver nginx\|apache\|ols`, `--proxy-port` | Vhost |
+| `--ssl` | Certyfikat (acme webroot / certbot; OLS przez `hm_sc_issue_ssl`) |
 | `--preset` | laravel, wordpress, next, django, aspnet, spa, static |
 | `--from plik`, `--save-profile plik` | Profil JSON albo YAML |
 | `--user`, `--shell nologin\|bash` | Konto systemowe |
@@ -58,7 +59,7 @@ Profil nie może zawierać hasła. Zapis `--save-profile` trzyma tylko preset, r
 
 ## Manifest
 
-Manifest i lista zasobów: `/etc/hmtools/sites/<domena>.json` oraz `<domena>.resources.ndjson` (katalog 0700, plik 0600). Stan kreatora (health, cron, proxy): `/var/lib/hmtools/sites/<domena>/`. Journal: `/var/lib/hmtools/journal` (albo `HM_SITE_JOURNAL_DIR`). Katalog domowy usera nie jest źródłem planu `webs delete`.
+Manifest i lista zasobów: `/etc/hmtools/sites/<domena>.json` oraz `<domena>.resources.ndjson` (katalog 0700, plik 0600). Stan kreatora (health, cron, proxy): `/var/lib/hmtools/sites/<domena>/`. Journal: `/var/lib/hmtools/journal/<domena>/<stamp>.log` (albo `HM_SITE_JOURNAL_DIR`; nagłówek `domain=`). Kopie przed nadpisaniem: `/var/lib/hmtools/backup/<domena>/`. Istniejący vhost/pula bez `--adopt` = odmowa. Katalog domowy usera nie jest źródłem planu `webs delete`.
 
 Pola: `schema`, `domain`, `aliases`, `user`, `webserver`, `runtime.type` / `version` / `manager`, `databases` (typ, nazwa, user, host, port — bez hasła), `env_file`, `ssl`, `created_by`, `created_at`, `hmtools_version`.
 

@@ -151,6 +151,7 @@ fi
 printf '\n# keep\n' >> "${pa}"
 HM_SITE_PHP_FPM_TEST=fail
 HM_SITE_PHP_HARDEN=1
+HM_SITE_WEB_ADOPT=1
 if hm_site_php_write_pool a.example.pl 8.4 shop "${home_a}" fpm >/dev/null 2>&1; then
   bad "fpm-test-fail"
 else
@@ -161,7 +162,7 @@ if grep -q '# keep' "${pa}" && ! grep -q 'disable_functions' "${pa}"; then
 else
   bad "fpm-rollback"
 fi
-unset HM_SITE_PHP_FPM_TEST
+unset HM_SITE_PHP_FPM_TEST HM_SITE_WEB_ADOPT
 HM_SITE_PHP_HARDEN=0
 
 extf="$(hm_site_php_write_pool c.example.pl 8.4 shop "${HM_SITE_HOME_BASE}/c.example.pl" lsphp)"

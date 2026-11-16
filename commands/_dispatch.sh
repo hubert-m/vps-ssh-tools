@@ -42,17 +42,21 @@ hm_site_try_dispatch() {
       return 0
       ;;
     ssl)
-      if [[ "${1:-}" == "renew" || "${1:-}" == "renewal" || "${1:-}" == "issue" ]]; then
-        shift || true
-        _hm_site_hit cmd_renew_ssl "${1:-${HM_SITE_DOMAIN}}"
+      # Podkomendy (issue/renew/diagnose/…) → globalny cmd_ssl.
+      # Samo „ssl” w kontekście strony → szczegóły certu.
+      if [[ -n "${1:-}" ]]; then
+        _hm_site_hit cmd_ssl "$@"
         return $?
       fi
       if declare -F cmd_site_ssl >/dev/null 2>&1; then
         _hm_site_hit cmd_site_ssl
         return $?
       fi
+      _hm_site_hit cmd_ssl
+      return $?
       ;;
     renew-ssl|ssl-renew)
+      # Alias historyczny → ssl renew
       _hm_site_hit cmd_renew_ssl "${1:-${HM_SITE_DOMAIN}}"
       return $?
       ;;

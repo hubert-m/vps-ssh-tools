@@ -124,7 +124,7 @@ hm_print_site_ssl() {
   cert="$(hm_ssl_paths_for_domain "${domain}" 2>/dev/null || true)"
   if [[ -z "${cert}" ]]; then
     hm_err "BRAK CERTYFIKATU SSL dla ${domain}."
-    hm_info "Wystaw: ssl issue ${domain}   |   Odnów: renew-ssl ${domain}   |   Diagnoza: ssl diagnose ${domain}"
+    hm_info "Wystaw: ssl issue ${domain}   |   Odnów: ssl renew ${domain}   |   Diagnoza: ssl diagnose ${domain}"
     return 0
   fi
   status="$(hm_ssl_status "${cert}")"
@@ -143,7 +143,7 @@ hm_print_site_ssl() {
         hm_err "  CERTYFIKAT WYGASŁ (${ago} dni temu)"
       fi
       hm_err "  Domena: ${domain}"
-      hm_err "  Odnów:  renew-ssl   lub   ssl renew"
+      hm_err "  Odnów:  ssl renew ${domain}"
       hm_err "════════════════════════════════════════════"
       echo
       ;;
@@ -159,9 +159,9 @@ hm_print_site_ssl() {
     soon)
       echo
       if [[ "${days}" == "1" ]]; then
-        hm_warn "Certyfikat wygasa za 1 dzień — rozważ: renew-ssl"
+        hm_warn "Certyfikat wygasa za 1 dzień — rozważ: ssl renew ${domain}"
       else
-        hm_warn "Certyfikat wygasa za ${days} dni — rozważ: renew-ssl"
+        hm_warn "Certyfikat wygasa za ${days} dni — rozważ: ssl renew ${domain}"
       fi
       echo
       ;;

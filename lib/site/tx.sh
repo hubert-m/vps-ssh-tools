@@ -74,6 +74,30 @@ hm_tx_lock_path() {
   printf '%s/site-%s.lock' "${HM_SITE_LOCK_DIR:-/run/hmtools}" "${1:-}"
 }
 
+hm_site_backup_dir() {
+  local base="${HM_SITE_BACKUP_DIR:-}"
+  if [[ -z "${base}" && "${HMTOOLS_TEST:-}" == "1" ]]; then
+    base="${TMPDIR:-/tmp}/hmtools-site-backup"
+  fi
+  [[ -n "${base}" ]] || base="/var/lib/hmtools/backup"
+  printf '%s/%s' "${base}" "${1:-}"
+}
+
+# Kopia pliku przed nadpisaniem (nie kasować po sukcesie — undo przywraca).
+hm_site_file_backup() {
+  local domain="$1" src="$2" dir dest
+  [[ -f "${src}" ]] || return 1
+  dir="$(hm_site_backup_dir "${domain}")"
+  mkdir -p "${dir}"
+  chmod 0700 "${dir}" 2>/dev/null || true
+  dest="${dir}/$(basename "${src}").hmbak"
+  cp -a -- "${src}" "${dest}"
+  chmod 0600 "${dest}" 2>/dev/null || true
+  # Kompatybilność: obok pliku też .hmbak (undo_vhost/fpm).
+  cp -a -- "${src}" "${src}.hmbak" 2>/dev/null || true
+  printf '%s' "${dest}"
+}
+
 hm_site_json_escape() {
   local s="${1:-}"
   s="${s//\\/\\\\}"
@@ -81,9 +105,30 @@ hm_site_json_escape() {
   printf '%s' "${s}"
 }
 
+# flock -n na FD gdy dostępne; inaczej PID + kill -0 (testy / platformy bez flock).
 hm_tx_acquire() {
-  local path="$1" what="$2" pid=""
+  local path="$1" what="$2" pid="" fd
   mkdir -p "$(dirname "${path}")"
+  if [[ "${path}" == "${HM_TX_LOCK:-}" ]]; then
+    [[ -n "${HM_TX_LOCK_FD:-}" || -f "${path}" ]] && return 0
+  fi
+  # Zwolnij poprzedni lock tego procesu (np. site → pkg).
+  if [[ -n "${HM_TX_LOCK:-}" && "${HM_TX_LOCK}" != "${path}" ]]; then
+    hm_tx_unlock
+  fi
+  if command -v flock >/dev/null 2>&1; then
+    exec {fd}>>"${path}" || return 1
+    if ! flock -n "${fd}"; then
+      eval "exec ${fd}>&-" 2>/dev/null || true
+      hm_err "Lock: ${what} jest już w trakcie."
+      return 1
+    fi
+    printf '%s\n' "$$" > "${path}"
+    chmod 0600 "${path}" 2>/dev/null || true
+    HM_TX_LOCK="${path}"
+    HM_TX_LOCK_FD="${fd}"
+    return 0
+  fi
   if [[ -f "${path}" ]]; then
     pid="$(head -1 "${path}" 2>/dev/null || true)"
     if [[ "${pid}" == "$$" && "${HM_TX_LOCK:-}" == "${path}" ]]; then
@@ -97,6 +142,7 @@ hm_tx_acquire() {
   printf '%s\n' "$$" > "${path}"
   chmod 0600 "${path}" 2>/dev/null || true
   HM_TX_LOCK="${path}"
+  HM_TX_LOCK_FD=""
 }
 
 hm_tx_lock() {
@@ -108,31 +154,82 @@ hm_tx_pkg_lock() {
 }
 
 hm_tx_unlock() {
+  if [[ -n "${HM_TX_LOCK_FD:-}" ]]; then
+    flock -u "${HM_TX_LOCK_FD}" 2>/dev/null || true
+    eval "exec ${HM_TX_LOCK_FD}>&-" 2>/dev/null || true
+  fi
   [[ -n "${HM_TX_LOCK:-}" && -f "${HM_TX_LOCK}" ]] && rm -f "${HM_TX_LOCK}"
   HM_TX_LOCK=""
+  HM_TX_LOCK_FD=""
+}
+
+# Journal per domena: …/journal/<domena>/<stamp>.log (bez kolizji prefiksu).
+hm_tx_journal_domain_dir() {
+  printf '%s/%s' "$(hm_site_journal_dir)" "${1:-}"
+}
+
+hm_tx_journal_stamp_ok() {
+  local base="$1"
+  [[ "${base}" =~ ^[0-9]{8}-?[0-9]{6}\.log$ || "${base}" =~ ^[0-9]{14}\.log$ || "${base}" =~ ^[0-9]+\.log$ ]]
+}
+
+hm_tx_journal_domain_matches() {
+  local file="$1" domain="$2" line hdr
+  [[ -f "${file}" ]] || return 1
+  line="$(head -1 "${file}" 2>/dev/null || true)"
+  case "${line}" in
+    "BEGIN tx ${domain}") return 0 ;;
+    domain="${domain}") return 0 ;;
+  esac
+  hdr="$(grep -m1 '^domain=' "${file}" 2>/dev/null || true)"
+  [[ "${hdr}" == "domain=${domain}" ]]
 }
 
 hm_tx_journal_open() {
   local domain="$1" dir stamp
-  dir="$(hm_site_journal_dir)"
+  dir="$(hm_tx_journal_domain_dir "${domain}")"
   mkdir -p "${dir}"
-  chmod 0700 "${dir}" 2>/dev/null || true
-  stamp="$(date +%Y%m%d%H%M%S)"
-  HM_TX_JOURNAL="${dir}/${domain}-${stamp}.log"
-  : > "${HM_TX_JOURNAL}"
+  chmod 0700 "$(hm_site_journal_dir)" "${dir}" 2>/dev/null || true
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  HM_TX_JOURNAL="${dir}/${stamp}.log"
+  {
+    printf 'domain=%s\n' "${domain}"
+    printf 'BEGIN tx %s\n' "${domain}"
+  } > "${HM_TX_JOURNAL}"
   chmod 0600 "${HM_TX_JOURNAL}" 2>/dev/null || true
 }
 
 hm_tx_latest_open() {
-  local domain="$1" dir f latest=""
-  dir="$(hm_site_journal_dir)"
-  [[ -d "${dir}" ]] || return 1
-  for f in "${dir}/${domain}-"*.log; do
-    [[ -f "${f}" ]] || continue
-    grep -q '^COMMIT$' "${f}" && continue
-    grep -q '^ROLLBACK$' "${f}" && continue
-    latest="${f}"
-  done
+  local domain="$1" dir f latest="" base legacy
+  dir="$(hm_tx_journal_domain_dir "${domain}")"
+  if [[ -d "${dir}" ]]; then
+    for f in "${dir}"/*.log; do
+      [[ -f "${f}" ]] || continue
+      base="$(basename "${f}")"
+      hm_tx_journal_stamp_ok "${base}" || continue
+      hm_tx_journal_domain_matches "${f}" "${domain}" || continue
+      grep -q '^COMMIT$' "${f}" && continue
+      grep -q '^ROLLBACK$' "${f}" && continue
+      latest="${f}"
+    done
+  fi
+  # Legacy: …/journal/<domena>-<stamp>.log z dokładnym dopasowaniem (bez my.test vs my.test-old.pl).
+  if [[ -z "${latest}" ]]; then
+    dir="$(hm_site_journal_dir)"
+    if [[ -d "${dir}" ]]; then
+      for f in "${dir}/${domain}-"*.log; do
+        [[ -f "${f}" ]] || continue
+        legacy="$(basename "${f}")"
+        [[ "${legacy}" == "${domain}-"* ]] || continue
+        base="${legacy#"${domain}-"}"
+        hm_tx_journal_stamp_ok "${base}" || continue
+        hm_tx_journal_domain_matches "${f}" "${domain}" || continue
+        grep -q '^COMMIT$' "${f}" && continue
+        grep -q '^ROLLBACK$' "${f}" && continue
+        latest="${f}"
+      done
+    fi
+  fi
   [[ -n "${latest}" ]] || return 1
   HM_TX_JOURNAL="${latest}"
   printf '%s' "${latest}"
@@ -142,7 +239,6 @@ hm_tx_begin() {
   local domain="$1"
   hm_tx_lock "${domain}" || return 1
   hm_tx_journal_open "${domain}"
-  printf 'BEGIN tx %s\n' "${domain}" >> "${HM_TX_JOURNAL}"
   HM_TX_DOMAIN="${domain}"
 }
 
@@ -187,7 +283,9 @@ hm_tx_undo_ok() {
   if [[ "${spec}" == *$'\t'* ]]; then
     kind="${spec%%$'\t'*}"
     case "${kind}" in
-      mysql-drop-db|mysql-drop-user|pg-drop|systemd-unit|nginx-vhost|fpm-pool) return 0 ;;
+      mysql-drop-db|mysql-drop-user|pg-drop|systemd-unit|nginx-vhost|fpm-pool|port-release|userdel|resource-clear)
+        return 0
+        ;;
     esac
     return 1
   fi
@@ -245,8 +343,19 @@ hm_tx_undo_systemd() {
   rm -f -- "${path}"
 }
 
+hm_tx_find_bak() {
+  local path="$1" domain="${2:-}" bak candidate
+  bak="${path}.hmbak"
+  [[ -f "${bak}" ]] && { printf '%s' "${bak}"; return 0; }
+  if [[ -n "${domain}" ]]; then
+    candidate="$(hm_site_backup_dir "${domain}")/$(basename "${path}").hmbak"
+    [[ -f "${candidate}" ]] && { printf '%s' "${candidate}"; return 0; }
+  fi
+  return 1
+}
+
 hm_tx_undo_vhost() {
-  local path="$1" bak="${1}.hmbak"
+  local path="$1" domain="${HM_TX_DOMAIN:-}" bak=""
   case "${path}" in
     /etc/nginx/sites-available/*|/etc/nginx/sites-enabled/*|/etc/nginx/conf.d/*)
       ;;
@@ -256,20 +365,31 @@ hm_tx_undo_vhost() {
       ;;
     *) return 1 ;;
   esac
+  bak="$(hm_tx_find_bak "${path}" "${domain}" 2>/dev/null || true)"
   if [[ -L "${path}" ]]; then
+    # Link sites-enabled: przywróć poprzedni target z .hmbak jeśli był plikiem z treścią.
+    if [[ -f "${bak}" ]]; then
+      local prev
+      prev="$(tr -d '[:space:]' < "${bak}" 2>/dev/null || true)"
+      if [[ -n "${prev}" && -e "${prev}" ]]; then
+        ln -sfn "${prev}" "${path}"
+        return 0
+      fi
+    fi
     rm -f -- "${path}"
-  elif [[ -f "${bak}" ]]; then
-    mv -f -- "${bak}" "${path}"
+  elif [[ -n "${bak}" && -f "${bak}" ]]; then
+    cp -a -- "${bak}" "${path}"
   else
     rm -f -- "${path}"
   fi
 }
 
 hm_tx_undo_fpm() {
-  local path="$1" bak="${1}.hmbak" ver=""
+  local path="$1" domain="${HM_TX_DOMAIN:-}" bak="" ver=""
   [[ "${path}" == *pool.d/*.conf || "${path}" == */fpm.conf ]] || return 1
-  if [[ -f "${bak}" ]]; then
-    mv -f -- "${bak}" "${path}"
+  bak="$(hm_tx_find_bak "${path}" "${domain}" 2>/dev/null || true)"
+  if [[ -n "${bak}" && -f "${bak}" ]]; then
+    cp -a -- "${bak}" "${path}"
   else
     rm -f -- "${path}"
   fi
@@ -322,6 +442,11 @@ hm_tx_undo_dispatch() {
         hm_site_web_port_release "${a}"
       fi
       ;;
+    resource-clear)
+      if declare -F hm_site_resource_clear >/dev/null 2>&1; then
+        hm_site_resource_clear "${a}"
+      fi
+      ;;
     userdel)
       hm_tx_undo_legacy "userdel ${a}"
       ;;
@@ -330,31 +455,60 @@ hm_tx_undo_dispatch() {
 }
 
 hm_tx_rollback() {
-  local domain="$1" journal line undo
+  local domain="$1" journal line undo failed=0
+  local -a failed_undos=()
+  HM_TX_DOMAIN="${domain}"
   journal="$(hm_tx_latest_open "${domain}" || true)"
   [[ -n "${journal}" && -f "${journal}" ]] || { hm_err "Brak otwartego journala dla ${domain}."; return 1; }
+  if ! hm_tx_journal_domain_matches "${journal}" "${domain}"; then
+    hm_err "Journal nie należy do domeny ${domain}: ${journal}"
+    return 1
+  fi
   local -a undos=()
   while IFS= read -r line || [[ -n "${line}" ]]; do
     [[ "${line}" == undo=* ]] || continue
     undo="${line#undo=}"
     [[ -n "${undo}" ]] && undos+=("${undo}")
   done < "${journal}"
+  # Zawsze zwolnij port i wyczyść resources — nawet gdy nie było w journalu.
+  undos+=("$(printf 'port-release\t%s' "${domain}")")
+  undos+=("$(printf 'resource-clear\t%s' "${domain}")")
   local i
   for ((i = ${#undos[@]} - 1; i >= 0; i--)); do
     undo="${undos[$i]}"
-    hm_tx_undo_ok "${undo}" || { hm_err "Odrzucono undo: ${undo}"; return 1; }
-    hm_tx_undo_dispatch "${undo}" || hm_warn "undo nieudane: ${undo}"
+    if ! hm_tx_undo_ok "${undo}"; then
+      hm_warn "Odrzucono undo (kontynuuję): ${undo}"
+      failed=1
+      failed_undos+=("${undo}")
+      continue
+    fi
+    if ! hm_tx_undo_dispatch "${undo}"; then
+      hm_warn "undo nieudane (kontynuuję): ${undo}"
+      failed=1
+      failed_undos+=("${undo}")
+    fi
   done
   printf 'ROLLBACK\n' >> "${journal}"
   hm_tx_unlock
-  hm_ok "Cofnięto niedokończone wdrożenie ${domain}."
+  if [[ "${failed}" -eq 1 ]]; then
+    hm_warn "Cofnięto ${domain} z błędami (${#failed_undos[@]} undo): ${failed_undos[*]}"
+  else
+    hm_ok "Cofnięto niedokończone wdrożenie ${domain}."
+  fi
+  return 0
 }
 
 hm_tx_resume() {
   local domain="$1"
   hm_tx_lock "${domain}" || return 1
   hm_tx_latest_open "${domain}" >/dev/null || { hm_tx_unlock; hm_err "Brak czego wznawiać."; return 1; }
+  if ! hm_tx_journal_domain_matches "${HM_TX_JOURNAL}" "${domain}"; then
+    hm_tx_unlock
+    hm_err "Journal nie należy do domeny ${domain}."
+    return 1
+  fi
   HM_TX_DOMAIN="${domain}"
+  HM_SITE_RESUME=1
   hm_info "Wznawiam ${domain} od ostatniego DONE."
 }
 
@@ -377,7 +531,7 @@ hm_site_manifest_record_db() {
 
 hm_site_manifest_write() {
   local domain="$1" user="$2" runtime="$3" web="${4:-}" envpath="$5" aliases="${6:-www}"
-  local dir path tmp dbs="[]" line typ name dbuser host port first=1 ver
+  local dir path tmp dbs="[]" line typ name dbuser host port first=1 ver rver mgr
   dir="$(hm_site_manifest_dir)"
   mkdir -p "${dir}"
   chmod 0700 "${dir}" 2>/dev/null || true
@@ -396,12 +550,14 @@ hm_site_manifest_write() {
     done < "${dbfile}"
     dbs+="]"
   fi
-  ver="v0.1.12"
+  ver="v0.1.13"
   [[ -f "${HMTOOLS_ROOT:-}/VERSION" ]] && ver="$(tr -d '[:space:]' < "${HMTOOLS_ROOT}/VERSION")"
+  rver="${HM_SITE_RUNTIME_VERSION:-}"
+  mgr="${HM_SITE_RUNTIME_MANAGER:-}"
   tmp="$(mktemp "${dir}/.${domain}.XXXXXX")"
   chmod 0600 "${tmp}" 2>/dev/null || true
   cat > "${tmp}" <<EOF
-{"schema":1,"domain":"$(hm_site_json_escape "${domain}")","aliases":["$(hm_site_json_escape "${aliases}")"],"user":"$(hm_site_json_escape "${user}")","webserver":"$(hm_site_json_escape "${web}")","runtime":{"type":"$(hm_site_json_escape "${runtime}")","version":"","manager":""},"databases":${dbs},"env_file":"$(hm_site_json_escape "${envpath}")","ssl":false,"created_by":"site new","created_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","hmtools_version":"${ver}"}
+{"schema":1,"domain":"$(hm_site_json_escape "${domain}")","aliases":["$(hm_site_json_escape "${aliases}")"],"user":"$(hm_site_json_escape "${user}")","webserver":"$(hm_site_json_escape "${web}")","runtime":{"type":"$(hm_site_json_escape "${runtime}")","version":"$(hm_site_json_escape "${rver}")","manager":"$(hm_site_json_escape "${mgr}")"},"databases":${dbs},"env_file":"$(hm_site_json_escape "${envpath}")","ssl":false,"created_by":"site new","created_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","hmtools_version":"${ver}"}
 EOF
   if hm_have_cmd jq; then
     jq -e . "${tmp}" >/dev/null || { rm -f "${tmp}"; hm_err "Manifest nie jest JSON."; return 1; }

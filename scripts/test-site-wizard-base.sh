@@ -49,11 +49,18 @@ EOF
 # shellcheck disable=SC1091
 source lib/site/env.sh
 # shellcheck disable=SC1091
+source lib/site/tx.sh
+# shellcheck disable=SC1091
 source lib/site/base.sh
 # shellcheck disable=SC1091
 source lib/site/db.sh
 # shellcheck disable=SC1091
 source commands/site-create/wizard-db.sh
+export HM_SITE_MANIFEST_DIR="${root}/manifest"
+export HM_SITE_JOURNAL_DIR="${root}/journal"
+export HM_SITE_LOCK_DIR="${root}/locks"
+export HM_SITE_BACKUP_DIR="${root}/backup"
+mkdir -p "${HM_SITE_MANIFEST_DIR}" "${HM_SITE_JOURNAL_DIR}" "${HM_SITE_LOCK_DIR}" "${HM_SITE_BACKUP_DIR}"
 
 pre="$(hm_site_base_preflight node 2>&1 || true)"
 printf '%s\n' "${pre}" | grep -q $'OS\tdebian 12\tOK' && ok "preflight-os" || { bad "preflight-os"; printf '%s\n' "${pre}" >&2; }
@@ -86,10 +93,11 @@ fi
 rm -rf "${HM_SITE_HOME_BASE}/taken.example.pl"
 
 printf 'shop:x:1:1::/home/shop:/usr/sbin/nologin\n' > "${HM_SITE_PASSWD_FILE}"
+# Istniejący user = tryb shared (bez błędu); katalog domeny jeszcze nie powstaje w check.
 if hm_site_base_check shop.example.pl shop nologin "" "" >/dev/null 2>&1; then
-  bad "collision-user"
+  ok "collision-user-shared"
 else
-  ok "collision-user"
+  bad "collision-user-shared"
 fi
 [[ ! -d "${HM_SITE_HOME_BASE}/shop.example.pl" ]] && ok "collision-user-nodir" || bad "collision-user-nodir"
 : > "${HM_SITE_PASSWD_FILE}"

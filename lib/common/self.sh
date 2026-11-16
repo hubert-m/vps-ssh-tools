@@ -70,6 +70,7 @@ hm_help_global() {
     fi
     # narzędzia globalne dostępne też w kontekście (dispatch), bez aliasów SITE_ENTRY
     site_cmds+=(php backup cron pm2 htaccess proxy renew-ssl delete-site archive supervisor help exit)
+    # renew-ssl = alias ssl renew (lista skrócona w restricted)
     # paste -sd ', ' traktuje spację i przecinek jako OSOBNE separatory — użyj samego przecinka
     echo "  $(printf '%s\n' "${site_cmds[@]}" | sort -u | paste -sd, - | sed 's/,/, /g')"
     echo

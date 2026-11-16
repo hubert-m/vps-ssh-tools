@@ -262,6 +262,12 @@ hm_site_db_ensure_redis() {
 hm_site_mysql_provision() {
   local domain="$1" dbname="$2" dbuser="$3"
   local prev="${HM_MYSQL_CREATE_QUIET:-}"
+  # Resume / ponowny krok: baza już jest → pomijam (idempotencja), bez nowego undo.
+  if declare -F hm_mysql_db_exists >/dev/null 2>&1 && hm_mysql_db_exists "${dbname}"; then
+    hm_info "pomijam — już jest (mysql ${dbname})"
+    hm_site_manifest_add_db "${domain}" mysql "${dbname}" "${dbuser}" "127.0.0.1" "3306" || true
+    return 0
+  fi
   HM_MYSQL_CREATE_QUIET=1
   HM_MYSQL_CREATE_PASS=""
   if ! hm_mysql_create "${dbname}" "${dbuser}" quiet; then
@@ -303,8 +309,9 @@ hm_site_sqlite_provision() {
   mkdir -p "$(dirname "${path}")"
   chmod 0750 "$(dirname "${path}")" || true
   if [[ -e "${path}" ]]; then
-    hm_err "SQLite już istnieje: ${path}"
-    return 1
+    hm_info "pomijam — już jest (sqlite ${path})"
+    printf '%s' "${path}"
+    return 0
   fi
   ( umask 077; : > "${path}"; )
   chmod 0600 "${path}"

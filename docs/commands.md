@@ -62,10 +62,11 @@
 | `disk` [`--drive`] [`--inodes`] [`--home`] [`--heavy` [`--count N`] [`--deep N`]] | `df` / inody / top `/home`; `--heavy` — rekurencyjnie najcięższe pliki/katalogi od `/` (domyślnie count=3, deep=5) |
 | `ols …` | OLS: `status`/`reload`/`restart`/`log`, `stats`/`top`, `htaccess`, `cache`, `proxy`, `admin`, `vhost` |
 | `ssl` | Certyfikaty SSL (status / dni; WYGASŁ i SELF-SIGNED na czerwono) |
-| `ssl issue [domena]` | Wydaj Let's Encrypt (HTTP-01) z pre-check DNS/HTTP; `--with-www` / `--aliases`; `--wildcard --dns pdns\|cloudflare` |
-| `ssl hostname` / `ssl mail` / `ssl diagnose` | Hostname panelu, poczta, diagnoza ACME |
+| `ssl issue [domena]` | Pierwsze wystawienie LE albo zamiana self-signed (HTTP-01 + pre-check; `--with-www` / `--aliases`; `--wildcard --dns pdns\|cloudflare`) |
+| `ssl renew [domena]` | Odnowienie istniejącego LE (cyberpanel → acme.sh → certbot); alias: `renew-ssl` |
+| `ssl diagnose [domena]` | Ostatni błąd ACME → czytelna przyczyna |
+| `ssl hostname` / `ssl mail` | Hostname panelu / poczta (mailServerSSL) |
 | `ssl acme-update [--yes]` | Odśwież klienta acme.sh i ustaw domyślne CA na Let's Encrypt |
-| `renew-ssl [domena]` | Odnów Let's Encrypt (z potwierdzeniem) |
 | `mysql` / `dbs` | Lista baz; `heavy [--min-size X]` (bazy/tabele ≥ X, domyślnie 1G); `dump`/`dump-local`/`import`/`cli`/`top`/`optimize`/`create` |
 | `cron` / `crons` | Crony systemowe / users / strony; `cron edit`; `cron monitor` i `cron-run` |
 | `config track` / `log` / `diff` / `rollback` | Lokalne repo konfiguracji, bez sekretów i bez pusha |
@@ -133,8 +134,9 @@ Serie: `hmtools_backup_age_seconds`, `hmtools_cert_days_left`, `hmtools_service_
 | `size` | Rozmiary katalogów + top `du` |
 | `dbs` | Bazy (CyberPanel confirmed + heurystyka); też `dbs cli` itd. |
 | `ssl` | Certyfikat; WYGASŁ / SELF-SIGNED → czerwony alert |
-| `ssl issue` / `acme-update` / `diagnose` | Wydanie LE / odświeżenie acme.sh / diagnostyka ACME |
-| `renew-ssl` | Odnów Let's Encrypt dla strony |
+| `ssl issue` / `ssl renew` / `ssl diagnose [domena]` | Wydanie LE / odnowienie / diagnostyka ACME |
+| `ssl acme-update` | Odświeżenie klienta acme.sh |
+| `renew-ssl` | Alias → `ssl renew` |
 | `php` | `set` / `ext` / `ini` / `restart` / `ps` — `php help` |
 | `logs [N\|errors\|stats\|follow]` | Logi vhosta + OLS `stderr.log`; analityka / live |
 | `logs system …` / `logs clean …` | Logi systemowe (jak globalnie) |

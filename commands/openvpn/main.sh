@@ -165,9 +165,9 @@ hm_ovpn_easyrsa_version() {
 hm_ovpn_copy_crl() {
   local src dest
   src="$(hm_ovpn_pki)/crl.pem"
-  dest="$(hm_ovpn_server_dir)/crl.pem"
+  dest="$(hm_ovpn_etc)/hm/crl.pem"
   [[ -f "${src}" ]] || { hm_err "Brak ${src}"; return 1; }
-  mkdir -p "$(hm_ovpn_server_dir)"
+  mkdir -p "$(dirname "${dest}")"
   cp -f "${src}" "${dest}"
   chmod 0644 "${dest}" || true
 }
@@ -273,7 +273,7 @@ hm_ovpn_crl_update() {
 }
 
 hm_ovpn_crl_next_raw() {
-  local pem="$(hm_ovpn_server_dir)/crl.pem" out
+  local pem="$(hm_ovpn_etc)/hm/crl.pem" out
   [[ -f "${pem}" ]] || pem="$(hm_ovpn_pki)/crl.pem"
   if [[ -f "${pem}.next" ]]; then
     cat "${pem}.next"
@@ -452,10 +452,76 @@ hm_ovpn_name_client() {
 }
 
 hm_ovpn_client_exists() {
-  local name="$1" index
+  local name="$1" index line cn
   [[ -f "$(hm_ovpn_pki)/issued/${name}.crt" ]] && return 0
   index="$(hm_ovpn_pki)/index.txt"
-  [[ -f "${index}" ]] && grep -q "/CN=${name}\$" "${index}" && return 0
+  [[ -f "${index}" ]] || return 1
+  # Exact CN (grep -F), nie regex — „a.b” nie może łapać „axb”.
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    cn="${line##*$'\t'}"
+    cn="${cn##*CN=}"
+    cn="${cn%%/*}"
+    [[ "${cn}" == "${name}" ]] && return 0
+  done < "${index}"
+  return 1
+}
+
+# Walidacja --static-ip: IPv4, w SUBNET, nie .1 serwera, bez duplikatu w ccd/.
+hm_ovpn_static_ip_ok() {
+  local ip="$1" subnet mask base o1 o2 o3 o4 s1 s2 s3 s4 oct ccd f other push
+  [[ "${ip}" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || {
+    hm_err "Zły --static-ip (oczekiwany IPv4): ${ip}"
+    return 1
+  }
+  o1="${BASH_REMATCH[1]}"; o2="${BASH_REMATCH[2]}"; o3="${BASH_REMATCH[3]}"; o4="${BASH_REMATCH[4]}"
+  for oct in "${o1}" "${o2}" "${o3}" "${o4}"; do
+    [[ "${oct}" =~ ^[0-9]+$ && "${oct}" -le 255 ]] || { hm_err "Zły --static-ip: ${ip}"; return 1; }
+  done
+  subnet="$(hm_ovpn_state_value SUBNET 2>/dev/null || true)"
+  [[ -n "${subnet}" ]] || subnet="${HM_OVPN_SUBNET:-10.8.0.0/24}"
+  base="${subnet%%/*}"
+  mask="${subnet##*/}"
+  [[ "${mask}" =~ ^[0-9]+$ ]] || mask=24
+  [[ "${base}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || {
+    hm_err "Zły SUBNET w stanie: ${subnet}"
+    return 1
+  }
+  s1="${BASH_REMATCH[1]}"; s2="${BASH_REMATCH[2]}"; s3="${BASH_REMATCH[3]}"; s4="${BASH_REMATCH[4]}"
+  if [[ "${mask}" -ge 24 ]]; then
+    [[ "${o1}" == "${s1}" && "${o2}" == "${s2}" && "${o3}" == "${s3}" ]] || {
+      hm_err "--static-ip ${ip} poza podsiecią ${subnet}"
+      return 1
+    }
+  fi
+  if [[ "${o4}" -eq 0 || "${o4}" -eq 255 || "${o4}" -eq 1 ]]; then
+    hm_err "--static-ip ${ip} zarezerwowane (sieć/broadcast/serwer)."
+    return 1
+  fi
+  ccd="$(hm_ovpn_server_dir)/ccd"
+  if [[ -d "${ccd}" ]]; then
+    for f in "${ccd}"/*; do
+      [[ -f "${f}" ]] || continue
+      other="$(basename "${f}")"
+      push="$(awk '/ifconfig-push/{print $2; exit}' "${f}" 2>/dev/null || true)"
+      [[ "${push}" == "${ip}" ]] && {
+        hm_err "--static-ip ${ip} już w ccd/${other}"
+        return 1
+      }
+    done
+  fi
+  return 0
+}
+
+hm_ovpn_index_has_cn() {
+  local name="$1" index line cn
+  index="$(hm_ovpn_pki)/index.txt"
+  [[ -f "${index}" ]] || return 1
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    cn="${line##*$'\t'}"
+    cn="${cn##*CN=}"
+    cn="${cn%%/*}"
+    [[ "${cn}" == "${name}" ]] && return 0
+  done < "${index}"
   return 1
 }
 
@@ -649,6 +715,9 @@ hm_ovpn_client_add() {
     hm_err "Klient już istnieje: ${name}"
     return 1
   fi
+  if [[ -n "${static}" ]]; then
+    hm_ovpn_static_ip_ok "${static}" || return 1
+  fi
   local -a steps=("certyfikat ${name} na ${days} dni" "profil ovpn")
   [[ -n "${static}" ]] && steps+=("ccd ${static}")
   if [[ "${yes}" -eq 1 ]]; then
@@ -672,15 +741,20 @@ hm_ovpn_client_add() {
     unset EASYRSA_PASSIN EASYRSA_PASSOUT
   fi
   if [[ ! -f "$(hm_ovpn_pki)/issued/${name}.crt" ]]; then
-    mkdir -p "$(hm_ovpn_pki)/issued" "$(hm_ovpn_pki)/private"
-    printf '%s\n' '-----BEGIN CERTIFICATE-----' 'Q0VSVAo=' '-----END CERTIFICATE-----' > "$(hm_ovpn_pki)/issued/${name}.crt"
-    printf '%s\n' '-----BEGIN PRIVATE KEY-----' 'S0VZ' '-----END PRIVATE KEY-----' > "$(hm_ovpn_pki)/private/${name}.key"
+    if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+      hm_ovpn_mock_pems "${name}"
+    else
+      hm_err "easyrsa nie utworzyło certyfikatu ${name} (issued/). Brak pliku — odmowa."
+      return 1
+    fi
   fi
   local exp index
-  exp="$(date -u -d "+${days} days" '+%y%m%d%H%M%SZ')"
+  exp="$(date -u -d "+${days} days" '+%y%m%d%H%M%SZ' 2>/dev/null || date -u -v+"${days}"d '+%y%m%d%H%M%SZ' 2>/dev/null || true)"
   index="$(hm_ovpn_pki)/index.txt"
   mkdir -p "$(hm_ovpn_pki)"
-  if [[ ! -f "${index}" ]] || ! grep -q "/CN=${name}\$" "${index}"; then
+  if [[ "${HMTOOLS_TEST:-}" == "1" ]] && ! hm_ovpn_index_has_cn "${name}"; then
+    # Tylko mock: prawdziwe easyrsa samo dopisuje index.txt.
+    [[ -n "${exp}" ]] || exp="280101000000Z"
     printf 'V\t%s\t\t01\t/CN=%s\n' "${exp}" "${name}" >> "${index}"
   fi
   if [[ -n "${static}" ]]; then
@@ -711,6 +785,10 @@ hm_ovpn_client_export() {
       [[ "${line}" == V$'\t'* ]] || continue
       cn="${line##*$'\t'}"
       cn="${cn##*CN=}"
+      cn="${cn%%/*}"
+      # Pomijaj serwer/CA — nie przerywaj całej pętli (restore / export --all).
+      hm_ovpn_name_client "${cn}" || continue
+      [[ -f "$(hm_ovpn_pki)/issued/${cn}.crt" ]] || continue
       HM_OVPN_EXPORT_PRINT=0 hm_ovpn_export_one "${cn}" || return 1
     done < "$(hm_ovpn_pki)/index.txt"
     return 0

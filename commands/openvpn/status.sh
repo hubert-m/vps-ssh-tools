@@ -60,7 +60,7 @@ hm_ovpn_status() {
   printf 'klienci: %s\n' "${n}"
   printf 'uniewaznieni: %s\n' "${revoked}"
   printf 'unit: %s\n' "${HM_OVPN_ACTIVE:-nieznany}"
-  if [[ -f "$(hm_ovpn_etc)/crl.pem" ]]; then
+  if [[ -f "$(hm_ovpn_etc)/hm/crl.pem" || -f "$(hm_ovpn_etc)/crl.pem" ]]; then
     printf 'crl: jest\n'
   else
     printf 'crl: brak\n'

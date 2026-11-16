@@ -540,8 +540,8 @@ Komendy w kontekście strony:
   info      Pełne informacje o środowisku
   size      Rozmiary katalogów
   dbs       Bazy danych przypisane / wykryte
-  ssl       Certyfikat SSL; ssl issue / acme-update / diagnose
-  renew-ssl Odnów Let's Encrypt (z potwierdzeniem)
+  ssl       Certyfikat; ssl issue|renew|diagnose [domena], acme-update
+  renew-ssl Alias → ssl renew [domena]
   php       PHP strony; set/ext/ini/restart/ps — php help
   logs [N|errors|stats|follow]  Logi vhosta (+ stderr OLS)
   cron      Crony użytkownika strony (+ heurystyka w /etc)

@@ -190,6 +190,36 @@ hm_site_base_punycode() {
   return 1
 }
 
+# Istniejący vhost / link / pula FPM o nazwie domeny (bez --adopt = zajęte).
+hm_site_base_config_occupied() {
+  local domain="$1" confdir d pool
+  [[ -n "${domain}" ]] || return 1
+  if [[ "${HM_SITE_WEB_ADOPT:-0}" == "1" ]]; then
+    return 1
+  fi
+  for confdir in \
+    "${HM_SITE_WEB_CONF_DIR:-}" \
+    /etc/nginx/sites-available \
+    /etc/nginx/sites-enabled \
+    /etc/nginx/conf.d \
+    /etc/apache2/sites-available \
+    /etc/apache2/sites-enabled \
+    /etc/httpd/conf.d
+  do
+    [[ -n "${confdir}" && -d "${confdir}" ]] || continue
+    [[ -e "${confdir}/${domain}.conf" || -e "${confdir}/${domain}" ]] && return 0
+  done
+  if [[ -n "${OLS_VHOSTS:-}" && -e "${OLS_VHOSTS}/${domain}" ]]; then
+    return 0
+  fi
+  for d in /etc/php/*/fpm/pool.d /etc/opt/remi/php*/php-fpm.d; do
+    for pool in ${d}/${domain}.conf; do
+      [[ -f "${pool}" ]] && return 0
+    done
+  done
+  return 1
+}
+
 hm_site_base_occupied() {
   local domain="$1" home
   if declare -F hm_sc_domain_occupied >/dev/null 2>&1; then
@@ -197,6 +227,10 @@ hm_site_base_occupied() {
   fi
   home="$(hm_site_home "${domain}")"
   [[ -e "${home}" ]] && return 0
+  if declare -F hm_site_manifest_path >/dev/null 2>&1; then
+    [[ -f "$(hm_site_manifest_path "${domain}")" ]] && return 0
+  fi
+  hm_site_base_config_occupied "${domain}" && return 0
   return 1
 }
 
@@ -397,7 +431,9 @@ hm_site_base_apply() {
     printf 'user=%s\n' "${user}"
     printf 'preset=%s\n' "${preset}"
     printf 'runtime=%s\n' "${runtime}"
-    [[ -n "${child}" ]] && printf 'child_of=%s\n' "${child}"
+    if [[ -n "${child}" ]]; then
+      printf 'child_of=%s\n' "${child}"
+    fi
   } | hm_site_write_nofollow "${home}/.config/hmtools/site.env" || return 1
   if [[ "${HM_SITE_ALIASES:-www}" != "none" ]]; then
     printf '%s\n' "${HM_SITE_ALIASES:-www}" | hm_site_write_nofollow "${home}/.config/hmtools/aliases" || return 1

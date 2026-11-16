@@ -98,12 +98,40 @@ grep -q 'ca ' "${HM_OVPN_ETC}/hm.conf" && grep -q 'cert ' "${HM_OVPN_ETC}/hm.con
 grep -q 'openvpn --genkey secret' "${HM_OVPN_CALL_LOG}" && ok genkey || bad genkey
 grep -q 'MASQUERADE' "${HM_OVPN_UFW_RULES}" && ok nat-rule || bad nat-rule
 grep -q "PKI=${HM_OVPN_ETC}/hm/pki" "${HM_OVPN_ETC}/hmtools.state" && ok pki-path || bad pki-path
+grep -q 'crl-verify .*/hm/crl.pem' "${HM_OVPN_ETC}/hm.conf" && [[ -f "${HM_OVPN_ETC}/hm/crl.pem" ]] && ok crl-hm || bad crl-hm
+grep -q '^PREV_FORWARD=' "${HM_OVPN_ETC}/hmtools.state" && ok prev-forward || bad prev-forward
+# Reinstall z innym portem nie kasuje PKI
+before_ca="$(wc -c < "${HM_OVPN_ETC}/hm/pki/ca.crt" 2>/dev/null || echo 0)"
+if cmd_openvpn install --yes --port 1195 --proto udp --subnet 10.8.0.0/24 >"${root}/re.out" 2>"${root}/re.err"; then
+  bad reinstall-rc
+else
+  ok reinstall-rc
+fi
+grep -q 'już zainstalowany\|config set' "${root}/re.err" "${root}/re.out" && ok reinstall-msg || bad reinstall-msg
+after_ca="$(wc -c < "${HM_OVPN_ETC}/hm/pki/ca.crt" 2>/dev/null || echo 0)"
+[[ "${before_ca}" == "${after_ca}" ]] && ok reinstall-pki || bad reinstall-pki
+# --force nie rusza obcego crl.pem
+saved_etc="${HM_OVPN_ETC}"
+saved_ufw="${HM_OVPN_UFW_RULES}"
+mkdir -p "${root}/ovpn-root/server"
+printf 'port 1194\n' > "${root}/ovpn-root/server.conf"
+export HM_OVPN_ETC="${root}/ovpn-root/server"
+printf 'FOREIGN\n' > "${HM_OVPN_ETC}/crl.pem"
+: > "${HM_OVPN_SS_FILE}"
+export HM_OVPN_UFW_RULES="${root}/ufw-force/before.rules"
+mkdir -p "$(dirname "${HM_OVPN_UFW_RULES}")" "${HM_OVPN_SYSCTL_D}"
+if cmd_openvpn install --force --yes --port 1194 --endpoint vpn.force --subnet 10.10.0.0/24 >/dev/null 2>&1; then
+  [[ "$(cat "${HM_OVPN_ETC}/crl.pem")" == "FOREIGN" ]] && ok force-crl-kept || bad force-crl-kept
+  [[ -f "${HM_OVPN_ETC}/hm/crl.pem" ]] && ok force-crl-hm || bad force-crl-hm
+else
+  bad force-install
+fi
+export HM_OVPN_ETC="${saved_etc}"
+export HM_OVPN_UFW_RULES="${saved_ufw}"
 if cmd_openvpn install --yes --port 0 >"${root}/badport.out" 2>"${root}/badport.err"; then bad port-range; else ok port-range; fi
 grep -q 'Zły port' "${root}/badport.err" && ok port-msg || bad port-msg
 if cmd_openvpn install --yes --dns custom:nie-ip >"${root}/baddns.out" 2>"${root}/baddns.err"; then bad dns-rc; else ok dns-rc; fi
 
-saved_etc="${HM_OVPN_ETC}"
-saved_ufw="${HM_OVPN_UFW_RULES}"
 export HM_OVPN_ETC="${root}/etc-fail"
 export HM_OVPN_UFW_RULES="${root}/ufw-fail/before.rules"
 export HM_OVPN_SYSCTL_D="${root}/sysctl-fail"

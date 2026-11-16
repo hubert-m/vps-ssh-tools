@@ -44,6 +44,20 @@ hm_site_resource_add() {
   chmod 0600 "${file}" 2>/dev/null || true
 }
 
+# Po rollbacku: wyczyść listę zasobów domeny (bez kasowania plików systemowych).
+hm_site_resource_clear() {
+  local domain="$1" file
+  file="$(hm_site_resources_path "${domain}")"
+  [[ -f "${file}" ]] || return 0
+  if declare -F hm_site_path_has_symlink >/dev/null 2>&1 \
+    && { hm_site_path_has_symlink "${file}" || hm_site_path_has_symlink "$(dirname "${file}")"; }; then
+    hm_err "Odmowa czyszczenia resources przez symlink."
+    return 1
+  fi
+  : > "${file}"
+  chmod 0600 "${file}" 2>/dev/null || true
+}
+
 hm_site_resource_read() {
   local line="$1"
   local re_kind='"kind"[[:space:]]*:[[:space:]]*"([^"]*)"'

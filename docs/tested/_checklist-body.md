@@ -62,7 +62,7 @@
 - [ ] `size`
 - [ ] `dbs` — lista baz
 - [ ] `ssl` — status certu
-- [ ] `renew-ssl` — anulowanie / przebieg (ostrożnie na prod)
+- [ ] `ssl renew` (alias `renew-ssl`) — anulowanie / przebieg (ostrożnie na prod)
 - [ ] `logs` / `logs 50`
 - [ ] `logs errors` / `logs stats`
 - [ ] `logs follow` — przerwanie Ctrl+C
@@ -169,7 +169,7 @@
 ## SSL (globalnie)
 
 - [ ] `ssl` — lista / status
-- [ ] `renew-ssl` / `renew-ssl <domena>` — anulowanie
+- [ ] `ssl renew` / `ssl renew <domena>` (alias `renew-ssl`) — anulowanie
 
 ## Konfiguracja i pakiety (OS-specific)
 

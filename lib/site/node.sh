@@ -642,6 +642,8 @@ hm_site_node_provision() {
       ;;
     none) ;;
   esac
+  HM_SITE_RUNTIME_VERSION="${def}"
+  HM_SITE_RUNTIME_MANAGER="${process}"
   if declare -F hm_site_manifest_set_version >/dev/null 2>&1; then
     local man
     man="$(hm_site_manifest_path "${domain}" 2>/dev/null || true)"

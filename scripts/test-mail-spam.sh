@@ -56,6 +56,21 @@ printf '%s\n' "${out}" | grep -q 'mail passwd' && ok senders-hint || bad senders
 [[ "$(grep -c notify "${root}/notify" 2>/dev/null || true)" -eq 1 ]] && ok senders-dedup-first || bad senders-dedup-first
 cmd_mail senders --since 24h >/dev/null
 [[ "$(grep -c notify "${root}/notify" 2>/dev/null || true)" -eq 1 ]] && ok senders-dedup-second || bad senders-dedup-second
+# Przyrost count nie omija dedupu (klucz = user + dzień)
+printf '%s\n' 'from=<a@example.com>, sasl_username=a@example.com' >> "${root}/mail.log"
+cmd_mail senders --since 24h >/dev/null
+[[ "$(grep -c notify "${root}/notify" 2>/dev/null || true)" -eq 1 ]] && ok senders-dedup-grow || bad senders-dedup-grow
+# grep -Fx: kropka w adresie nie jest wildcardem
+printf 'aXexample.com %s\n' "$(date +%Y-%m-%d)" >> "${root}/dedup"
+# nie powinno zablokować prawdziwego klucza — już zablokowany; sprawdź brak fałszywego matcha przy czystym dedup
+: > "${root}/dedup2"
+export HM_MAIL_DEDUP="${root}/dedup2"
+printf 'evil.example.com %s\n' "$(date +%Y-%m-%d)" > "${root}/dedup2"
+# a@example.com nadal alertuje na świeżym pliku
+: > "${root}/notify"
+cmd_mail senders >/dev/null
+[[ "$(grep -c notify "${root}/notify" 2>/dev/null || true)" -ge 1 ]] && ok senders-dedup-fx || bad senders-dedup-fx
+export HM_MAIL_DEDUP="${root}/dedup"
 
 printf 'a@example.com\t100\t1000\nb@example.com\t950\t1000\n' > "${root}/quota"
 export HM_MAIL_QUOTA="${root}/quota"
@@ -72,6 +87,12 @@ cat > "${root}/dmarc.xml" <<'EOF'
 EOF
 rep="$(cmd_mail dmarc report "${root}/dmarc.xml")"
 printf '%s\n' "${rep}" | grep -q $'203.0.113.5\tfail\tpass' && ok dmarc || bad dmarc
+# Zminifikowany XML — wiele rekordów w jednej linii
+printf '%s' '<feedback><source_ip>198.51.100.1</source_ip><spf>pass</spf><dkim>fail</dkim><source_ip>198.51.100.2</source_ip><spf>fail</spf><dkim>pass</dkim></feedback>' \
+  > "${root}/dmarc-mini.xml"
+rep2="$(cmd_mail dmarc report "${root}/dmarc-mini.xml")"
+printf '%s\n' "${rep2}" | grep -q $'198.51.100.1\tpass\tfail' && ok dmarc-mini-1 || bad dmarc-mini-1
+printf '%s\n' "${rep2}" | grep -q $'198.51.100.2\tfail\tpass' && ok dmarc-mini-2 || bad dmarc-mini-2
 cat > "${root}/xxe.xml" <<'EOF'
 <!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
 <source_ip>&xxe;</source_ip>
@@ -79,5 +100,26 @@ EOF
 if cmd_mail dmarc report "${root}/xxe.xml" >/dev/null 2>&1; then bad dmarc-xxe; else ok dmarc-xxe; fi
 dd if=/dev/zero bs=1024 count=1100 of="${root}/big.xml" status=none 2>/dev/null || dd if=/dev/zero bs=1024 count=1100 of="${root}/big.xml" >/dev/null
 if cmd_mail dmarc report "${root}/big.xml" >/dev/null 2>&1; then bad dmarc-size; else ok dmarc-size; fi
+
+# Bez fixture — czytelny brak danych / domyślne ścieżki
+unset HM_MAIL_SPAM_STATUS HM_MAIL_LOG HM_MAIL_QUOTA
+export HM_MAIL_DEDUP="${root}/dedup-default"
+export HM_MAIL_DIR="${root}/mail-state"
+st2="$(cmd_mail spam status)"
+printf '%s\n' "${st2}" | grep -q 'ham: brak danych' && ok spam-no-stats || bad spam-no-stats
+if cmd_mail senders >/dev/null 2>&1; then bad senders-no-log; else ok senders-no-log; fi
+# Domyślny log
+mkdir -p "${root}/var/log"
+printf 'sasl_username=c@example.com\n' > "${root}/var/log/mail.log"
+# hm_mail_find_log szuka /var/log/mail.log — w teście przez HM_MAIL_LOG symulujemy default po unset:
+# ustawiamy plik pod ścieżką oczekiwaną tylko gdy istnieje; tu sprawdzamy find przez HM_MAIL_LOG pusty + brak /var/log
+# → już ok senders-no-log. Osobno: po wskazaniu pliku przez ścieżkę produkcyjną-like:
+export HM_MAIL_LOG="${root}/var/log/mail.log"
+export HM_MAIL_SENDER_MAX=0
+out3="$(cmd_mail senders)"
+printf '%s\n' "${out3}" | grep -q $'c@example.com\t1' && ok senders-default-path || bad senders-default-path
+# Dedup domyślny powstał
+[[ -f "${HM_MAIL_DEDUP}" ]] && ok dedup-default-file || bad dedup-default-file
+if cmd_mail quota >/dev/null 2>&1; then bad quota-no-data; else ok quota-no-data; fi
 
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

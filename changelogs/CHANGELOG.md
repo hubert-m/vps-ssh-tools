@@ -24,6 +24,15 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: site new www — odmowa nadpisania vhosta, SSL realnie (acme/certbot), wspólny port Python↔proxy, reload po delete
 - Fix: site new W03 — chown HOME (.config/app), child dziedziczy usera rodzica, istniejący --user = shared
 - Fix: openvpn revoke/renew — blokada ca/server, revoke-renewed+CRL, mgmt kill z timeout/quit, check via openssl enddate
+- Fix: site new W02 — journal per domena (bez kolizji prefiksu), odmowa vhost/FPM bez --adopt, undo userdel/port, flock, resume idempotentne, resources/ports po rollback, runtime.version
+- Fix: openvpn client — export --all pomija server/CA, brak fałszywych certów poza testem, walidacja --static-ip, client_exists bez regex
+- Fix: openvpn install — odmowa reinstall/init-pki, CRL w hm/, foreign *.conf, PREV_FORWARD z sysctl, FW z backendu, rollback sysctl/tls
+- Fix: deploy — podkomendy log/config/release/rollback przed gałęzią clone-deploy (regresja „Produkcja log”)
+- Fix: dns watch — domyślne ścieżki /var/lib/hmtools/dns, żywy RDAP/dig gdy brak fixture
+- Fix: traffic — vnstat/`/proc/net/dev`/`ss`/logi OLS bez env; combined+cf=; mktemp poza katalogiem logów
+- Fix: mail spam/senders/quota/dmarc — dedup user+dzień (`grep -Fx`), domyślne logi/doveadm, DMARC minified, „brak danych”
+- Docs: site-wizard — SSL MVP (`--ssl` = acme/certbot jak `ssl issue`), flaga w tabeli
+- Feat: `ssl renew [domena]` jako główne odnawianie (alias `renew-ssl`); help issue vs renew; podpowiedzi z `[domena]`
 
 ## [v0.1.13]
 

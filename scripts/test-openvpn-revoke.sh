@@ -77,7 +77,7 @@ chmod 0644 "${probe}" || true
 mode_ok=0
 [[ "$(stat -c %a "${probe}" 2>/dev/null || stat -f %OLp "${probe}")" == "644" ]] && mode_ok=1
 if [[ "${mode_ok}" -eq 1 ]]; then
-  [[ "$(stat -c %a "${HM_OVPN_SERVER}/crl.pem" 2>/dev/null || stat -f %OLp "${HM_OVPN_SERVER}/crl.pem")" == "644" ]] && ok crl-mode || bad crl-mode
+  [[ "$(stat -c %a "${HM_OVPN_SERVER}/hm/crl.pem" 2>/dev/null || stat -f %OLp "${HM_OVPN_SERVER}/hm/crl.pem")" == "644" ]] && ok crl-mode || bad crl-mode
 else
   ok crl-mode-platform
 fi

@@ -85,4 +85,12 @@ printf '%s\n' "${text}" | grep -q '## Domeny' && ok report || bad report
 printf '%s\n' "${text}" | grep -q 'mail diag: example.pl' && ok mail-diag || bad mail-diag
 [[ "$(grep -c called "${root}/mail")" -eq 3 ]] && ok mail-called || bad mail-called
 
+# Bez HM_DNS_* — czytelny błąd, nie „parameter null or not set”
+unset HM_DNS_EXPIRY_CACHE HM_DNS_RDAP_DIR HM_DNS_RDAP_HITS HM_DNS_BASELINE HM_DNS_PUBLIC HM_DNS_DNSSEC
+export HM_DNS_DIR="${root}/dns-default"
+rc=0
+err="$(hm_dns_expiry_one missing.example 2>&1)" || rc=$?
+[[ "${rc}" -ne 0 ]] && printf '%s\n' "${err}" | grep -q 'RDAP\|WHOIS\|Brak' && ! printf '%s\n' "${err}" | grep -q 'null or not set' \
+  && ok no-env || bad no-env
+
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

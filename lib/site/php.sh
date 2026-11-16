@@ -262,10 +262,18 @@ EOF
   mkdir -p "${dir}" "${home}/logs"
   mkdir -p "/run/php" 2>/dev/null || true
   pool="${dir}/${domain}.conf"
-  bak="${pool}.hmbak"
-  rm -f "${bak}"
+  if [[ -f "${pool}" && "${HM_SITE_WEB_ADOPT:-0}" != "1" ]]; then
+    hm_err "Pula FPM już istnieje: ${pool} (użyj --adopt / HM_SITE_WEB_ADOPT=1)."
+    return 1
+  fi
+  bak=""
   if [[ -f "${pool}" ]]; then
-    cp -a "${pool}" "${bak}"
+    if declare -F hm_site_file_backup >/dev/null 2>&1; then
+      bak="$(hm_site_file_backup "${domain}" "${pool}")" || bak="${pool}.hmbak"
+    else
+      bak="${pool}.hmbak"
+      cp -a "${pool}" "${bak}"
+    fi
   fi
   local owner wgroup webkind
   webkind="${HM_SITE_WEBSERVER:-nginx}"
@@ -434,6 +442,8 @@ hm_site_php_provision() {
     hm_site_php_composer "${domain}" >/dev/null || return 1
   fi
   hm_site_php_skeleton "${domain}" "${skel}" || return 1
+  HM_SITE_RUNTIME_VERSION="${ver}"
+  HM_SITE_RUNTIME_MANAGER="php-fpm"
   if declare -F hm_site_manifest_set_version >/dev/null 2>&1; then
     local man
     man="$(hm_site_manifest_path "${domain}" 2>/dev/null || true)"

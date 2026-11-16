@@ -178,4 +178,37 @@ cmd_openvpn client export laptop --print >"${root}/print.out" 2>"${root}/print.e
 grep -q 'BEGIN PRIVATE KEY' "${root}/print.out" "${root}/print.err" "${HM_OVPN_APPLOG}" && bad print-leak || ok print-secret
 grep -q 'Brak TTY' "${root}/print.out" "${root}/print.err" && ok print-tty || bad print-tty
 
+# export --all pomija CN=server (nie rc=1)
+printf 'V\t280101000000Z\t\t01\t/CN=server\n' >> "${HM_OVPN_PKI}/index.txt"
+mkdir -p "${HM_OVPN_PKI}/issued"
+printf '%s\n' '-----BEGIN CERTIFICATE-----' 'SRV' '-----END CERTIFICATE-----' > "${HM_OVPN_PKI}/issued/server.crt"
+if cmd_openvpn client export --all >/dev/null 2>"${root}/all.err"; then
+  ok export-all-skip-server
+else
+  bad export-all-skip-server
+  cat "${root}/all.err" >&2 || true
+fi
+
+# static-ip: poza podsiecią / zarezerwowane / duplikat
+if cmd_openvpn client add badip --static-ip 10.9.0.50 --no-export --yes >/dev/null 2>&1; then
+  bad static-subnet
+else
+  ok static-subnet
+fi
+if cmd_openvpn client add badip2 --static-ip 10.8.0.1 --no-export --yes >/dev/null 2>&1; then
+  bad static-server
+else
+  ok static-server
+fi
+if cmd_openvpn client add twin --static-ip 10.8.0.50 --no-export --yes >/dev/null 2>&1; then
+  bad static-dup
+else
+  ok static-dup
+fi
+
+# client_exists: kropka nie jest wildcardem
+printf 'V\t280101000000Z\t\t09\t/CN=axb\n' >> "${HM_OVPN_PKI}/index.txt"
+if hm_ovpn_client_exists 'a.b'; then bad exists-dot; else ok exists-dot; fi
+if hm_ovpn_client_exists 'axb'; then ok exists-exact; else bad exists-exact; fi
+
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

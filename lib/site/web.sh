@@ -277,14 +277,18 @@ hm_site_web_apply_file() {
   mkdir -p "$(dirname "${dest}")"
   domain="${dest##*/}"
   domain="${domain%.conf}"
-  if [[ -f "${dest}" && "${HM_SITE_WEB_ADOPT:-0}" != "1" && "${HMTOOLS_TEST:-}" != "1" ]]; then
-    hm_err "Vhost już istnieje: ${dest} (ustaw HM_SITE_WEB_ADOPT=1 albo --adopt)."
+  if [[ -f "${dest}" && "${HM_SITE_WEB_ADOPT:-0}" != "1" ]]; then
+    hm_err "Vhost już istnieje: ${dest} (użyj --adopt / HM_SITE_WEB_ADOPT=1)."
     return 1
   fi
-  bak="${dest}.hmbak"
-  rm -f "${bak}"
+  bak=""
   if [[ -f "${dest}" ]]; then
-    cp -a "${dest}" "${bak}"
+    if declare -F hm_site_file_backup >/dev/null 2>&1; then
+      bak="$(hm_site_file_backup "${domain}" "${dest}")" || bak="${dest}.hmbak"
+    else
+      bak="${dest}.hmbak"
+      cp -a "${dest}" "${bak}"
+    fi
   fi
   printf '%s\n' "${body}" > "${dest}"
   if [[ "${kind}" == "proxy" ]] && ! hm_site_web_upstream_ok "${HM_SITE_WEB_UPSTREAM}"; then

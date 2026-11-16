@@ -1,5 +1,69 @@
 #!/usr/bin/env bash
-# dns expiry / drift / dnssec — odczyt fixture albo cache, bez żywego RDAP.
+# dns expiry / drift / dnssec — cache + fixture albo żywy RDAP/dig.
+
+hm_dns_paths_init() {
+  local base="${HM_DNS_DIR:-/var/lib/hmtools/dns}"
+  HM_DNS_EXPIRY_CACHE="${HM_DNS_EXPIRY_CACHE:-${base}/expiry-cache}"
+  HM_DNS_RDAP_DIR="${HM_DNS_RDAP_DIR:-${base}/rdap}"
+  HM_DNS_RDAP_HITS="${HM_DNS_RDAP_HITS:-${base}/rdap.hits}"
+  HM_DNS_BASELINE="${HM_DNS_BASELINE:-${base}/baseline}"
+  HM_DNS_PUBLIC="${HM_DNS_PUBLIC:-${base}/public}"
+  HM_DNS_DNSSEC="${HM_DNS_DNSSEC:-${base}/dnssec}"
+  HM_DNS_DEDUP="${HM_DNS_DEDUP:-${base}/expiry.dedup}"
+  mkdir -p "${HM_DNS_EXPIRY_CACHE}" "${HM_DNS_RDAP_DIR}" "${HM_DNS_BASELINE}" \
+    "${HM_DNS_PUBLIC}" "${HM_DNS_DNSSEC}" "$(dirname "${HM_DNS_RDAP_HITS}")" 2>/dev/null || true
+}
+
+hm_dns_rdap_fetch() {
+  local domain="$1" dest="$2" url
+  url="https://rdap.org/domain/${domain}"
+  if [[ -n "${HM_DNS_RDAP_URL:-}" ]]; then
+    url="${HM_DNS_RDAP_URL}/${domain}"
+  fi
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --max-time 15 "${url}" -o "${dest}" 2>/dev/null && return 0
+  fi
+  if command -v wget >/dev/null 2>&1; then
+    wget -q -O "${dest}" --timeout=15 "${url}" 2>/dev/null && return 0
+  fi
+  return 1
+}
+
+hm_dns_public_fetch() {
+  local domain="$1" dest="$2" tmp
+  command -v dig >/dev/null 2>&1 || return 1
+  tmp="$(mktemp)"
+  {
+    dig +short A "${domain}" @1.1.1.1 2>/dev/null | awk '{print "A "$0}'
+    dig +short AAAA "${domain}" @1.1.1.1 2>/dev/null | awk '{print "AAAA "$0}'
+    dig +short MX "${domain}" @1.1.1.1 2>/dev/null | awk '{print "MX "$0}'
+    dig +short NS "${domain}" @1.1.1.1 2>/dev/null | awk '{print "NS "$0}'
+  } > "${tmp}"
+  if [[ -s "${tmp}" ]]; then
+    mv -f "${tmp}" "${dest}"
+    return 0
+  fi
+  rm -f "${tmp}"
+  return 1
+}
+
+hm_dns_dnssec_fetch() {
+  local domain="$1" dest="$2" tmp ds key
+  command -v dig >/dev/null 2>&1 || return 1
+  tmp="$(mktemp)"
+  ds="$(dig +short DS "${domain}" @1.1.1.1 2>/dev/null | awk '{print $4; exit}')"
+  key="$(dig +short DNSKEY "${domain}" @1.1.1.1 2>/dev/null | awk '{print $4; exit}')"
+  {
+    printf 'DS %s\n' "${ds:-}"
+    printf 'DNSKEY %s\n' "${key:-}"
+    if dig +dnssec +short SOA "${domain}" @1.1.1.1 2>/dev/null | grep -q .; then
+      printf 'valid yes\n'
+    else
+      printf 'valid no\n'
+    fi
+  } > "${tmp}"
+  mv -f "${tmp}" "${dest}"
+}
 
 hm_dns_days_until() {
   local exp="$1" today="${HM_DNS_TODAY:-}" a b
@@ -30,7 +94,8 @@ hm_dns_expiry_alert() {
 
 hm_dns_expiry_one() {
   local domain="$1" cache src raw="" date="" days="" age=0 now=0 mtime=0
-  cache="${HM_DNS_EXPIRY_CACHE:?}/${domain}"
+  hm_dns_paths_init
+  cache="${HM_DNS_EXPIRY_CACHE}/${domain}"
   mkdir -p "${HM_DNS_EXPIRY_CACHE}"
   if [[ -f "${cache}" ]]; then
     now="$(date +%s)"
@@ -41,9 +106,15 @@ hm_dns_expiry_one() {
     fi
   fi
   if [[ -z "${date}" ]]; then
-    src="${HM_DNS_RDAP_DIR:?}/${domain}"
-    [[ -f "${src}" ]] || { hm_err "Brak danych RDAP/WHOIS dla ${domain}."; return 1; }
-    printf '%s\n' "${domain}" >> "${HM_DNS_RDAP_HITS:?}"
+    src="${HM_DNS_RDAP_DIR}/${domain}"
+    if [[ ! -f "${src}" ]]; then
+      mkdir -p "${HM_DNS_RDAP_DIR}"
+      if ! hm_dns_rdap_fetch "${domain}" "${src}"; then
+        hm_err "Brak danych RDAP/WHOIS dla ${domain} (ustaw fixture HM_DNS_RDAP_DIR albo dostęp do rdap.org)."
+        return 1
+      fi
+    fi
+    printf '%s\n' "${domain}" >> "${HM_DNS_RDAP_HITS}"
     raw="$(awk 'match($0, /[0-9]{4}[.-][0-9]{2}[.-][0-9]{2}/) { print substr($0, RSTART, RLENGTH); exit }' "${src}")"
     date="${raw//./-}"
     [[ -n "${date}" ]] || { hm_err "Nie odczytano daty dla ${domain}."; return 1; }
@@ -72,9 +143,14 @@ hm_dns_expiry_cmd() {
 
 hm_dns_drift_one() {
   local domain="$1" base pub diff=0
-  base="${HM_DNS_BASELINE:?}/${domain}"
-  pub="${HM_DNS_PUBLIC:?}/${domain}"
-  [[ -f "${base}" && -f "${pub}" ]] || { hm_err "Brak baseline albo publicznego odczytu dla ${domain}."; return 1; }
+  hm_dns_paths_init
+  base="${HM_DNS_BASELINE}/${domain}"
+  pub="${HM_DNS_PUBLIC}/${domain}"
+  if [[ ! -f "${pub}" ]]; then
+    mkdir -p "${HM_DNS_PUBLIC}"
+    hm_dns_public_fetch "${domain}" "${pub}" || true
+  fi
+  [[ -f "${base}" && -f "${pub}" ]] || { hm_err "Brak baseline albo publicznego odczytu dla ${domain} (dns drift baseline <domena>)."; return 1; }
   while IFS= read -r line; do
     [[ -n "${line}" ]] || continue
     if ! grep -qxF "${line}" "${pub}"; then
@@ -97,9 +173,14 @@ hm_dns_drift_one() {
 hm_dns_drift_cmd() {
   local domain
   if [[ "${1:-}" == "baseline" ]]; then
+    hm_dns_paths_init
     domain="${2:-${HM_SITE_DOMAIN:-}}"
-    [[ -n "${domain}" && -f "${HM_DNS_PUBLIC:?}/${domain}" ]] || { hm_err "Brak publicznego odczytu."; return 1; }
-    mkdir -p "${HM_DNS_BASELINE:?}"
+    if [[ -n "${domain}" && ! -f "${HM_DNS_PUBLIC}/${domain}" ]]; then
+      mkdir -p "${HM_DNS_PUBLIC}"
+      hm_dns_public_fetch "${domain}" "${HM_DNS_PUBLIC}/${domain}" || true
+    fi
+    [[ -n "${domain}" && -f "${HM_DNS_PUBLIC}/${domain}" ]] || { hm_err "Brak publicznego odczytu."; return 1; }
+    mkdir -p "${HM_DNS_BASELINE}"
     cp -f "${HM_DNS_PUBLIC}/${domain}" "${HM_DNS_BASELINE}/${domain}"
     hm_ok "Baseline ${domain}."
     return 0
@@ -119,8 +200,16 @@ hm_dns_drift_cmd() {
 
 hm_dns_dnssec_cmd() {
   local domain="${1:-${HM_SITE_DOMAIN:-}}" file ds="" key="" valid=""
+  hm_dns_paths_init
   [[ -n "${domain}" ]] || { hm_err "Użycie: dns dnssec <domena>"; return 1; }
-  file="${HM_DNS_DNSSEC:?}/${domain}"
+  file="${HM_DNS_DNSSEC}/${domain}"
+  if [[ ! -f "${file}" ]]; then
+    mkdir -p "${HM_DNS_DNSSEC}"
+    hm_dns_dnssec_fetch "${domain}" "${file}" || {
+      hm_err "Brak odczytu DNSSEC dla ${domain} (dig +dnssec albo fixture HM_DNS_DNSSEC)."
+      return 1
+    }
+  fi
   [[ -f "${file}" ]] || { hm_err "Brak odczytu DNSSEC dla ${domain}."; return 1; }
   ds="$(awk '/^DS / { print $2 }' "${file}")"
   key="$(awk '/^DNSKEY / { print $2 }' "${file}")"

@@ -310,6 +310,8 @@ cmd_site_new() {
         tx_resume=1 ;;
       --rollback)
         tx_rollback=1 ;;
+      --adopt)
+        HM_SITE_WEB_ADOPT=1 ;;
       --from)
         profile_from="${1:-}"; shift || true ;;
       --from=*)
@@ -320,7 +322,7 @@ cmd_site_new() {
         save_profile="${a#*=}" ;;
       --yes|-y) yes=1 ;;
       help|-h|--help)
-        echo "Użycie: site new <domena> [--runtime node|php] [--db mysql|postgres|sqlite|none] [--from profil.json] [--save-profile plik] [--resume] [--rollback] [--dry-run] [--json] [--yes]"
+        echo "Użycie: site new <domena> [--runtime node|php] [--db mysql|postgres|sqlite|none] [--from profil.json] [--save-profile plik] [--resume] [--rollback] [--adopt] [--dry-run] [--json] [--yes]"
         return 0
         ;;
       -*)
@@ -414,6 +416,15 @@ cmd_site_new() {
     [[ -n "${HM_SITE_BASE_DOMAIN:-}" ]] && domain="${HM_SITE_BASE_DOMAIN}"
   fi
 
+  # Port przed kosztownymi krokami (nvm/Composer) — zajęty port = od razu błąd.
+  if [[ -n "${port}" && "${port}" != "auto" ]] && declare -F hm_site_web_port_busy >/dev/null 2>&1; then
+    if hm_site_web_port_busy "${port}"; then
+      hm_err "Port ${port} jest zajęty (preflight)."
+      [[ -n "${HM_TX_JOURNAL:-}" ]] && hm_tx_rollback "${domain}" || true
+      return 1
+    fi
+  fi
+
   local -a plan=("Katalog shared/.env (0600) dla ${domain}" "Silnik bazy: ${db}")
   [[ "${#redis_roles[@]}" -gt 0 ]] && plan+=("Redis: ${redis_roles[*]}")
   if [[ -n "${node_spec}${node_default}${pkg}${process}${start}${port}${preset}" ]]; then
@@ -462,7 +473,29 @@ cmd_site_new() {
       hm_site_base_apply "${site_shell}" "${preset_app}" "${releases}" || return 1
     fi
   fi
-  if ! hm_site_db_provision "${domain}" "${db}" "${runtime}" "${framework}" "${pg_ver}" "${yes}" "${db_name}" "${redis_roles[@]+"${redis_roles[@]}"}"; then
+  _hm_site_tx_run() {
+    local step="$1"
+    shift
+    local txrc=0
+    if [[ -n "${HM_TX_JOURNAL:-}" ]] && declare -F hm_tx_step >/dev/null 2>&1; then
+      hm_tx_step "${step}" "" || txrc=$?
+      if [[ "${txrc}" -eq 0 ]]; then
+        hm_info "pomijam — już jest (${step})"
+        return 0
+      fi
+      if [[ "${txrc}" -ne 2 ]]; then
+        return 1
+      fi
+    fi
+    if "$@"; then
+      if [[ -n "${HM_TX_JOURNAL:-}" ]] && declare -F hm_tx_done >/dev/null 2>&1; then
+        hm_tx_done "${step}"
+      fi
+      return 0
+    fi
+    return 1
+  }
+  if ! _hm_site_tx_run db hm_site_db_provision "${domain}" "${db}" "${runtime}" "${framework}" "${pg_ver}" "${yes}" "${db_name}" "${redis_roles[@]+"${redis_roles[@]}"}"; then
     if declare -F hm_site_db_rollback_session >/dev/null 2>&1; then
       hm_site_db_rollback_session "${domain}" || true
     fi
@@ -481,7 +514,7 @@ cmd_site_new() {
         [[ -n "${asked}" ]] && port="${asked}"
       fi
     fi
-    if ! hm_site_node_provision "${domain}" "${node_spec}" "${node_default}" "${pkg}" "${process}" "${start}" "${port}" "${preset}" "${instances}" "${memory}"; then
+    if ! _hm_site_tx_run node hm_site_node_provision "${domain}" "${node_spec}" "${node_default}" "${pkg}" "${process}" "${start}" "${port}" "${preset}" "${instances}" "${memory}"; then
       [[ -n "${HM_TX_JOURNAL:-}" ]] && hm_tx_rollback "${domain}" || true
       return 1
     fi
@@ -494,7 +527,7 @@ cmd_site_new() {
     if [[ "${php_harden}" -eq 1 ]]; then
       HM_SITE_PHP_HARDEN=1
     fi
-    if ! hm_site_php_provision "${domain}" "${php_ver}" "${php_preset:-minimal}" "${php_ext}" "${php_skel}" "${yes}" "${php_sapi}" "${php_composer}"; then
+    if ! _hm_site_tx_run php hm_site_php_provision "${domain}" "${php_ver}" "${php_preset:-minimal}" "${php_ext}" "${php_skel}" "${yes}" "${php_sapi}" "${php_composer}"; then
       [[ -n "${HM_TX_JOURNAL:-}" ]] && hm_tx_rollback "${domain}" || true
       hm_err "site new nieudany — cofnięto wdrożenie po błędzie PHP."
       return 1
@@ -556,7 +589,7 @@ cmd_site_new() {
     if [[ "${vhost_kind}" == "proxy" && -n "${port}" && -z "${proxy_port}" ]]; then
       proxy_port="${port}"
     fi
-    if ! hm_site_web_provision "${domain}" "${webserver}" "${vhost_kind}" "${proxy_port:-${port:-auto}}" "${web_ssl}" "${yes}" "${php_ver}"; then
+    if ! _hm_site_tx_run web hm_site_web_provision "${domain}" "${webserver}" "${vhost_kind}" "${proxy_port:-${port:-auto}}" "${web_ssl}" "${yes}" "${php_ver}"; then
       [[ -n "${HM_TX_JOURNAL:-}" ]] && hm_tx_rollback "${domain}" || true
       hm_err "site new nieudany — cofnięto wdrożenie po błędzie vhosta."
       return 1
