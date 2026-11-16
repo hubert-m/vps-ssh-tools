@@ -33,7 +33,7 @@ openvpn install --dry-run
 openvpn install --yes --port 1194 --proto udp --endpoint vpn.example --subnet 10.8.0.0/24
 ```
 
-Powstają `hm.conf` (tls-crypt, AES-256-GCM), stan w `hmtools.state` i unit `openvpn-server@hm`. NAT dopisuje się w oznaczonym bloku i nie rusza reguł SSH.
+Powstają `hm.conf` (tls-crypt, AES-256-GCM), stan w `hmtools.state` i unit `openvpn-server@hm`. NAT dopisuje się w oznaczonym bloku i nie rusza reguł SSH. Unit NAT (`hmtools-openvpn-nat.service`) jest włączany od razu (`enable --now`); przy CSF reguły idą w życie przez `csf -r`. `--yes` bez `--endpoint` bierze publiczne IP albo odmawia — placeholder `vpn.example` tylko gdy podasz go jawnie.
 
 `openvpn` bez argumentów pokazuje skrót (endpoint, port, liczba ważnych klientów, CRL). Gdy nie ma konfiguracji, podpowiada `openvpn install --dry-run`.
 
@@ -43,11 +43,11 @@ Powstają `hm.conf` (tls-crypt, AES-256-GCM), stan w `hmtools.state` i unit `ope
 openvpn client add laptop --yes
 openvpn client export laptop
 openvpn client revoke laptop --yes
-openvpn client renew laptop --yes
+openvpn client renew laptop --yes --days 365
 openvpn crl update
 ```
 
-Profil `.ovpn` ma klucz w pliku 0600. Treść klucza nie trafia do applog. `openvpn who` czyta lokalny plik statusu, `openvpn kick <nazwa>` wysyła `kill` na socket management.
+`--days` ustawia `EASYRSA_CERT_EXPIRE` (domyślnie 365). Easy-RSA 3.0 robi revoke i nowy cert, 3.1+ `renew`; obie ścieżki kończą się `gen-crl` i kopią `crl.pem` do `hm/` (serwer czyta CRL przy kolejnym połączeniu, bez restartu). Profil `.ovpn` ma klucz w pliku 0600. Treść klucza nie trafia do applog. `openvpn who` czyta lokalny plik statusu, `openvpn kick <nazwa>` wysyła `kill` na socket management.
 
 `openvpn backup [katalog]` kopiuje sam katalog PKI. `openvpn backup --local` składa `tar.gz` z konfiguracją, PKI, profilami i manifestem SHA-256 (plik 0600). Wysyłka `--target` bez `BACKUP_ENCRYPT_PASSPHRASE` jest blokowana. `openvpn restore <plik> --yes` sprawdza sumy, a przy nieudanym starcie wraca do poprzedniego stanu.
 

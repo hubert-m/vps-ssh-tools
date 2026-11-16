@@ -16,6 +16,11 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [vX.Y.Z]
 
+- Fix: webs delete — user z `site new` znika tylko przy `user_created=true` i braku innego serwisu; istniejące `--user` zostaje
+- Fix: openvpn client renew — `--days` jako `EASYRSA_CERT_EXPIRE`; Easy-RSA 3.0 też robi `gen-crl` i kopię `hm/crl.pem`
+- Fix: openvpn install — NAT `enable --now` + sprawdzenie MASQUERADE; CSF `csf -r`; `--yes` bez `--endpoint` wykrywa IP albo odmawia (bez `vpn.example`)
+- Fix: site new --redis — `REDIS_PREFIX`/`CACHE_PREFIX`/`KEY_PREFIX` w `.env` (ACL prefiks); ACL bez SCAN/RANDOMKEY/DBSIZE; release rejestru pod flock
+
 ## [v0.1.14]
 
 - Fix: chrome clean — `hm_chrome_path_in_use` wykrywa `--user-data-dir=` i SingletonLock (PID); test path-in-use

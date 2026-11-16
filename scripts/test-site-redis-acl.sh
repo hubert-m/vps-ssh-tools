@@ -55,6 +55,9 @@ printf '%s' "${sql}" | grep -q 'ACL SETUSER default off' && ok "default-off" || 
 printf '%s' "${sql}" | grep -q '\-@dangerous' && ok "acl-dangerous" || bad "acl-dangerous"
 printf '%s' "${sql}" | grep -q '\-flushall' && ok "acl-flushall" || bad "acl-flushall"
 printf '%s' "${sql}" | grep -q '\-keys' && ok "acl-keys" || bad "acl-keys"
+printf '%s' "${sql}" | grep -q '\-scan' && ok "acl-scan" || bad "acl-scan"
+printf '%s' "${sql}" | grep -q '\-randomkey' && ok "acl-randomkey" || bad "acl-randomkey"
+printf '%s' "${sql}" | grep -q '\-dbsize' && ok "acl-dbsize" || bad "acl-dbsize"
 # nie może być gołego +@all bez negacji
 if printf '%s' "${sql}" | grep -E 'ACL SETUSER .* \+@all( |$)' | grep -qv '\-@dangerous'; then
   bad "acl-bare-all"
@@ -72,6 +75,19 @@ e2="$(awk -F'\t' '/^redis/{print $4; exit}' "${HM_SITE_STATE_DIR}/r2.test/db-cre
 rules="$(hm_site_redis_acl_rules 'r1.test:cache')"
 printf '%s' "${rules}" | grep -q 'r1.test:cache:\*' && ok "prefix" || bad "prefix"
 printf '%s' "${rules}" | grep -q '\-@admin' && ok "acl-admin" || bad "acl-admin"
+
+# .env dostaje prefiks, którego wymaga ACL
+hm_site_env_apply_redis r1.test testpass 1 127.0.0.1 6379 cache
+envf="$(hm_site_env_path r1.test)"
+grep -q '^REDIS_PREFIX=r1.test:cache:$' "${envf}" && ok "env-prefix" || bad "env-prefix"
+grep -q '^CACHE_PREFIX=r1.test:cache:$' "${envf}" && ok "env-cache-prefix" || bad "env-cache-prefix"
+grep -q '^KEY_PREFIX=r1.test:cache:$' "${envf}" && ok "env-key-prefix" || bad "env-key-prefix"
+grep -q '^REDIS_CACHE_PREFIX=r1.test:cache:$' "${envf}" && ok "env-role-prefix" || bad "env-role-prefix"
+
+# release pod flock: wpis znika
+hm_site_redis_registry_release r2.test 2
+grep -q $'r2.test\t' "${HM_SITE_REDIS_REGISTRY}" && bad "release-r2" || ok "release-r2"
+grep -q $'r1.test\t' "${HM_SITE_REDIS_REGISTRY}" && ok "release-keeps-r1" || bad "release-keeps-r1"
 
 if [[ "${fail}" -ne 0 ]]; then
   echo FAILED

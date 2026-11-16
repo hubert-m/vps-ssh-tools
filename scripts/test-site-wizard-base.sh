@@ -117,6 +117,8 @@ grep -q "own 2750 app:www-data ${home}/public_html" "${HM_SITE_OWN_LOG}" \
   && grep -q "own 0700 app:www-data ${home}/tmp" "${HM_SITE_OWN_LOG}" \
   && ok "layout-owner" || { bad "layout-owner"; cat "${HM_SITE_OWN_LOG}" >&2; }
 grep -q '^user=app$' "${home}/.config/hmtools/site.env" && grep -q '^runtime=php$' "${home}/.config/hmtools/site.env" \
+  && grep -q '^user_created=true$' "${home}/.config/hmtools/site.env" \
+  && grep -q '^shared=false$' "${home}/.config/hmtools/site.env" \
   && ok "preset-runtime" || bad "preset-runtime"
 grep -qx 'www' "${home}/.config/hmtools/aliases" && ok "alias-www" || bad "alias-www"
 probe="$(mktemp)"
@@ -136,6 +138,7 @@ cmd_site_new cp.example.pl --db none --preset wordpress --yes >"${root}/cp.out" 
 grep -q 'cyberpanel createWebsite' "${HM_SITE_RUN_LOG}" && ok "cyberpanel-run" || { bad "cyberpanel-run"; cat "${HM_SITE_RUN_LOG}" >&2; }
 
 export PANEL=cyberpanel WEBSERVER=nginx
+hm_site_web_provision() { printf 'WEB:%s\n' "$*" >> "${HM_SITE_RUN_LOG}"; return 0; }
 : > "${HM_SITE_RUN_LOG}"
 cmd_site_new nx.example.pl --db none --preset static --yes >"${root}/nx.out" 2>&1 || { bad "nx-new"; cat "${root}/nx.out" >&2; exit 1; }
 if grep -q 'cyberpanel' "${HM_SITE_RUN_LOG}"; then
@@ -195,6 +198,49 @@ printf 'LISTEN 0.0.0.0:80 users:(("python",pid=9,fd=3))\n' > "${HM_SITE_SS_FILE}
 pre="$(hm_site_base_preflight node 2>&1 || true)"
 printf '%s\n' "${pre}" | grep -q $'PORT-80/443\tobcy\tWARN' && ok "port-foreign-warn" || { bad "port-foreign-warn"; printf '%s\n' "${pre}" >&2; }
 printf 'LISTEN 0.0.0.0:80\nLISTEN 0.0.0.0:443\n' > "${HM_SITE_SS_FILE}"
+
+printf 'shareduser:x:1000:1000::/home/shareduser:/bin/bash\n' >> "${HM_SITE_PASSWD_FILE}"
+hm_site_base_check s1.test shareduser nologin static "" >/dev/null
+hm_site_base_apply nologin static 0 >/dev/null
+home_s="${HM_SITE_HOME_BASE}/s1.test"
+grep -q '^user_created=false$' "${home_s}/.config/hmtools/site.env" \
+  && grep -q '^shared=true$' "${home_s}/.config/hmtools/site.env" \
+  && ok "shared-env" || bad "shared-env"
+unset HM_SITE_USER_CREATED HM_SITE_USER_SHARED
+hm_site_manifest_write s1.test shareduser static nginx "${home_s}/shared/.env" www >/dev/null
+man_s="$(hm_site_manifest_path s1.test)"
+grep -q '"user_created":false' "${man_s}" && grep -q '"shared":true' "${man_s}" && ok "shared-manifest" || bad "shared-manifest"
+
+hm_site_base_check only.test "" nologin static "" >/dev/null
+hm_site_base_apply nologin static 0 >/dev/null
+only_user="${HM_SITE_BASE_USER}"
+home_o="${HM_SITE_HOME_BASE}/only.test"
+hm_site_manifest_write only.test "${only_user}" static nginx "${home_o}/shared/.env" www >/dev/null
+grep -q '"user_created":true' "$(hm_site_manifest_path only.test)" \
+  && grep -q '"shared":false' "$(hm_site_manifest_path only.test)" \
+  && ok "created-manifest" || bad "created-manifest"
+
+# shellcheck disable=SC1091
+source commands/delete-site/delete.sh
+hm_del_reset_inventory
+HM_DEL_DOMAIN="s1.test"
+HM_DEL_USER="shareduser"
+HM_DEL_ROOT="${home_s}"
+HM_DEL_KEEP_USER=0
+hm_del_apply_wizard_user
+if hm_del_user_may_remove; then bad "preexist-kept"; else ok "preexist-kept"; fi
+
+hm_del_reset_inventory
+HM_DEL_DOMAIN="only.test"
+HM_DEL_USER="${only_user}"
+HM_DEL_ROOT="${home_o}"
+HM_DEL_KEEP_USER=0
+hm_del_apply_wizard_user
+if hm_del_user_may_remove; then ok "created-remove"; else bad "created-remove"; fi
+
+hm_site_manifest_write s2.test "${only_user}" static nginx "${home_o}/shared/.env" www >/dev/null
+hm_del_apply_wizard_user
+if hm_del_user_may_remove; then bad "other-site-kept"; else ok "other-site-kept"; fi
 
 if [[ "${fail}" -eq 0 ]]; then
   echo "ALL PASSED"

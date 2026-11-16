@@ -541,6 +541,33 @@ hm_site_manifest_record_db() {
   chmod 0600 "${file}" 2>/dev/null || true
 }
 
+hm_site_json_bool() {
+  case "${1:-0}" in
+    1|true|TRUE|yes) printf 'true' ;;
+    *) printf 'false' ;;
+  esac
+}
+
+hm_site_load_user_flags() {
+  local domain="$1" envf line
+  envf="$(hm_site_home "${domain}")/.config/hmtools/site.env"
+  [[ -f "${envf}" ]] || return 0
+  if [[ -z "${HM_SITE_USER_CREATED+x}" ]]; then
+    line="$(sed -n 's/^user_created=//p' "${envf}" | head -1)"
+    case "${line}" in
+      true|1) HM_SITE_USER_CREATED=1 ;;
+      false|0) HM_SITE_USER_CREATED=0 ;;
+    esac
+  fi
+  if [[ -z "${HM_SITE_USER_SHARED+x}" ]]; then
+    line="$(sed -n 's/^shared=//p' "${envf}" | head -1)"
+    case "${line}" in
+      true|1) HM_SITE_USER_SHARED=1 ;;
+      false|0) HM_SITE_USER_SHARED=0 ;;
+    esac
+  fi
+}
+
 hm_site_manifest_write() {
   local domain="$1" user="$2" runtime="$3" web="${4:-}" envpath="$5" aliases="${6:-www}"
   local dir path tmp dbs="[]" line typ name dbuser host port first=1 ver rver mgr
@@ -566,10 +593,18 @@ hm_site_manifest_write() {
   [[ -f "${HMTOOLS_ROOT:-}/VERSION" ]] && ver="$(tr -d '[:space:]' < "${HMTOOLS_ROOT}/VERSION")"
   rver="${HM_SITE_RUNTIME_VERSION:-}"
   mgr="${HM_SITE_RUNTIME_MANAGER:-}"
+  hm_site_load_user_flags "${domain}"
+  local user_flags=""
+  if [[ -n "${HM_SITE_USER_CREATED+x}" ]]; then
+    user_flags+=",\"user_created\":$(hm_site_json_bool "${HM_SITE_USER_CREATED}")"
+  fi
+  if [[ -n "${HM_SITE_USER_SHARED+x}" ]]; then
+    user_flags+=",\"shared\":$(hm_site_json_bool "${HM_SITE_USER_SHARED}")"
+  fi
   tmp="$(mktemp "${dir}/.${domain}.XXXXXX")"
   chmod 0600 "${tmp}" 2>/dev/null || true
   cat > "${tmp}" <<EOF
-{"schema":1,"domain":"$(hm_site_json_escape "${domain}")","aliases":["$(hm_site_json_escape "${aliases}")"],"user":"$(hm_site_json_escape "${user}")","webserver":"$(hm_site_json_escape "${web}")","runtime":{"type":"$(hm_site_json_escape "${runtime}")","version":"$(hm_site_json_escape "${rver}")","manager":"$(hm_site_json_escape "${mgr}")"},"databases":${dbs},"env_file":"$(hm_site_json_escape "${envpath}")","ssl":false,"created_by":"site new","created_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","hmtools_version":"${ver}"}
+{"schema":1,"domain":"$(hm_site_json_escape "${domain}")","aliases":["$(hm_site_json_escape "${aliases}")"],"user":"$(hm_site_json_escape "${user}")"${user_flags},"webserver":"$(hm_site_json_escape "${web}")","runtime":{"type":"$(hm_site_json_escape "${runtime}")","version":"$(hm_site_json_escape "${rver}")","manager":"$(hm_site_json_escape "${mgr}")"},"databases":${dbs},"env_file":"$(hm_site_json_escape "${envpath}")","ssl":false,"created_by":"site new","created_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","hmtools_version":"${ver}"}
 EOF
   if hm_have_cmd jq; then
     jq -e . "${tmp}" >/dev/null || { rm -f "${tmp}"; hm_err "Manifest nie jest JSON."; return 1; }

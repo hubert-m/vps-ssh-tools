@@ -375,9 +375,19 @@ hm_site_redis_used_dbs() {
 }
 
 hm_site_redis_registry_release() {
-  local domain="$1" dbn="${2:-}" reg tmp line d n
+  local domain="$1" dbn="${2:-}" reg tmp d n lock got_lock=0
   reg="$(hm_site_redis_registry_path)"
   [[ -f "${reg}" ]] || return 0
+  lock="${reg}.lock"
+  if command -v flock >/dev/null 2>&1; then
+    exec 8>"${lock}"
+    if flock 8; then
+      got_lock=1
+    else
+      exec 8>&-
+      return 1
+    fi
+  fi
   tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-redis-reg.XXXXXX")"
   while IFS=$'\t' read -r d n || [[ -n "${d:-}" ]]; do
     [[ -n "${d}" ]] || continue
@@ -391,6 +401,10 @@ hm_site_redis_registry_release() {
   done < "${reg}"
   mv -f "${tmp}" "${reg}"
   chmod 0600 "${reg}" 2>/dev/null || true
+  if [[ "${got_lock}" -eq 1 ]]; then
+    flock -u 8 2>/dev/null || true
+    exec 8>&-
+  fi
 }
 
 hm_site_redis_next_db() {
@@ -429,7 +443,7 @@ hm_site_redis_next_db() {
 # ACL bez FLUSHALL/CONFIG/KEYS — tylko klucze z prefiksem domeny.
 hm_site_redis_acl_rules() {
   local prefix="$1"
-  printf '~%s:* resetchannels +@all -@dangerous -@admin -flushall -flushdb -keys -config -shutdown -debug -script' \
+  printf '~%s:* resetchannels +@all -@dangerous -@admin -flushall -flushdb -keys -scan -randomkey -dbsize -config -shutdown -debug -script' \
     "${prefix}"
 }
 

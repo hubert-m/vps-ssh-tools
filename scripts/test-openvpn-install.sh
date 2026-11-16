@@ -132,6 +132,41 @@ if cmd_openvpn install --yes --port 0 >"${root}/badport.out" 2>"${root}/badport.
 grep -q 'Zły port' "${root}/badport.err" && ok port-msg || bad port-msg
 if cmd_openvpn install --yes --dns custom:nie-ip >"${root}/baddns.out" 2>"${root}/baddns.err"; then bad dns-rc; else ok dns-rc; fi
 
+export HM_OVPN_ETC="${root}/etc-noep"
+mkdir -p "${HM_OVPN_ETC}" "${HM_OVPN_SYSCTL_D}"
+if cmd_openvpn install --yes --port 1194 --subnet 10.11.0.0/24 >"${root}/noep.out" 2>"${root}/noep.err"; then
+  bad endpoint-required
+else
+  ok endpoint-required
+fi
+grep -q 'Podaj --endpoint' "${root}/noep.err" && ok endpoint-msg || bad endpoint-msg
+[[ ! -f "${HM_OVPN_ETC}/hm.conf" ]] && ok endpoint-nofile || bad endpoint-nofile
+
+export HM_OVPN_PUBLIC_IP=203.0.113.10
+export HM_OVPN_FW=csf
+export HM_OVPN_CSF_POST="${root}/csfpost.sh"
+export HM_OVPN_ETC="${root}/etc-csf"
+mkdir -p "${HM_OVPN_ETC}"
+: > "${HM_OVPN_CALL_LOG}"
+cmd_openvpn install --yes --port 1194 --subnet 10.11.0.0/24 >"${root}/csf.out" 2>"${root}/csf.err" || bad csf-install
+grep -q '^ENDPOINT=203.0.113.10$' "${HM_OVPN_ETC}/hmtools.state" && ok endpoint-detected || bad endpoint-detected
+grep -q 'csf -r' "${HM_OVPN_CALL_LOG}" && ok csf-reload || bad csf-reload
+grep -q 'iptables -t nat -C POSTROUTING' "${HM_OVPN_CALL_LOG}" && ok csf-nat-now || bad csf-nat-now
+
+unset HM_OVPN_PUBLIC_IP HM_OVPN_CSF_POST
+export HM_OVPN_FW=iptables
+export HM_OVPN_ETC="${root}/etc-nat"
+export HM_OVPN_NAT_UNIT="${root}/nat/hmtools-openvpn-nat.service"
+mkdir -p "${HM_OVPN_ETC}" "$(dirname "${HM_OVPN_NAT_UNIT}")"
+: > "${HM_OVPN_CALL_LOG}"
+cmd_openvpn install --yes --port 1194 --endpoint vpn.example --subnet 10.12.0.0/24 >"${root}/nat.out" 2>"${root}/nat.err" || bad nat-install
+grep -q 'systemctl enable --now hmtools-openvpn-nat.service' "${HM_OVPN_CALL_LOG}" && ok nat-now || bad nat-now
+grep -q 'iptables -t nat -C POSTROUTING' "${HM_OVPN_CALL_LOG}" && ok nat-check || bad nat-check
+
+unset HM_OVPN_NAT_UNIT
+export HM_OVPN_FW=ufw
+export HM_OVPN_ETC="${saved_etc}"
+
 export HM_OVPN_ETC="${root}/etc-fail"
 export HM_OVPN_UFW_RULES="${root}/ufw-fail/before.rules"
 export HM_OVPN_SYSCTL_D="${root}/sysctl-fail"

@@ -15,6 +15,7 @@ hm_have_cmd() { return 1; }
 hm_confirm_plan() { return 0; }
 hm_is_valid_domain() { return 0; }
 hm_site_db_provision() { return 0; }
+hm_site_web_provision() { return 0; }
 
 fail=0
 ok() { printf 'OK   %s\n' "$1"; }

@@ -301,11 +301,13 @@ hm_site_env_apply_database() {
 
 hm_site_env_apply_redis() {
   local domain="$1" pass="$2" dbn="$3" host="${4:-127.0.0.1}" port="${5:-6379}" role="${6:-cache}"
-  local role_up enc url path cur
+  local role_up enc url path cur prefix
   role_up="$(printf '%s' "${role}" | tr '[:lower:]' '[:upper:]')"
+  prefix="${domain}:${role}:"
   hm_site_env_upsert "${domain}" "REDIS_${role_up}_HOST" "${host}"
   hm_site_env_upsert "${domain}" "REDIS_${role_up}_PORT" "${port}"
   hm_site_env_upsert "${domain}" "REDIS_${role_up}_DB" "${dbn}"
+  hm_site_env_upsert "${domain}" "REDIS_${role_up}_PREFIX" "${prefix}"
   if [[ -n "${pass}" ]]; then
     hm_site_env_upsert "${domain}" "REDIS_${role_up}_PASSWORD" "${pass}"
     enc="$(hm_site_url_encode "${pass}")"
@@ -318,6 +320,10 @@ hm_site_env_apply_redis() {
     hm_site_env_upsert "${domain}" REDIS_HOST "${host}"
     hm_site_env_upsert "${domain}" REDIS_PORT "${port}"
     hm_site_env_upsert "${domain}" REDIS_DB "${dbn}"
+    # Laravel REDIS_PREFIX / CACHE_PREFIX, Django KEY_PREFIX — ACL wymaga tego prefiksu.
+    hm_site_env_upsert "${domain}" REDIS_PREFIX "${prefix}"
+    hm_site_env_upsert "${domain}" CACHE_PREFIX "${prefix}"
+    hm_site_env_upsert "${domain}" KEY_PREFIX "${prefix}"
     if [[ -n "${pass}" ]]; then
       hm_site_env_upsert "${domain}" REDIS_PASSWORD "${pass}"
       hm_site_env_upsert "${domain}" REDIS_URL "${url}"

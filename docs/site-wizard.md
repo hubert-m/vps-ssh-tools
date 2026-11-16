@@ -15,8 +15,8 @@ Domyślne w kodzie, dopóki decyzje nie zostaną zmienione: Python przez `uv`, .
 ## Przebieg
 
 1. Preflight OS (Debian 11–13, Ubuntu 22.04/24.04, Alma/Rocky 8 i 9), RAM, dysk, porty 80/443, repozytorium, NTP.
-2. Domena i aliasy (`www` domyślnie, `--no-www` wyłącza). Kolizja katalogu albo użytkownika kończy się odmową.
-3. Użytkownik systemowy i układ `releases/`, `shared/`, `logs/`, `public_html`. `umask` procesu po kroku wraca do poprzedniej wartości.
+2. Domena i aliasy (`www` domyślnie, `--no-www` wyłącza). Kolizja domeny albo katalogu kończy się odmową.
+3. Użytkownik systemowy i układ `releases/`, `shared/`, `logs/`, `public_html`. Nowe konto ma w manifeście `user_created: true`. Istniejące `--user` i `--child-of` to `shared: true` — `webs delete` nie robi wtedy `userdel` ani `pkill -9 -u`. `umask` procesu po kroku wraca do poprzedniej wartości.
 4. Baza (`mysql`, `postgres`, `sqlite`, `none`) i opcjonalny Redis. Hasło idzie do `.env`.
 5. Runtime (PHP: pula FPM per serwis; Node: nvm, PM2 albo systemd na `127.0.0.1`; Python: `uv` i gunicorn; .NET: Kestrel na `127.0.0.1`).
 6. Vhost z `share/vhost-templates/` (nginx, apache, OLS). Reload dopiero po walidacji. Szablon OLS dla Node/PM2 proxuje na `127.0.0.1:<port>` i ustawia `X-Forwarded-For`, `X-Real-IP` oraz `X-Forwarded-Proto`. Bez `--yes` kreator pyta o port, a gdy jest zajęty, prosi o inny.
@@ -30,7 +30,7 @@ Drugie uruchomienie na istniejący manifest nic nie dopisuje. `--resume` pomija 
 |-------|-----------|
 | `--runtime php\|node\|python\|dotnet\|static` | Rodzaj aplikacji |
 | `--db mysql\|postgres\|sqlite\|none` | Silnik bazy |
-| `--redis [cache\|queue]` | Redis (ACL ≥ 6: prefiks kluczy, bez FLUSHALL/CONFIG; unikalne `REDIS_DB`; `default` off, opt-out `HM_REDIS_KEEP_DEFAULT=1`) |
+| `--redis [cache\|queue]` | Redis (ACL ≥ 6: prefiks `REDIS_PREFIX=<domena>:<rola>:` w `.env`, bez FLUSHALL/SCAN/KEYS; unikalne `REDIS_DB`; `default` off, opt-out `HM_REDIS_KEEP_DEFAULT=1`) |
 | `--php`, `--php-preset`, `--php-ext`, `--php-sapi` | Wersja i rozszerzenia PHP |
 | `--node`, `--process pm2\|systemd`, `--port` | Node i sposób startu |
 | `--python`, `--python-source`, `--app-server`, `--wsgi`, `--celery` | Interpreter Python, gunicorn/uvicorn, opcjonalny Celery |

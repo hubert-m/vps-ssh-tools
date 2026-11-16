@@ -416,13 +416,26 @@ hm_site_base_apply() {
   home="$(hm_site_home "${domain}")"
   [[ "${shell}" == "nologin" ]] && shell="/usr/sbin/nologin"
   [[ "${shell}" == "bash" ]] && shell="/bin/bash"
-  if [[ -z "${child}" ]]; then
-    if hm_site_base_user_exists "${user}"; then
-      hm_info "pomijam — już jest (user ${user})"
-    else
-      hm_site_base_user_add "${user}" "${home}" "${shell}" || return 1
+  local created=0 shared_user=0 envf prev_created
+  envf="${home}/.config/hmtools/site.env"
+  if [[ -n "${child}" ]]; then
+    shared_user=1
+  elif hm_site_base_user_exists "${user}"; then
+    shared_user=1
+    if [[ -f "${envf}" ]]; then
+      prev_created="$(sed -n 's/^user_created=//p' "${envf}" | head -1)"
+      if [[ "${prev_created}" == "true" || "${prev_created}" == "1" ]]; then
+        created=1
+        shared_user=0
+      fi
     fi
+    hm_info "pomijam — już jest (user ${user})"
+  else
+    hm_site_base_user_add "${user}" "${home}" "${shell}" || return 1
+    created=1
   fi
+  HM_SITE_USER_CREATED="${created}"
+  HM_SITE_USER_SHARED="${shared_user}"
   group="${HM_SITE_WEB_GROUP:-www-data}"
   hm_site_base_layout "${home}" "${user}" "${group}" "${releases}" || return 1
   mkdir -p "${home}/.config/hmtools" "${home}/app" "${home}/.well-known/acme-challenge"
@@ -431,6 +444,16 @@ hm_site_base_apply() {
     printf 'user=%s\n' "${user}"
     printf 'preset=%s\n' "${preset}"
     printf 'runtime=%s\n' "${runtime}"
+    if [[ "${created}" -eq 1 ]]; then
+      printf 'user_created=true\n'
+    else
+      printf 'user_created=false\n'
+    fi
+    if [[ "${shared_user}" -eq 1 ]]; then
+      printf 'shared=true\n'
+    else
+      printf 'shared=false\n'
+    fi
     if [[ -n "${child}" ]]; then
       printf 'child_of=%s\n' "${child}"
     fi

@@ -14,6 +14,7 @@ HM_DEL_KEEP_DB=0
 HM_DEL_KEEP_SSL=0
 HM_DEL_KEEP_USER=0
 HM_DEL_USER_SHARED=0
+HM_DEL_USER_CREATED=""
 HM_DEL_USER_PROTECTED=0
 HM_DEL_CHILD_OF_SHARED=0
 HM_DEL_FORCE_NESTED=0
@@ -45,6 +46,7 @@ hm_del_reset_inventory() {
   HM_DEL_KEEP_SSL=0
   HM_DEL_KEEP_USER=0
   HM_DEL_USER_SHARED=0
+  HM_DEL_USER_CREATED=""
   HM_DEL_USER_PROTECTED=0
   HM_DEL_CHILD_OF_SHARED=0
   # HM_DEL_FORCE_NESTED zachowujemy z CLI (nie kasujemy tu)
@@ -72,6 +74,79 @@ hm_del_is_nested_child() {
     [[ "${nc}" == "${d}" ]] && return 0
   done
   return 1
+}
+
+# true/false z JSON manifestu. Brak pola → return 1.
+hm_del_json_bool() {
+  local file="$1" key="$2" val
+  [[ -f "${file}" ]] || return 1
+  val="$(sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\\(true\\|false\\).*/\\1/p" "${file}" | head -1)"
+  [[ "${val}" == "true" || "${val}" == "false" ]] || return 1
+  printf '%s' "${val}"
+}
+
+hm_del_manifest_file() {
+  local domain="$1"
+  if declare -F hm_site_manifest_path >/dev/null 2>&1; then
+    hm_site_manifest_path "${domain}"
+    return 0
+  fi
+  printf '%s/%s.json' "${HM_SITE_MANIFEST_DIR:-/etc/hmtools/sites}" "${domain}"
+}
+
+# Inny serwis (manifest) używa tego samego usera. Childy z --force-nested pomijamy.
+hm_del_other_site_same_user() {
+  local domain="$1" user="$2" dir f other u
+  if declare -F hm_site_manifest_dir >/dev/null 2>&1; then
+    dir="$(hm_site_manifest_dir)"
+  else
+    dir="${HM_SITE_MANIFEST_DIR:-/etc/hmtools/sites}"
+  fi
+  [[ -d "${dir}" && -n "${user}" ]] || return 1
+  for f in "${dir}"/*.json; do
+    [[ -f "${f}" ]] || continue
+    other="$(basename "${f}" .json)"
+    [[ "${other}" == "${domain}" ]] && continue
+    hm_del_is_nested_child "${other}" && continue
+    u="$(sed -n 's/.*"user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${f}" | head -1)"
+    [[ "${u}" == "${user}" ]] && return 0
+  done
+  return 1
+}
+
+# user_created=false albo shared=true → nie userdel / nie pkill -9 -u.
+# Brak pól (stary manifest) zostawia dotychczasową decyzję HM_DEL_USER_SHARED.
+hm_del_apply_wizard_user() {
+  local file created="" shared="" envf
+  file="$(hm_del_manifest_file "${HM_DEL_DOMAIN}")"
+  created="$(hm_del_json_bool "${file}" user_created || true)"
+  shared="$(hm_del_json_bool "${file}" shared || true)"
+  if [[ -z "${created}" && -n "${HM_DEL_ROOT}" && -f "${HM_DEL_ROOT}/.config/hmtools/site.env" ]]; then
+    envf="${HM_DEL_ROOT}/.config/hmtools/site.env"
+    created="$(sed -n 's/^user_created=//p' "${envf}" | head -1)"
+    shared="$(sed -n 's/^shared=//p' "${envf}" | head -1)"
+  fi
+  HM_DEL_USER_CREATED=""
+  case "${created}" in
+    true|1) HM_DEL_USER_CREATED=1 ;;
+    false|0) HM_DEL_USER_CREATED=0; HM_DEL_USER_SHARED=1 ;;
+  esac
+  case "${shared}" in
+    true|1) HM_DEL_USER_SHARED=1 ;;
+  esac
+  if hm_del_other_site_same_user "${HM_DEL_DOMAIN}" "${HM_DEL_USER}"; then
+    HM_DEL_USER_SHARED=1
+  fi
+}
+
+hm_del_user_may_remove() {
+  hm_del_user_is_exclusive && [[ "${HM_DEL_KEEP_USER}" -eq 0 ]]
+}
+
+hm_del_user_is_exclusive() {
+  [[ -n "${HM_DEL_USER}" \
+    && "${HM_DEL_USER_SHARED}" -eq 0 && "${HM_DEL_USER_PROTECTED}" -eq 0 \
+    && "${HM_DEL_USER_CREATED}" != "0" ]]
 }
 
 hm_is_safe_sites_root_config() {
@@ -489,6 +564,7 @@ LIMIT 1;
   if [[ -n "${HM_DEL_USER}" ]] && ! id "${HM_DEL_USER}" >/dev/null 2>&1; then
     HM_DEL_USER=""
   fi
+  hm_del_apply_wizard_user
 
   # DB (master + ewentualnie childy przy force-nested)
   local name dbuser size origin skip reason
@@ -663,14 +739,13 @@ hm_site_build_delete_plan() {
     HM_DEL_PLAN_KEYS+=("pm2")
   fi
 
-  # pkill -u ubija wszystkie lsphp usera — pomiń gdy współdzielony/chroniony
-  if [[ -n "${HM_DEL_USER}" && "${HM_DEL_USER_SHARED}" -eq 0 && "${HM_DEL_USER_PROTECTED}" -eq 0 ]]; then
+  # pkill -u ubija wszystkie lsphp usera — pomiń gdy konto nie należy do tego serwisu
+  if hm_del_user_is_exclusive; then
     HM_DEL_PLAN_STEPS+=("Zatrzymanie procesów workerów LSPHP użytkownika ${HM_DEL_USER} (pkill -u ${HM_DEL_USER} lsphp)")
     HM_DEL_PLAN_KEYS+=("lsphp")
   fi
 
-  if [[ "${HM_DEL_CRON_COUNT}" -gt 0 && -n "${HM_DEL_USER}" \
-        && "${HM_DEL_USER_SHARED}" -eq 0 && "${HM_DEL_USER_PROTECTED}" -eq 0 ]]; then
+  if [[ "${HM_DEL_CRON_COUNT}" -gt 0 ]] && hm_del_user_is_exclusive; then
     HM_DEL_PLAN_STEPS+=("Usunięcie crontaba użytkownika ${HM_DEL_USER} (crontab -r — ${HM_DEL_CRON_COUNT} aktywnych wpisów)")
     HM_DEL_PLAN_KEYS+=("cron")
   fi
@@ -714,7 +789,7 @@ hm_site_build_delete_plan() {
   HM_DEL_PLAN_STEPS+=("Trwałe usunięcie katalogu serwisu: ${HM_DEL_ROOT} ($(hm_human_size "${HM_DEL_SIZE}"))")
   HM_DEL_PLAN_KEYS+=("files")
 
-  if [[ "${HM_DEL_KEEP_USER}" -eq 0 && -n "${HM_DEL_USER}" && "${HM_DEL_USER_SHARED}" -eq 0 && "${HM_DEL_USER_PROTECTED}" -eq 0 ]]; then
+  if hm_del_user_may_remove; then
     HM_DEL_PLAN_STEPS+=("Usunięcie dedykowanego użytkownika systemowego Unix: ${HM_DEL_USER} (userdel)")
     HM_DEL_PLAN_KEYS+=("user")
   fi
@@ -972,11 +1047,15 @@ DELETE FROM websites_website WHERE domainName = ${dq};
         ;;
       user)
         hm_progress_bar "${i}" "${total}" "userdel…"
-        pkill -9 -u "${HM_DEL_USER}" 2>/dev/null || true
-        if userdel "${HM_DEL_USER}" 2>/dev/null; then
-          hm_ok "Usunięto użytkownika ${HM_DEL_USER}"
+        if ! hm_del_user_may_remove; then
+          hm_warn "Pominięto userdel — konto ${HM_DEL_USER:-} nie należy wyłącznie do tego serwisu."
         else
-          hm_warn "userdel ${HM_DEL_USER} nieudany (może mieć jeszcze procesy/pliki)."
+          pkill -9 -u "${HM_DEL_USER}" 2>/dev/null || true
+          if userdel "${HM_DEL_USER}" 2>/dev/null; then
+            hm_ok "Usunięto użytkownika ${HM_DEL_USER}"
+          else
+            hm_warn "userdel ${HM_DEL_USER} nieudany (może mieć jeszcze procesy/pliki)."
+          fi
         fi
         ;;
       reload)

@@ -79,6 +79,7 @@ cmd_site_env() {
 }
 
 cmd_site_new() {
+  unset HM_SITE_USER_CREATED HM_SITE_USER_SHARED
   if [[ $# -eq 0 ]] && declare -F hm_wiz_site_new >/dev/null 2>&1; then
     hm_wiz_site_new
     return $?

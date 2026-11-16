@@ -138,6 +138,25 @@ hm_ovpn_os_ok() {
   esac
 }
 
+hm_ovpn_detect_endpoint() {
+  local ip
+  if [[ -n "${HM_OVPN_PUBLIC_IP:-}" ]]; then
+    printf '%s' "${HM_OVPN_PUBLIC_IP}"
+    return 0
+  fi
+  if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+    return 1
+  fi
+  if command -v ip >/dev/null 2>&1; then
+    ip="$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
+    if [[ "${ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+      printf '%s' "${ip}"
+      return 0
+    fi
+  fi
+  return 1
+}
+
 hm_ovpn_default_iface() {
   local dev
   if [[ -n "${HM_OVPN_IFACE:-}" ]]; then
@@ -636,7 +655,11 @@ EOF
 iptables -t nat -C POSTROUTING -s ${cidr} -o ${iface} -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s ${cidr} -o ${iface} -j MASQUERADE
 # END hmtools-openvpn
 EOF
+        chmod 0755 "${rules}" 2>/dev/null || true
       fi
+      hm_ovpn_fw_exec iptables -t nat -C POSTROUTING -s "${cidr}" -o "${iface}" -j MASQUERADE \
+        || hm_ovpn_fw_exec iptables -t nat -A POSTROUTING -s "${cidr}" -o "${iface}" -j MASQUERADE || true
+      hm_ovpn_fw_exec csf -r || hm_warn "Nie przeładowano CSF (csf -r)."
       ;;
     *)
       unit="$(hm_ovpn_nat_unit_path)"
@@ -660,7 +683,9 @@ ExecStart=/bin/sh ${script}
 [Install]
 WantedBy=multi-user.target
 EOF
-      hm_ovpn_systemctl enable hmtools-openvpn-nat.service || true
+      hm_ovpn_systemctl enable --now hmtools-openvpn-nat.service || true
+      hm_ovpn_fw_exec iptables -t nat -C POSTROUTING -s "${cidr}" -o "${iface}" -j MASQUERADE \
+        || hm_ovpn_fw_exec iptables -t nat -A POSTROUTING -s "${cidr}" -o "${iface}" -j MASQUERADE || true
       [[ -n "${log}" ]] && printf 'iptables MASQUERADE %s via %s\n' "${cidr}" "${iface}" >> "${log}"
       ;;
   esac
@@ -752,7 +777,6 @@ hm_ovpn_install() {
       *) hm_err "Nieznana flaga: $1"; return 1 ;;
     esac
   done
-  [[ -n "${endpoint}" ]] || endpoint="${HM_OVPN_ENDPOINT:-vpn.example}"
   hm_ovpn_validate_install "${port}" "${proto}" "${dns}" || return 1
   if ! hm_ovpn_os_ok; then
     hm_err "Nieobsługiwany system. OpenVPN nie został zainstalowany."
@@ -788,6 +812,13 @@ hm_ovpn_install() {
     hm_info "dry-run: brak zmian w systemie"
     printf 'plan: %s\n' "${steps[*]}"
     return 0
+  fi
+  if [[ -z "${endpoint}" ]]; then
+    endpoint="$(hm_ovpn_detect_endpoint || true)"
+  fi
+  if [[ -z "${endpoint}" ]]; then
+    hm_err "Podaj --endpoint (publiczne IP albo FQDN). Nie używam placeholdera vpn.example."
+    return 1
   fi
   if [[ "${force}" -eq 1 ]] && declare -F hm_confirm_plan_critical >/dev/null 2>&1; then
     if [[ "${yes}" -eq 1 ]]; then

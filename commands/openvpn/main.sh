@@ -149,9 +149,15 @@ hm_ovpn_easyrsa() {
     pki="$(hm_ovpn_pki 2>/dev/null || true)"
     [[ -n "${pki}" ]] && export EASYRSA_PKI="${pki}"
   fi
-  [[ -n "${HM_OVPN_CALL_LOG:-}" ]] && printf 'easyrsa %s\n' "$*" >> "${HM_OVPN_CALL_LOG}"
+  local rec="easyrsa $*"
+  case "$1" in
+    build-client-full|build-server-full|renew)
+      rec="${rec} EASYRSA_CERT_EXPIRE=${EASYRSA_CERT_EXPIRE:-}"
+      ;;
+  esac
+  [[ -n "${HM_OVPN_CALL_LOG:-}" ]] && printf '%s\n' "${rec}" >> "${HM_OVPN_CALL_LOG}"
   if [[ "${HM_OVPN_MOCK:-}" == "1" ]]; then
-    printf 'easyrsa %s\n' "$*" >> "${HM_OVPN_MOCK_LOG:?}"
+    printf '%s\n' "${rec}" >> "${HM_OVPN_MOCK_LOG:?}"
     return 0
   fi
   "${bin}" "$@"
@@ -165,6 +171,14 @@ hm_ovpn_easyrsa_version() {
   fi
   out="$("${bin}" --version 2>&1 || true)"
   printf '%s\n' "${out}" | grep -oE '3\.[0-9]+(\.[0-9]+)?' | head -1
+}
+
+hm_ovpn_restore_cert_expire() {
+  if [[ "$1" == "__unset__" ]]; then
+    unset EASYRSA_CERT_EXPIRE
+  else
+    export EASYRSA_CERT_EXPIRE="$1"
+  fi
 }
 
 hm_ovpn_copy_crl() {
@@ -238,28 +252,36 @@ hm_ovpn_client_renew() {
   hm_ovpn_name_client "${name}" || { hm_err "Zła nazwa klienta (zarezerwowane: ca/server)."; return 1; }
   [[ "${days}" =~ ^[0-9]+$ ]] || { hm_err "Zła liczba dni."; return 1; }
   ver="$(hm_ovpn_easyrsa_version)"
-  local -a steps=("odnowienie ${name} na ${days} dni" "unieważnienie starego certu" "ponowny eksport profilu")
+  local -a steps=("odnowienie ${name} na ${days} dni" "unieważnienie starego certu" "CRL" "ponowny eksport profilu")
   if [[ "${yes}" -eq 1 ]]; then
     hm_confirm_plan "openvpn renew ${name}" "Stary profil przestanie działać." --yes "${steps[@]}" || return 1
   else
     hm_confirm_plan "openvpn renew ${name}" "Stary profil przestanie działać." "${steps[@]}" || return 1
   fi
+  local prev_expire="__unset__"
+  [[ -n "${EASYRSA_CERT_EXPIRE+x}" ]] && prev_expire="${EASYRSA_CERT_EXPIRE}"
+  export EASYRSA_CERT_EXPIRE="${days}"
   case "${ver}" in
     3.0*)
-      hm_ovpn_easyrsa revoke "${name}" || return 1
-      hm_ovpn_easyrsa build-client-full "${name}" nopass || return 1
+      hm_ovpn_easyrsa revoke "${name}" || { hm_ovpn_restore_cert_expire "${prev_expire}"; return 1; }
+      hm_ovpn_easyrsa build-client-full "${name}" nopass || { hm_ovpn_restore_cert_expire "${prev_expire}"; return 1; }
       ;;
     *)
-      hm_ovpn_easyrsa renew "${name}" || return 1
+      hm_ovpn_easyrsa renew "${name}" || { hm_ovpn_restore_cert_expire "${prev_expire}"; return 1; }
       # easy-rsa 3.1.x: renew zostawia stary cert V — revoke-renewed + CRL
       hm_ovpn_easyrsa revoke-renewed "${name}" || hm_ovpn_easyrsa revoke "${name}" || true
-      hm_ovpn_easyrsa gen-crl || return 1
-      hm_ovpn_copy_crl || true
       ;;
   esac
   if [[ "${HM_OVPN_MOCK:-}" == "1" ]]; then
+    mkdir -p "$(hm_ovpn_pki)" "$(hm_ovpn_server_dir)"
+    printf 'CRL\n' > "$(hm_ovpn_pki)/crl.pem"
     hm_ovpn_mock_pems "${name}"
   fi
+  if ! hm_ovpn_easyrsa gen-crl || ! hm_ovpn_copy_crl; then
+    hm_ovpn_restore_cert_expire "${prev_expire}"
+    return 1
+  fi
+  hm_ovpn_restore_cert_expire "${prev_expire}"
   hm_ovpn_export_one "${name}" "$(hm_ovpn_export_dir)/${name}.ovpn" >/dev/null
   hm_ovpn_audit "renew ${name} days=${days}"
   hm_warn "Stary profil ${name}.ovpn przestanie działać. Rozdaj nowy plik."

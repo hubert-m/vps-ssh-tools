@@ -86,8 +86,10 @@ rm -f "${HM_OVPN_MOCK_LOG}"
 export HM_OVPN_EASYRSA_VERSION=3.0.8
 cmd_openvpn client renew laptop --days 365 --yes >"${root}/renew30.out"
 grep -q 'Stary profil' "${root}/renew30.out" && ok renew-warn || bad renew-warn
-order="$(grep -E 'revoke laptop|build-client-full laptop' "${HM_OVPN_MOCK_LOG}" | tr '\n' ' ')"
-[[ "${order}" == *"revoke laptop"*"build-client-full laptop"* ]] && ok renew-30 || bad renew-30
+order="$(grep -E 'revoke laptop|build-client-full laptop|gen-crl' "${HM_OVPN_MOCK_LOG}" | tr '\n' ' ')"
+[[ "${order}" == *"revoke laptop"*"build-client-full laptop"*"gen-crl"* ]] && ok renew-30 || bad renew-30
+grep -q 'build-client-full laptop nopass EASYRSA_CERT_EXPIRE=365' "${HM_OVPN_MOCK_LOG}" && ok renew-30-days || bad renew-30-days
+[[ -f "${HM_OVPN_SERVER}/hm/crl.pem" ]] && ok renew-30-crl || bad renew-30-crl
 ovpn="${HM_OVPN_EXPORT}/laptop.ovpn"
 if grep -q 'BEGIN CERTIFICATE' "${ovpn}" && grep -q '<tls-crypt>' "${ovpn}" && ! grep -q '<cert>CN=' "${ovpn}"; then
   ok renew-export
@@ -106,9 +108,13 @@ fi
 rm -f "${HM_OVPN_MOCK_LOG}"
 export HM_OVPN_EASYRSA_VERSION=3.1.2
 cmd_openvpn client renew laptop --yes >/dev/null
-grep -q 'easyrsa renew laptop' "${HM_OVPN_MOCK_LOG}" && ok renew-31 || bad renew-31
+grep -q 'easyrsa renew laptop EASYRSA_CERT_EXPIRE=365' "${HM_OVPN_MOCK_LOG}" && ok renew-31 || bad renew-31
 grep -Eq 'easyrsa revoke-renewed laptop|easyrsa revoke laptop' "${HM_OVPN_MOCK_LOG}" && ok renew-31-revoke-old || bad renew-31-revoke-old
 grep -q 'easyrsa gen-crl' "${HM_OVPN_MOCK_LOG}" && ok renew-31-crl || bad renew-31-crl
+rm -f "${HM_OVPN_MOCK_LOG}"
+cmd_openvpn client renew laptop --days 30 --yes >/dev/null
+grep -q 'easyrsa renew laptop EASYRSA_CERT_EXPIRE=30' "${HM_OVPN_MOCK_LOG}" && ok renew-31-days || bad renew-31-days
+[[ -z "${EASYRSA_CERT_EXPIRE:-}" ]] && ok renew-expire-unset || bad renew-expire-unset
 
 if cmd_openvpn client revoke server --yes >/dev/null 2>&1; then
   bad revoke-server-blocked
