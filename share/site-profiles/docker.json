@@ -1,0 +1,6 @@
+{
+  "preset": "docker",
+  "runtime": "docker",
+  "db": "none",
+  "webserver": "nginx"
+}

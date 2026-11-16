@@ -89,22 +89,76 @@ grep -q 'dashboard build' "${cron}" && ok sched-on || bad sched-on
 HM_DASHBOARD_CRON="${cron}" cmd_dashboard schedule disable --yes >/dev/null
 [[ ! -f "${cron}" ]] && ok sched-off || bad sched-off
 
+hm_is_valid_domain() { [[ "$1" == *.* ]]; }
+hm_print_secret() { printf 'SECRET %s\n' "$*" >>"${base}/secrets.txt"; }
+hm_have_cmd() {
+  case "$1" in
+    openssl|python3) command -v "$1" >/dev/null 2>&1 ;;
+    htpasswd) return 1 ;;
+    *) command -v "$1" >/dev/null 2>&1 ;;
+  esac
+}
+# stub openssl apr1 for determinism when openssl missing apr1
+if ! openssl passwd -apr1 test >/dev/null 2>&1; then
+  openssl() {
+    if [[ "${1:-}" == "passwd" ]]; then
+      printf '$apr1$testsalt$testhash\n'
+      return 0
+    fi
+    command openssl "$@"
+  }
+fi
+
 vhost="${base}/vh.conf"
 auth="${base}/auth"
-HM_DASHBOARD_VHOST="${vhost}" HM_DASHBOARD_AUTH="${auth}" \
-  cmd_dashboard publish --domain status.example.com --allow 203.0.113.5 --yes \
+mapf="${base}/httpd_config.conf"
+: >"${mapf}"
+printf 'old-vhost\n' >"${vhost}"
+HM_DASHBOARD_VHOST="${vhost}" HM_DASHBOARD_AUTH="${auth}" HM_DASHBOARD_OLS_MAP="${mapf}" \
+  cmd_dashboard publish --domain status.example.com --allow 203.0.113.5,198.51.100.2 --yes \
   >"${base}/pub.out" 2>"${base}/pub.err"
 grep -q 'poza tunelem' "${base}/pub.err" && ok warn-pub || bad warn-pub
-grep -q 'allow 203.0.113.5' "${vhost}" && ok allow || bad allow
+grep -q 'allow                   203.0.113.5, 198.51.100.2' "${vhost}" && ok allow || bad allow
+grep -q 'userDB' "${vhost}" && ok ols-realm || bad ols-realm
 grep -q 'sekret-panel-1' "${vhost}" && bad vhost-secret || ok vhost-secret
-grep -q 'sekret-panel-1' "${auth}" && ok auth-file || bad auth-file
+grep -q 'sekret-panel-1' "${auth}" && bad auth-plaintext || ok auth-hashed
+grep -q '^hmtools:' "${auth}" && ok auth-user || bad auth-user
 grep -q 'sekret-panel-1' "${html}" && bad html-after-pub || ok html-after-pub
+if ls "${base}"/vh.conf.hmbak.* >/dev/null 2>&1; then ok vhost-bak; else bad vhost-bak; fi
+grep -q 'hmtools-dashboard:status.example.com' "${mapf}" && ok ols-map || bad ols-map
+grep -q 'sekret-panel-1' "${base}/secrets.txt" && ok secret-tty || bad secret-tty
 
 set +e
 cmd_dashboard publish --domain status.example.com --yes >"${base}/noallow.out" 2>"${base}/noallow.err"
 rc=$?
 set -e
 [[ "${rc}" -ne 0 ]] && ok pub-need-allow || bad pub-need-allow
+
+set +e
+HM_DASHBOARD_VHOST="${vhost}" HM_DASHBOARD_AUTH="${auth}" \
+  cmd_dashboard publish --domain status.example.com --allow 0.0.0.0 --yes \
+  >"${base}/zero.out" 2>"${base}/zero.err"
+rc=$?
+set -e
+[[ "${rc}" -ne 0 ]] && ok reject-zero || bad reject-zero
+
+# session: dry + cleanup restores bak / removes map
+svh="${base}/session/vhconf.conf"
+sauth="${base}/session.htpasswd"
+smap="${base}/session-httpd.conf"
+mkdir -p "$(dirname "${svh}")"
+printf 'ORIG\n' >"${svh}"
+: >"${smap}"
+export HM_DASHBOARD_RELOAD_LOG="${base}/reload.log"
+: >"${HM_DASHBOARD_RELOAD_LOG}"
+HM_DASHBOARD_VHOST_DIR="$(dirname "${svh}")" HM_DASHBOARD_AUTH="${sauth}" \
+  HM_DASHBOARD_OLS_MAP="${smap}" HM_DASHBOARD_DRY=1 \
+  cmd_dashboard session --domain dash.example.com --allow 203.0.113.9 \
+  >"${base}/sess.out" 2>"${base}/sess.err"
+grep -q 'session=active' "${base}/sess.out" && ok session-run || bad session-run
+grep -q 'ORIG' "${svh}" && ok session-restore || bad session-restore
+grep -q 'hmtools-dashboard:dash.example.com' "${smap}" && bad session-map-left || ok session-map-clean
+grep -q 'reload' "${HM_DASHBOARD_RELOAD_LOG}" && ok session-reload || bad session-reload
 
 grep -q 'dashboard)' "${ROOT}/lib/complete/tab.sh" && ok tab || bad tab
 

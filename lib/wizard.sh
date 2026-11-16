@@ -428,16 +428,20 @@ hm_wiz_ask_php() { hm_wiz_input_choice "$1"; }
 hm_wiz_when_php() { [[ "${HM_WIZ[runtime]:-}" == "PHP" ]]; }
 
 hm_wiz_site_apply() {
-  local runtime="node" php=""
+  local runtime="node" php="" extra=()
   case "${HM_WIZ[runtime]:-}" in
     PHP) runtime="php"; php="${HM_WIZ[php]:-}" ;;
     Node.js) runtime="node" ;;
-    *) runtime="static" ;;
+    Python) runtime="python"; extra+=(--webserver nginx) ;;
+    .NET) runtime="dotnet"; extra+=(--webserver nginx) ;;
+    Statyczna/SPA) runtime="static"; extra+=(--spa --webserver nginx) ;;
+    Docker) runtime="docker"; extra+=(--image nginx:alpine --container-port 80 --webserver nginx) ;;
+    *) runtime="static"; extra+=(--webserver nginx) ;;
   esac
   if [[ -n "${php}" ]]; then
-    cmd_site_new "${HM_WIZ[domain]}" --runtime "${runtime}" --php "${php}" --db none --yes
+    cmd_site_new "${HM_WIZ[domain]}" --runtime "${runtime}" --php "${php}" --db none --yes "${extra[@]}"
   else
-    cmd_site_new "${HM_WIZ[domain]}" --runtime "${runtime}" --db none --yes
+    cmd_site_new "${HM_WIZ[domain]}" --runtime "${runtime}" --db none --yes "${extra[@]}"
   fi
 }
 

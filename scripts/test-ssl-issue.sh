@@ -134,13 +134,26 @@ fi
 # shellcheck disable=SC1091
 source commands/_shared/sites/ssl.sh
 ssdir="$(mktemp -d)"
-# Na MSYS/Git bash pojedyncze /CN= jest traktowane jak ścieżka Windows.
+# MSYS/Git Bash konwertuje /CN= na ścieżkę Windows; na Linuksie //CN= daje pusty subject.
+hm_test_ssl_subj() {
+  case "${OSTYPE:-}" in
+    msys* | cygwin*) printf '//CN=%s' "${1:-}" ;;
+    *) printf '/CN=%s' "${1:-}" ;;
+  esac
+}
 openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
   -keyout "${ssdir}/key.pem" -out "${ssdir}/cert.pem" \
-  -subj "//CN=self.test" >/dev/null 2>&1 \
-  || openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
-    -keyout "${ssdir}/key.pem" -out "${ssdir}/cert.pem" \
-    -subj "/CN=self.test" >/dev/null 2>&1 || true
+  -subj "$(hm_test_ssl_subj self.test)" >/dev/null 2>&1 || true
+# Bezpieczeństwo: pusty subject (zły hack platformowy) → regeneruj z /CN=
+if [[ -s "${ssdir}/cert.pem" ]]; then
+  _subj="$(openssl x509 -noout -subject -in "${ssdir}/cert.pem" 2>/dev/null || true)"
+  if [[ -z "${_subj}" || "${_subj}" == "subject=" || "${_subj}" == "subject= " ]]; then
+    openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+      -keyout "${ssdir}/key.pem" -out "${ssdir}/cert.pem" \
+      -subj "/CN=self.test" >/dev/null 2>&1 || true
+  fi
+  unset _subj
+fi
 if [[ -s "${ssdir}/cert.pem" ]]; then
   if hm_ssl_is_self_signed "${ssdir}/cert.pem"; then
     echo "OK   detect-self-signed"
@@ -200,12 +213,10 @@ hm_ssl_clear_self_signed_before_issue "a.pl" >/dev/null
   fail=1
 }
 # LE cert (issuer ≠ subject) → bez purge
+# (cacert używany tylko jako placeholder; purge i tak stubowany poniżej)
 openssl req -x509 -nodes -newkey rsa:2048 -days 90 \
   -keyout "${ssdir}/cakey.pem" -out "${ssdir}/cacert.pem" \
-  -subj "//CN=Fake CA" >/dev/null 2>&1 \
-  || openssl req -x509 -nodes -newkey rsa:2048 -days 90 \
-    -keyout "${ssdir}/cakey.pem" -out "${ssdir}/cacert.pem" \
-    -subj "/CN=Fake CA" >/dev/null 2>&1 || true
+  -subj "$(hm_test_ssl_subj 'Fake CA')" >/dev/null 2>&1 || true
 # LE-like: osobny issuer przez skopiowanie innego CN nie wystarczy; symuluj subject≠issuer
 # przez drugi cert i ręczny plik — hm_ssl_is_self_signed wymaga openssl subject/issuer.
 # Tu sprawdzamy brak purge, gdy status nie jest selfsigned (stub).

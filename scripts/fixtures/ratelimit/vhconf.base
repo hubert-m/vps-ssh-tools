@@ -1,0 +1,16 @@
+docRoot                   $VH_ROOT/public_html
+vhDomain                  example.pl
+
+rewrite  {
+  enable                  1
+  autoLoadHtaccess        1
+}
+
+context / {
+  allowBrowse             1
+}
+
+extprocessor lsphp {
+  type                    lsapi
+  address                 uds://tmp/lshttpd/lsphp.sock
+}

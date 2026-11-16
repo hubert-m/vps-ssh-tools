@@ -1,5 +1,15 @@
 # hmtools vX.Y.Z
 
+- Fix: chrome clean — `hm_chrome_path_in_use` wykrywa `--user-data-dir=` i SingletonLock (PID); test path-in-use
+- Feat: `system` — status NTP/chrony/timesyncd, strefa, hostname/FQDN/rDNS, locale; time sync on, timezone set, hostname set (CyberPanel SSL), locale fix; ostrzeżenia offset>1s / rDNS≠hostname; test-system-time-locale (HM_SYSTEM_*)
+- Feat: start hmtools — lekki WARN gdy LANG=C/POSIX
+- Feat: `maintenance` — okno serwisowe, schedule update/reboot (tylko w oknie), post-check + notify, livepatch; test-maintenance (mock systemctl)
+- Feat: `doctor` (+ `--json`) — autodiagnoza instalacji; `scripts/run-all-tests.sh` (timeout/`--only`); CI na push/PR do `develop` (bash -n, shellcheck, testy user+root); `_stubs.sh`
+- Feat: site new W09 — `--runtime static|--spa` (auto vhost, placeholder/build), `--runtime docker --image` (compose `127.0.0.1`, undo `compose-down`); test-site-wizard-static-docker
+- Fix: vuln — zapis findings z separatorem `\x1f` (puste CVE nie przesuwa kolumn / „naprawa:”); test os bez CVE
+- Fix: test-ssl-issue — `-subj` po OSTYPE (MSYS `//CN=` vs Linux `/CN=`) + fallback gdy subject pusty; wykrywanie self-signed na Linuksie
+- Fix: metrics export — chmod 0644 przed mv (node_exporter); brakujące certy → `hmtools_cert_present 0` bez `days_left`; `--textfile` tylko `*.prom` + odmowa obcych plików
+- Feat: dashboard session — panel na czas SSH (vhost OLS + htpasswd, trap EXIT/HUP); publish: hash auth, backup vhconf, allow IP/CIDR/IPv6, mapowanie listenera
 - Fix: clone/wp/mail/dashboard — `umask 077` tylko w podpowłoce przy zapisie hasła (bez przecieku na REPL); test umask-no-leak
 - Feat: users — list/add(--key)/lock/unlock/expire/del, sudo grant|revoke (visudo -c), audit UID0/puste hasła/NOPASSWD; ochrona root/sesji; test-users-sudo
 - Feat: mysql users/grant/revoke/passwd/slow/tune — ochrona kont systemowych, hasła przez plik 0600 + hm_print_secret, tune tylko doradza; test-mysql-users-tune
@@ -41,4 +51,6 @@
 - Fix: deploy releases — odmowa symlinku `releases`/stamp; status nofollow; prune pod home; populate+build+health przed switch; rollback tylko status `ok`
 - Fix: openvpn status/who/kick — ścieżka statusu z `hm.conf`; kick rc≠0 bez pliku/CN; licznik klientów bez CN=server
 - Fix: openvpn uninstall — pełna kopia przed usunięciem; PREV_FORWARD tylko z manifestu; --force bez PKI/ccd; strip markerów z trybem; ufw delete; export allowlista
+- Feat: `ratelimit` / `protect wp` / `geoip` / `bots` — limity per ścieżka (OLS), ochrona wp-login/xmlrpc + stub Fail2Ban, blokada/allowlista krajów, weryfikacja Googlebot/Bingbot (DNS), IP sesji i firewall whitelist poza limitami; test-ratelimit-protect
+- Feat: `fleet` — multi-server (add/list/remove/test, run równoległy z limitem/timeout, health/update/backup/ssl/report ze zdalnego `--json`); inwentarz 0600, SSH klucze + StrictHostKeyChecking, potwierdzenie komend destrukcyjnych; `update check --json`; test-fleet (HM_FLEET_SSH mock)
 

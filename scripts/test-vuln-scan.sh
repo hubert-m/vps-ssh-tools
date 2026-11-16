@@ -29,6 +29,7 @@ FILESECRET="FILETOKEN9"
 cat > "${TMP}/apt.txt" <<'EOF'
 Listing...
 openssl/noble-security 3.0.13-0ubuntu3.4 amd64 [upgradable from: 3.0.2-0ubuntu1]
+apt/noble-security 2.8.4ubuntu0.1 amd64 [upgradable from: 2.8.3]
 curl/noble-updates 8.5.0-2ubuntu10.6 amd64 [upgradable from: 8.5.0-2ubuntu10.1]
 EOF
 printf '%s\n' 'openssl CVE-2024-5535 high' > "${TMP}/cve.map"
@@ -64,6 +65,17 @@ unset HM_VULN_TOKEN_FILE || true
 out="$(cmd_vuln 2>"${TMP}/err")" || true
 printf '%s\n' "${out}" | grep -q 'openssl' && ok "apt security openssl" || bad "brak openssl"
 printf '%s\n' "${out}" | grep -q 'CVE-2024-5535' && ok "mapa CVE" || bad "brak CVE z mapy"
+# Pakiet security bez CVE w mapie — kolumny nie mogą się przesunąć (puste id).
+printf '%s\n' "${out}" | grep -E '\[high\] os apt( |$)' && ok "os bez CVE: subject=apt" || bad "os bez CVE: subject przesunięty"
+printf '%s\n' "${out}" | grep -A1 -E '\[high\] os apt( |$)' | grep -q 'naprawa: update security' \
+  && ok "os bez CVE: naprawa" || bad "os bez CVE: pusta naprawa"
+json_nocve="$(cmd_vuln os --json 2>/dev/null || true)"
+printf '%s\n' "${json_nocve}" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+apt=[i for i in d["items"] if i.get("subject")=="apt" and i.get("kind")=="os"]
+assert apt and apt[0].get("id")=="" and apt[0].get("fix")=="update security" and "->" in apt[0].get("version","")
+' && ok "os bez CVE: json pola" || bad "os bez CVE: json pola"
 if printf '%s\n' "${out}" | grep -q 'curl'; then
   bad "apt updates (nie security) trafił do wyniku"
 else

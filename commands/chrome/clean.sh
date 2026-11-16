@@ -177,17 +177,39 @@ hm_chrome_owner_ok() {
 }
 
 hm_chrome_path_in_use() {
-  local p="${1:-}" f
+  local p="${1:-}" f arg locktgt lockpid proc_root
   if [[ -n "${HM_CHROME_BUSY:-}" ]] && grep -qxF -- "${p}" "${HM_CHROME_BUSY}" 2>/dev/null; then
     return 0
   fi
-  [[ "${HMTOOLS_TEST:-}" == "1" ]] && return 1
-  [[ -d /proc ]] || return 1
-  for f in /proc/[0-9]*/cmdline; do
-    [[ -r "${f}" ]] || continue
-    if tr '\0' '\n' < "${f}" 2>/dev/null | grep -Fxq -- "${p}"; then
-      return 0
+  # SingletonLock → host-PID (żywy proces = profil zajęty)
+  if [[ -e "${p}/SingletonLock" ]]; then
+    locktgt="$(readlink "${p}/SingletonLock" 2>/dev/null || true)"
+    [[ -z "${locktgt}" && -f "${p}/SingletonLock" ]] && locktgt="$(tr -d '\0' < "${p}/SingletonLock" 2>/dev/null || true)"
+    lockpid="${locktgt##*-}"
+    if [[ "${lockpid}" =~ ^[0-9]+$ ]]; then
+      if [[ -n "${HM_CHROME_PROC:-}" ]]; then
+        [[ -d "${HM_CHROME_PROC}/${lockpid}" ]] && return 0
+      elif kill -0 "${lockpid}" 2>/dev/null; then
+        return 0
+      fi
     fi
+  fi
+  proc_root="${HM_CHROME_PROC:-/proc}"
+  if [[ "${HMTOOLS_TEST:-}" == "1" && -z "${HM_CHROME_PROC:-}" ]]; then
+    return 1
+  fi
+  [[ -d "${proc_root}" ]] || return 1
+  for f in "${proc_root}"/[0-9]*/cmdline; do
+    [[ -r "${f}" ]] || continue
+    while IFS= read -r arg || [[ -n "${arg}" ]]; do
+      [[ -n "${arg}" ]] || continue
+      if [[ "${arg}" == "${p}" || "${arg}" == "--user-data-dir=${p}" ]]; then
+        return 0
+      fi
+      case "${arg}" in
+        --user-data-dir="${p}/"*) return 0 ;;
+      esac
+    done < <(tr '\0' '\n' < "${f}" 2>/dev/null || true)
   done
   return 1
 }

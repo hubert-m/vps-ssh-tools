@@ -4,7 +4,7 @@
 
 _hm_cmd_help update <<'EOF'
 Użycie:
-  update check                         Przegląd: pakiety, security, OLS, CyberPanel, reboot
+  update check [--json]                Przegląd: pakiety, security, OLS, CyberPanel, reboot
   update security [--yes]              Tylko poprawki bezpieczeństwa
   update packages [--exclude GLOB…] [--yes]
                                        Upgrade pakietów (opcjonalne wykluczenia, np. mariadb*)
@@ -200,14 +200,28 @@ hm_update_verify_services() {
 }
 
 cmd_update_check() {
+  local json=0 a
+  for a in "$@"; do
+    case "${a}" in
+      --json) json=1 ;;
+      -h|--help)
+        hm_help_topic update
+        return 0
+        ;;
+      *)
+        hm_err "Nieznana flaga: ${a}"
+        return 1
+        ;;
+    esac
+  done
+
   hm_pkg_bind || {
+    [[ "${json}" -eq 1 ]] && printf '{"error":"no_pkg_mgr"}\n'
     hm_err "Brak menedżera pakietów (apt/dnf/yum)."
     return 1
   }
   local age
   age="$(hm_pkg_cache_age_info)"
-  echo "${C_BOLD}update check${C_RESET}  ${C_DIM}(indeks pakietów: ${age})${C_RESET}"
-  echo
 
   local -a upg=() sec=()
   local name inst cand
@@ -217,6 +231,34 @@ cmd_update_check() {
   while IFS=$'\t' read -r name inst cand; do
     [[ -n "${name}" ]] && sec+=("${name}")
   done < <(hm_pkg_list_security 2>/dev/null || true)
+
+  local ols_l ols_r cp_l auto reboot
+  ols_l="$(hm_update_ols_local_version)"
+  ols_r="$(hm_update_ols_remote_version)"
+  cp_l="$(hm_update_cyberpanel_local_version)"
+  auto="$(hm_pkg_auto_security_status 2>/dev/null | tr -d '[:space:]')"
+  reboot="$(hm_update_reboot_required)"
+
+  if [[ "${json}" -eq 1 ]]; then
+    if ! declare -F hm_json_obj >/dev/null 2>&1; then
+      hm_err "Brak helpera JSON."
+      return 1
+    fi
+    hm_json_obj \
+      upgradable n "${#upg[@]}" \
+      security n "${#sec[@]}" \
+      ols_local s "${ols_l}" \
+      ols_remote s "${ols_r}" \
+      cyberpanel s "${cp_l}" \
+      auto_security s "${auto}" \
+      reboot s "${reboot}" \
+      pkg_cache_age s "${age}"
+    printf '\n'
+    return 0
+  fi
+
+  echo "${C_BOLD}update check${C_RESET}  ${C_DIM}(indeks pakietów: ${age})${C_RESET}"
+  echo
 
   echo "  Pakiety do aktualizacji : ${#upg[@]}"
   if [[ "${#upg[@]}" -gt 0 ]]; then
@@ -234,13 +276,6 @@ cmd_update_check() {
     done | head -15
   fi
   echo
-
-  local ols_l ols_r cp_l auto reboot
-  ols_l="$(hm_update_ols_local_version)"
-  ols_r="$(hm_update_ols_remote_version)"
-  cp_l="$(hm_update_cyberpanel_local_version)"
-  auto="$(hm_pkg_auto_security_status 2>/dev/null | tr -d '[:space:]')"
-  reboot="$(hm_update_reboot_required)"
 
   echo "  OLS lokalna / najnowsza  : ${ols_l} / ${ols_r}"
   echo "  CyberPanel               : ${cp_l}${PANEL:+ (panel=${PANEL})}"

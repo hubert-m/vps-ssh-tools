@@ -38,10 +38,13 @@ hm_vuln_reset() {
   HM_VULN_FINDINGS="$(mktemp "${TMPDIR:-/tmp}/hm-vuln.XXXXXX")"
 }
 
+# Separator poza whitespace IFS — puste CVE/wersja nie skleja kolumn przy read.
+HM_VULN_FS=$'\x1f'
+
 hm_vuln_add() {
   local sev="$1" kind="$2" id="${3:-}" subject="$4" version="${5:-}" fix="$6"
   [[ -n "${HM_VULN_FINDINGS:-}" ]] || hm_vuln_reset
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
     "${sev}" "${kind}" "${id}" "${subject}" "${version}" "${fix}" >> "${HM_VULN_FINDINGS}"
 }
 
@@ -415,7 +418,7 @@ hm_vuln_eol() {
 
 hm_vuln_print_text() {
   local c=0 h=0 m=0 sev kind id subject version fix
-  while IFS=$'\t' read -r sev kind id subject version fix; do
+  while IFS="${HM_VULN_FS}" read -r sev kind id subject version fix; do
     case "${sev}" in
       critical) c=$((c + 1)) ;;
       high) h=$((h + 1)) ;;
@@ -427,16 +430,21 @@ hm_vuln_print_text() {
   echo "  wysokie   : ${h}"
   echo "  średnie   : ${m}"
   echo
-  while IFS=$'\t' read -r sev kind id subject version fix; do
+  while IFS="${HM_VULN_FS}" read -r sev kind id subject version fix; do
     [[ -n "${sev}" ]] || continue
-    printf '  [%s] %s %s %s\n' "${sev}" "${kind}" "${subject}" "${id}"
+    # Bez CVE pokaż wersję (inst -> cand), żeby kolumna nie wyglądała na pustą.
+    if [[ -n "${id}" ]]; then
+      printf '  [%s] %s %s %s\n' "${sev}" "${kind}" "${subject}" "${id}"
+    else
+      printf '  [%s] %s %s %s\n' "${sev}" "${kind}" "${subject}" "${version}"
+    fi
     printf '         naprawa: %s\n' "${fix}"
   done < "${HM_VULN_FINDINGS}"
 }
 
 hm_vuln_print_json() {
   local c=0 h=0 m=0 l=0 sev kind id subject version fix first=1
-  while IFS=$'\t' read -r sev kind id subject version fix; do
+  while IFS="${HM_VULN_FS}" read -r sev kind id subject version fix; do
     case "${sev}" in
       critical) c=$((c + 1)) ;;
       high) h=$((h + 1)) ;;
@@ -445,7 +453,7 @@ hm_vuln_print_json() {
     esac
   done < "${HM_VULN_FINDINGS}"
   printf '{"critical":%s,"high":%s,"medium":%s,"low":%s,"items":[' "${c}" "${h}" "${m}" "${l}"
-  while IFS=$'\t' read -r sev kind id subject version fix; do
+  while IFS="${HM_VULN_FS}" read -r sev kind id subject version fix; do
     [[ -n "${sev}" ]] || continue
     if [[ "${first}" -eq 0 ]]; then
       printf ','

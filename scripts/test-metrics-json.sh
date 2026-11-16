@@ -63,7 +63,7 @@ export HM_JSON_DIR="${fix}"
 
 printf '%s\n' $'a"b\t8.3\tyes\t10\tactive' $'s.test\t8.2\tno\t0\tsuspended' >"${fix}/webs.tsv"
 printf '%s\n' $'a"b\t6.4\t1\t0\toff\t8.3' >"${fix}/wp.tsv"
-printf '%s\n' $'a.test\tok\t12\t2026-12-01' >"${fix}/ssl.tsv"
+printf '%s\n' $'a.test\tok\t12\t2026-12-01' $'b.missing\tmissing\t0\t' >"${fix}/ssl.tsv"
 printf '%s\n' $'lsws\tlsws\tactive\tenabled' $'cron\tcron\tinactive\tdisabled' $'ghost\tghost\tunknown\tunknown' >"${fix}/services.tsv"
 printf '%s\n' $'full\t20261110-120000\t100\ttrue' $'full\t20261101-120000\t900\ttrue' $'full\t20261111-120000\t10\tfalse' $'site\t20261109-000000\t50\ttrue' >"${fix}/backup-list.tsv"
 printf '%s\n' $'local\tlocal\t/backup/hmtools\ttrue' >"${fix}/backup-targets.tsv"
@@ -137,11 +137,16 @@ python3 -c 'import json,sys; d=json.load(open(sys.argv[1],encoding="utf-8")); as
 dest="${base}/text/hmtools.prom"
 printf '%s\n' "$(cmd_metrics export --textfile "${dest}")" >/dev/null
 [[ -f "${dest}" ]] && ok prom-file || bad prom-file
+mode="$(stat -c '%a' "${dest}" 2>/dev/null || stat -f '%OLp' "${dest}" 2>/dev/null || echo '?')"
+[[ "${mode}" == "644" || "${mode}" == "0644" ]] && ok prom-mode || bad "prom-mode=${mode}"
 leftover="$(find "${base}/text" -name 'hmtools.prom.*' | wc -l | tr -d ' ')"
 [[ "${leftover}" == "0" ]] && ok prom-atomic || bad "prom-atomic=${leftover}"
 grep -q 'hmtools_backup_age_seconds{target="full"} 100' "${dest}" && ok prom-backup || bad prom-backup
 grep -q 'hmtools_backup_age_seconds{target="site"} 50' "${dest}" && ok prom-site || bad prom-site
+grep -q 'hmtools_cert_present{domain="a.test"} 1' "${dest}" && ok prom-cert-present || bad prom-cert-present
 grep -q 'hmtools_cert_days_left{domain="a.test"} 12' "${dest}" && ok prom-cert || bad prom-cert
+grep -q 'hmtools_cert_present{domain="b.missing"} 0' "${dest}" && ok prom-cert-miss || bad prom-cert-miss
+grep -q 'hmtools_cert_days_left{domain="b.missing"}' "${dest}" && bad prom-cert-miss-days || ok prom-cert-miss-days
 grep -q 'hmtools_service_up{name="lsws"} 1' "${dest}" && ok prom-up || bad prom-up
 grep -q 'hmtools_service_up{name="cron"} 0' "${dest}" && ok prom-down || bad prom-down
 grep -q 'ghost' "${dest}" && bad prom-unknown || ok prom-unknown
@@ -156,6 +161,19 @@ dest2="${base}/text/hmtools2.prom"
 cmd_metrics export --textfile "${dest2}" >/dev/null
 grep -q 'hmtools_http_up' "${dest2}" && bad prom-no-http || ok prom-no-http
 grep -q 'hmtools_security_updates_pending 2' "${dest2}" && ok prom-upd || bad prom-upd
+
+# Ochrona ścieżki: tylko .prom + odmowa obcych plików
+set +e
+cmd_metrics export --textfile "${base}/text/hmtools.txt" >"${base}/bad-ext.out" 2>"${base}/bad-ext.err"
+rc=$?
+set -e
+[[ "${rc}" -ne 0 ]] && ok prom-ext || bad prom-ext
+printf '%s\n' '# HELP other_metric' >"${base}/text/other.prom"
+set +e
+cmd_metrics export --textfile "${base}/text/other.prom" >"${base}/bad-foreign.out" 2>"${base}/bad-foreign.err"
+rc=$?
+set -e
+[[ "${rc}" -ne 0 ]] && ok prom-foreign || bad prom-foreign
 
 cron="${base}/cron.d/hmtools-metrics"
 HM_METRICS_CRON="${cron}" HM_METRICS_TEXTFILE="${dest}" cmd_metrics timer --yes >/dev/null

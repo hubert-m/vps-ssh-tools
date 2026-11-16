@@ -283,7 +283,7 @@ hm_tx_undo_ok() {
   if [[ "${spec}" == *$'\t'* ]]; then
     kind="${spec%%$'\t'*}"
     case "${kind}" in
-      mysql-drop-db|mysql-drop-user|pg-drop|systemd-unit|nginx-vhost|fpm-pool|port-release|userdel|resource-clear)
+      mysql-drop-db|mysql-drop-user|pg-drop|systemd-unit|nginx-vhost|fpm-pool|port-release|userdel|resource-clear|compose-down)
         return 0
         ;;
     esac
@@ -402,7 +402,7 @@ hm_tx_undo_fpm() {
 }
 
 hm_tx_undo_dispatch() {
-  local spec="$1" kind rest a b q
+  local spec="$1" kind rest a b q wd file project
   if [[ "${spec}" != *$'\t'* ]]; then
     hm_tx_undo_legacy "${spec}"
     return $?
@@ -440,6 +440,18 @@ hm_tx_undo_dispatch() {
     port-release)
       if declare -F hm_site_web_port_release >/dev/null 2>&1; then
         hm_site_web_port_release "${a}"
+      fi
+      ;;
+    compose-down)
+      # a=project, b=workdir[\tcompose]
+      project="${a}"
+      wd="${b%%$'\t'*}"
+      file=""
+      if [[ "${b}" == *$'\t'* ]]; then
+        file="${b#*$'\t'}"
+      fi
+      if declare -F hm_site_docker_down >/dev/null 2>&1; then
+        hm_site_docker_down "${wd}" "${project}" "${file}"
       fi
       ;;
     resource-clear)

@@ -49,15 +49,26 @@ hm_metrics_prom_body() {
   while IFS= read -r line || [[ -n "${line}" ]]; do
     [[ -n "${line}" ]] || continue
     IFS=$'\t' read -r domain status days _ <<<"${line}"
-    [[ "${days}" =~ ^-?[0-9]+$ ]] || continue
     [[ -n "${domain}" ]] || continue
     if [[ "${have_cert}" -eq 0 ]]; then
       have_cert=1
-      out+="# HELP hmtools_cert_days_left Dni do wygaśnięcia certyfikatu"
+      out+="# HELP hmtools_cert_present 1 gdy certyfikat jest obecny"
+      out+=$'\n'
+      out+="# TYPE hmtools_cert_present gauge"
+      out+=$'\n'
+      out+="# HELP hmtools_cert_days_left Dni do wygaśnięcia certyfikatu (tylko gdy present=1)"
       out+=$'\n'
       out+="# TYPE hmtools_cert_days_left gauge"
       out+=$'\n'
     fi
+    if [[ "${status}" == "missing" || -z "${status}" ]]; then
+      out+="hmtools_cert_present{domain=\"$(hm_prom_label "${domain}")\"} 0"
+      out+=$'\n'
+      continue
+    fi
+    out+="hmtools_cert_present{domain=\"$(hm_prom_label "${domain}")\"} 1"
+    out+=$'\n'
+    [[ "${days}" =~ ^-?[0-9]+$ ]] || continue
     out+="hmtools_cert_days_left{domain=\"$(hm_prom_label "${domain}")\"} ${days}"
     out+=$'\n'
   done < <(hm_rows_ssl)
@@ -124,12 +135,40 @@ hm_metrics_prom_body() {
   printf '%s' "${out}"
 }
 
+hm_metrics_dest_ok() {
+  local dest="${1:-}" base
+  [[ -n "${dest}" ]] || return 1
+  case "${dest}" in
+    *.prom) ;;
+    *)
+      hm_err "Ścieżka --textfile musi kończyć się na .prom"
+      return 1
+      ;;
+  esac
+  base="$(basename -- "${dest}")"
+  if [[ -e "${dest}" ]]; then
+    [[ -f "${dest}" && ! -L "${dest}" ]] || {
+      hm_err "Cel nie jest zwykłym plikiem: ${dest}"
+      return 1
+    }
+    # Nadpisuj tylko własne pliki hmtools (nagłówek lub nazwa).
+    if [[ "${base}" != hmtools*.prom ]]; then
+      if ! head -5 "${dest}" 2>/dev/null | grep -qE 'hmtools_|# HELP hmtools'; then
+        hm_err "Odmowa nadpisania obcego pliku: ${dest}"
+        return 1
+      fi
+    fi
+  fi
+  return 0
+}
+
 hm_metrics_atomic_write() {
   local dest="${1:-}" body="${2:-}" dir tmp
   [[ -n "${dest}" ]] || {
     hm_err "Brak ścieżki pliku metryk."
     return 1
   }
+  hm_metrics_dest_ok "${dest}" || return 1
   dir="$(dirname "${dest}")"
   mkdir -p "${dir}" || {
     hm_err "Nie mogę utworzyć katalogu ${dir}."
@@ -144,11 +183,14 @@ hm_metrics_atomic_write() {
     hm_err "Zapis metryk nie powiódł się."
     return 1
   fi
+  # node_exporter czyta textfile jako użytkownik prometheus/node_exporter
+  chmod 0644 "${tmp}" 2>/dev/null || true
   if ! mv -f "${tmp}" "${dest}"; then
     rm -f "${tmp}"
     hm_err "Podmiana ${dest} nie powiodła się."
     return 1
   fi
+  chmod 0644 "${dest}" 2>/dev/null || true
   return 0
 }
 
@@ -160,7 +202,7 @@ hm_metrics_export() {
       --textfile)
         dest="${2:-}"
         [[ -n "${dest}" ]] || {
-          hm_err "Użycie: metrics export --textfile ŚCIEŻKA"
+          hm_err "Użycie: metrics export --textfile ŚCIEŻKA.prom"
           return 1
         }
         shift 2 || true
@@ -175,6 +217,7 @@ hm_metrics_export() {
         ;;
     esac
   done
+  hm_metrics_dest_ok "${dest}" || return 1
   body="$(hm_metrics_prom_body)" || return 1
   hm_metrics_atomic_write "${dest}" "${body}" || return 1
   printf '%s\n' "${dest}"

@@ -93,6 +93,7 @@ cmd_site_new() {
   local ops_cron="" ops_cmd="" ops_worker="" ops_n="1" ops_health="" ops_port="" ops_on=0
   local dotnet_ver="" dotnet_kind="aspnetcore-runtime" dotnet_source="microsoft-repo" app_dll="" dotnet_on=0
   local python_ver="" python_source="uv" app_server="gunicorn" wsgi="config.wsgi" celery=0 python_on=0
+  local docker_on=0 docker_image="" docker_cport="80" spa_on=0 build_cmd="" build_out="dist"
   local -a redis_roles=()
   local a
   while [[ $# -gt 0 ]]; do
@@ -102,11 +103,37 @@ cmd_site_new() {
       --runtime)
         runtime="${1:-}"; shift || true
         [[ "${runtime}" == "dotnet" ]] && dotnet_on=1
-        [[ "${runtime}" == "python" ]] && python_on=1 ;;
+        [[ "${runtime}" == "python" ]] && python_on=1
+        [[ "${runtime}" == "docker" ]] && docker_on=1
+        [[ "${runtime}" == "spa" ]] && { runtime="static"; spa_on=1; }
+        [[ "${runtime}" == "static" ]] && web_on=1
+        ;;
       --runtime=*)
         runtime="${a#*=}"
         [[ "${runtime}" == "dotnet" ]] && dotnet_on=1
-        [[ "${runtime}" == "python" ]] && python_on=1 ;;
+        [[ "${runtime}" == "python" ]] && python_on=1
+        [[ "${runtime}" == "docker" ]] && docker_on=1
+        [[ "${runtime}" == "spa" ]] && { runtime="static"; spa_on=1; }
+        [[ "${runtime}" == "static" ]] && web_on=1
+        ;;
+      --image)
+        docker_image="${1:-}"; docker_on=1; runtime="docker"; shift || true ;;
+      --image=*)
+        docker_image="${a#*=}"; docker_on=1; runtime="docker" ;;
+      --container-port)
+        docker_cport="${1:-}"; docker_on=1; shift || true ;;
+      --container-port=*)
+        docker_cport="${a#*=}"; docker_on=1 ;;
+      --spa)
+        spa_on=1; runtime="static"; web_on=1; vhost_kind="spa" ;;
+      --build)
+        build_cmd="${1:-}"; shift || true ;;
+      --build=*)
+        build_cmd="${a#*=}" ;;
+      --out)
+        build_out="${1:-}"; shift || true ;;
+      --out=*)
+        build_out="${a#*=}" ;;
       --python)
         python_ver="${1:-}"; python_on=1; shift || true ;;
       --python=*)
@@ -322,7 +349,7 @@ cmd_site_new() {
         save_profile="${a#*=}" ;;
       --yes|-y) yes=1 ;;
       help|-h|--help)
-        echo "Użycie: site new <domena> [--runtime node|php] [--db mysql|postgres|sqlite|none] [--from profil.json] [--save-profile plik] [--resume] [--rollback] [--adopt] [--dry-run] [--json] [--yes]"
+        echo "Użycie: site new <domena> [--runtime node|php|static|docker] [--spa] [--image OBRAZ] [--container-port N] [--build CMD] [--out dist] [--webserver nginx] [--db mysql|postgres|sqlite|none] [--from profil.json] [--save-profile plik] [--resume] [--rollback] [--adopt] [--dry-run] [--json] [--yes]"
         return 0
         ;;
       -*)
@@ -359,6 +386,23 @@ cmd_site_new() {
 
   [[ -n "${domain}" ]] || { hm_err "Użycie: site new <domena> --db …"; return 1; }
   hm_is_valid_domain "${domain}" || { hm_err "Nieprawidłowa domena: ${domain}"; return 1; }
+  # Static/SPA/Docker → domyślnie włącz vhost (nginx), chyba że już ustawiono.
+  if [[ "${runtime}" == "static" || "${spa_on}" -eq 1 || "${preset_app}" == "static" || "${preset_app}" == "spa" ]]; then
+    web_on=1
+    [[ -n "${webserver}" ]] || webserver="${WEBSERVER:-nginx}"
+    if [[ "${spa_on}" -eq 1 || "${preset_app}" == "spa" || "${runtime}" == "spa" ]]; then
+      [[ -n "${vhost_kind}" ]] || vhost_kind="spa"
+    else
+      [[ -n "${vhost_kind}" ]] || vhost_kind="static"
+    fi
+  fi
+  if [[ "${docker_on}" -eq 1 || "${runtime}" == "docker" ]]; then
+    docker_on=1
+    runtime="docker"
+    web_on=1
+    [[ -n "${webserver}" ]] || webserver="${WEBSERVER:-nginx}"
+    [[ -n "${vhost_kind}" ]] || vhost_kind="proxy"
+  fi
   if [[ "${dry}" -eq 1 ]]; then
     if [[ "${json}" -eq 1 ]]; then
       _hm_site_new_esc() {
@@ -565,6 +609,47 @@ cmd_site_new() {
       [[ -n "${HM_TX_JOURNAL:-}" ]] && hm_tx_rollback "${domain}" || true
       hm_err "site new nieudany — cofnięto wdrożenie po błędzie Pythona."
       return 1
+    fi
+  fi
+  if [[ "${docker_on}" -eq 1 ]]; then
+    if ! declare -F hm_site_docker_provision >/dev/null 2>&1; then
+      hm_err "Brak lib/site/docker.sh."
+      return 1
+    fi
+    if ! hm_site_docker_provision "${domain}" "${docker_image}" "${docker_cport}" "${port:-${proxy_port:-auto}}" "${yes}" >/dev/null; then
+      [[ -n "${HM_TX_JOURNAL:-}" ]] && hm_tx_rollback "${domain}" || true
+      hm_err "site new nieudany — cofnięto wdrożenie po błędzie Dockera."
+      return 1
+    fi
+    port="${HM_SITE_DOCKER_PORT:-${port}}"
+    proxy_port="${port}"
+  fi
+  # Static/SPA: opcjonalny build (Node tylko do budowania) + placeholder index.html
+  if [[ "${runtime}" == "static" || "${spa_on}" -eq 1 ]]; then
+    local home_static ph
+    home_static="$(hm_site_home "${domain}")"
+    ph="${home_static}/public_html"
+    mkdir -p "${ph}"
+    if [[ -n "${build_cmd}" ]]; then
+      hm_info "Build static/SPA: ${build_cmd}"
+      if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+        mkdir -p "${home_static}/${build_out}"
+        printf '<!doctype html><title>built</title>\n' > "${home_static}/${build_out}/index.html"
+      else
+        (cd "${home_static}" && bash -lc "${build_cmd}") || {
+          [[ -n "${HM_TX_JOURNAL:-}" ]] && hm_tx_rollback "${domain}" || true
+          hm_err "Build static/SPA nieudany."
+          return 1
+        }
+      fi
+      if [[ -d "${home_static}/${build_out}" ]]; then
+        # Publikacja out/ → public_html (bez kasowania całego HOME)
+        find "${ph}" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+        cp -a "${home_static}/${build_out}/." "${ph}/"
+      fi
+    fi
+    if [[ ! -f "${ph}/index.html" ]]; then
+      printf '%s\n' '<!doctype html><meta charset="utf-8"><title>hmtools</title><h1>OK</h1>' > "${ph}/index.html"
     fi
   fi
   if [[ "${web_on}" -eq 1 ]]; then

@@ -51,6 +51,8 @@ source "${HMTOOLS_ROOT}/lib/site/dotnet.sh"
 # shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/site/python.sh"
 # shellcheck disable=SC1091
+source "${HMTOOLS_ROOT}/lib/site/docker.sh"
+# shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/site/catalog.sh"
 # shellcheck disable=SC1091
 source "${HMTOOLS_ROOT}/lib/site/lifecycle.sh"
@@ -72,6 +74,12 @@ hm_require_root
 hm_load_config
 hm_detect_all
 hm_log_init
+
+case "${LANG:-}" in
+  C|POSIX)
+    hm_warn "LANG=${LANG} — brak UTF-8; w shellu: export LANG=pl_PL.UTF-8 lub: system locale fix"
+    ;;
+esac
 
 hm_dispatch() {
   local cmd="${1:-}"

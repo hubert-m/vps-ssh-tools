@@ -279,6 +279,25 @@ line="$(hm_chrome_one_line $'--proxy-server=http://user:sekret@10.0.0.1:8080\n\0
 [[ "${line}" != *sekret* && "${line}" == *"[redacted]@10.0.0.1:8080"* ]] && ok redact-proxy || bad "redact=${line}"
 [[ "${line}" != *$'\033'* ]] && ok strip-ctrl || bad strip-ctrl
 
+# path_in_use: --user-data-dir=PATH (nie samo exact match)
+prof="${base}/puppeteer_dev_chrome_profile-T233"
+mkdir -p "${prof}" "${base}/fakeproc/4242"
+printf -- '--headless\0--user-data-dir=%s\0' "${prof}" > "${base}/fakeproc/4242/cmdline"
+export HM_CHROME_PROC="${base}/fakeproc"
+if hm_chrome_path_in_use "${prof}"; then
+  ok path-in-use-udd
+else
+  bad path-in-use-udd
+fi
+# SingletonLock host-PID
+ln -sfn "testhost-4242" "${prof}/SingletonLock" 2>/dev/null || printf 'testhost-4242' > "${prof}/SingletonLock"
+if hm_chrome_path_in_use "${prof}"; then
+  ok path-in-use-lock
+else
+  bad path-in-use-lock
+fi
+unset HM_CHROME_PROC
+
 if command -v python3 >/dev/null 2>&1; then
   pout="$(printf '%s' "${raw}" | hm_chrome_format_targets_py)"
   [[ "${pout}" != *WSSECRETTOKEN* && "${pout}" == *ABCDEFGH12345678* && "${pout}" == *'a}b "hi"'* ]] \
