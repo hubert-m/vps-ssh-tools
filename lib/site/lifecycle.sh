@@ -31,10 +31,17 @@ hm_site_resource_add() {
     hm_err "Odmowa zapisu listy zasobów przez symlink."
     return 1
   fi
+  if [[ -f "${file}" ]] && grep -F -q "\"path\":\"${path}\"" "${file}" 2>/dev/null; then
+    if grep -F "\"path\":\"${path}\"" "${file}" | grep -F -q "\"kind\":\"${kind}\""; then
+      chmod 0600 "${file}" 2>/dev/null || true
+      return 0
+    fi
+  fi
   printf '{"kind":"%s","path":"%s","shared":%s}\n' \
     "$(hm_site_json_escape "${kind}")" \
     "$(hm_site_json_escape "${path}")" \
     "${flag}" >> "${file}"
+  chmod 0600 "${file}" 2>/dev/null || true
 }
 
 hm_site_resource_read() {
@@ -148,9 +155,11 @@ hm_site_runtime_php() {
 }
 
 hm_site_runtime_node() {
-  local domain="$1" ver="$2" path old home nvmrc unit line
+  local domain="$1" ver="$2" path old home nvmrc unit line runtime
   path="$(hm_site_manifest_path "${domain}")"
   [[ -f "${path}" ]] || { hm_err "Brak manifestu."; return 1; }
+  runtime="$(sed -n 's/.*"runtime":{"type":"\([^"]*\)".*/\1/p' "${path}" | head -1)"
+  [[ "${runtime}" == "node" ]] || { hm_err "site runtime node: serwis nie jest Node (${runtime:-brak})."; return 1; }
   old="$(hm_site_runtime_version "${path}")"
   home="$(hm_site_home "${domain}")"
   nvmrc="${home}/.nvmrc"
@@ -172,7 +181,12 @@ hm_site_runtime_node() {
     hm_err "Node ${ver} nie wstał — zostaje ${old:-dotychczasowa}."
     return 1
   fi
-  printf '%s\n' "${ver}" > "${nvmrc}"
+  printf '%s\n' "${ver}" | hm_site_write_nofollow "${nvmrc}" || {
+    hm_site_runtime_restore "${nvmrc}.hmbak" "${nvmrc}"
+    hm_site_runtime_restore "${path}.hmbak" "${path}"
+    hm_site_runtime_restore "${unit}.hmbak" "${unit}"
+    return 1
+  }
   if [[ -n "${unit}" && -f "${unit}" && -n "${old}" ]]; then
     sed "s/${old}/${ver}/g" "${unit}" > "${unit}.new"
     cat "${unit}.new" > "${unit}"
@@ -365,47 +379,118 @@ hm_site_doctor_readable() {
   return 0
 }
 
+# Kanoniczna ścieżka (także gdy plik jeszcze nie istnieje).
+hm_site_canon_path() {
+  local p="$1"
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m -- "${p}" 2>/dev/null && return 0
+  fi
+  printf '%s' "${p}"
+}
+
+# Basename unitu systemd należący do domeny (dokładny slug, bez cudzych hm-*).
+hm_site_unit_basename_ok() {
+  local base="$1" domain="$2" safe="$3" d s
+  [[ "${base}" != *..* && "${base}" == hm-* ]] || return 1
+  d="${domain//./\\.}"
+  s="${safe//./\\.}"
+  [[ "${base}" =~ ^hm-(app-|worker-|cron-|celery-)?(${d}|${s})((@[A-Za-z0-9._-]+)|(-(worker|cron|beat|schedule)(-[A-Za-z0-9._-]+)*))?(\.(service|timer))?$ ]]
+}
+
+# Vhost: dokładna nazwa pliku = domena lub domena.conf (bez prefiksu ${domain}*).
+hm_site_vhost_path_ok() {
+  local path="$1" domain="$2" base
+  base="$(basename -- "${path}")"
+  [[ "${base}" == "${domain}" || "${base}" == "${domain}.conf" ]] || return 1
+  case "${path}" in
+    /etc/nginx/sites-available/"${base}"|/etc/nginx/sites-enabled/"${base}")
+      return 0 ;;
+    /etc/apache2/sites-available/"${base}"|/etc/apache2/sites-enabled/"${base}")
+      return 0 ;;
+    /etc/httpd/conf.d/"${base}")
+      return 0 ;;
+  esac
+  [[ -n "${HM_SITE_VHOST_DIR:-}" && "${path}" == "${HM_SITE_VHOST_DIR}/${base}" ]] && return 0
+  [[ -n "${HM_SITE_VHOST_ENABLED_DIR:-}" && "${path}" == "${HM_SITE_VHOST_ENABLED_DIR}/${base}" ]] && return 0
+  return 1
+}
+
 hm_site_delete_path_allowed() {
-  local path="$1" kind="$2" domain="${3:-${HM_DEL_DOMAIN:-}}" safe="" state="" home="" real="" realhome=""
+  local path="$1" kind="$2" domain="${3:-${HM_DEL_DOMAIN:-}}" safe="" state="" home="" real="" realhome="" canon="" base="" dir=""
+  local vhost_link=0
   [[ "${path}" == /* && "${path}" != "/" ]] || return 1
-  [[ -L "${path}" ]] && return 1
-  if declare -F hm_site_path_has_symlink >/dev/null 2>&1 && hm_site_path_has_symlink "${path}"; then
-    return 1
-  fi
-  if [[ -e "${path}" ]]; then
-    real="$(readlink -f -- "${path}" 2>/dev/null || true)"
-    [[ -n "${real}" && "${real}" == "${path}" ]] || return 1
-  fi
+  [[ -n "${domain}" ]] || return 1
   safe="${domain//[^A-Za-z0-9._-]/_}"
   state="$(hm_site_state_dir "${domain}")"
+  canon="$(hm_site_canon_path "${path}")"
+  [[ -n "${canon}" && "${canon}" == /* && "${canon}" != "/" ]] || return 1
+
+  # sites-enabled: symlink vhosta wolno skasować jako link (bez podążania).
+  if [[ -L "${path}" ]]; then
+    if [[ "${kind}" == "vhost" ]] && hm_site_vhost_path_ok "${path}" "${domain}"; then
+      case "${path}" in
+        /etc/nginx/sites-enabled/*|/etc/apache2/sites-enabled/*)
+          vhost_link=1
+          ;;
+        *)
+          if [[ -n "${HM_SITE_VHOST_ENABLED_DIR:-}" && "${path}" == "${HM_SITE_VHOST_ENABLED_DIR}/"* ]]; then
+            vhost_link=1
+          else
+            return 1
+          fi
+          ;;
+      esac
+    else
+      return 1
+    fi
+  fi
+
+  if [[ "${vhost_link}" -eq 0 ]]; then
+    if declare -F hm_site_path_has_symlink >/dev/null 2>&1 && hm_site_path_has_symlink "${path}"; then
+      return 1
+    fi
+    if [[ -e "${path}" && ! -L "${path}" ]]; then
+      real="$(readlink -f -- "${path}" 2>/dev/null || true)"
+      [[ -n "${real}" && "${real}" == "${path}" ]] || return 1
+    fi
+  fi
+
   case "${kind}" in
     worker|timer|unit|cron|pm2)
-      [[ "${path}" == /etc/systemd/system/hm-* ]] && return 0
-      [[ -n "${HM_SITE_SYSTEMD_DIR:-}" && "${path}" == "${HM_SITE_SYSTEMD_DIR}/hm-"* ]] && return 0
+      base="$(basename -- "${canon}")"
+      dir="$(dirname -- "${canon}")"
+      hm_site_unit_basename_ok "${base}" "${domain}" "${safe}" || return 1
+      [[ "${dir}" == /etc/systemd/system ]] && return 0
+      [[ -n "${HM_SITE_SYSTEMD_DIR:-}" && "${dir}" == "${HM_SITE_SYSTEMD_DIR}" ]] && return 0
+      return 1
       ;;
     logrotate)
-      [[ "${path}" == "/etc/logrotate.d/hm-${safe}" || "${path}" == "/etc/logrotate.d/hm-${safe}.conf" ]] && return 0
-      [[ -n "${HM_SITE_LOGROTATE_DIR:-}" && "${path}" == "${HM_SITE_LOGROTATE_DIR}/hm-${safe}"* ]] && return 0
+      [[ "${canon}" == "/etc/logrotate.d/hm-${safe}" || "${canon}" == "/etc/logrotate.d/hm-${safe}.conf" ]] && return 0
+      [[ -n "${HM_SITE_LOGROTATE_DIR:-}" && ( "${canon}" == "${HM_SITE_LOGROTATE_DIR}/hm-${safe}" || "${canon}" == "${HM_SITE_LOGROTATE_DIR}/hm-${safe}.conf" ) ]] && return 0
+      return 1
       ;;
     firewall)
-      [[ "${path}" == "/etc/hmtools/firewall/hm-${safe}.rules" ]] && return 0
-      [[ -n "${HM_SITE_FW_DIR:-}" && "${path}" == "${HM_SITE_FW_DIR}/hm-${safe}"* ]] && return 0
+      [[ "${canon}" == "/etc/hmtools/firewall/hm-${safe}.rules" ]] && return 0
+      [[ -n "${HM_SITE_FW_DIR:-}" && "${canon}" == "${HM_SITE_FW_DIR}/hm-${safe}.rules" ]] && return 0
+      return 1
       ;;
     vhost)
-      [[ "${path}" == /etc/nginx/sites-available/${domain}* || "${path}" == /etc/nginx/sites-enabled/${domain}* ]] && return 0
-      [[ "${path}" == /etc/apache2/sites-available/${domain}* || "${path}" == /etc/apache2/sites-enabled/${domain}* ]] && return 0
-      [[ "${path}" == /etc/httpd/conf.d/${domain}* ]] && return 0
-      [[ -n "${HM_SITE_VHOST_DIR:-}" && "${path}" == "${HM_SITE_VHOST_DIR}/${domain}"* ]] && return 0
+      if [[ "${vhost_link}" -eq 1 ]]; then
+        return 0
+      fi
+      hm_site_vhost_path_ok "${canon}" "${domain}" && return 0
+      return 1
       ;;
     fpm|db|port|compose)
-      [[ "${path}" == "${state}/"* ]] && return 0
-      [[ "${path}" == /etc/php/*/fpm/pool.d/${domain}.conf ]] && return 0
+      [[ "${canon}" == "${state}/"* ]] && return 0
+      [[ "${canon}" == /etc/php/*/fpm/pool.d/"${domain}".conf ]] && return 0
+      return 1
       ;;
   esac
   home="$(hm_site_home "${domain}")"
-  [[ -n "${home}" && "${home}" != "/" && "${path}" == "${home}/"* ]] || return 1
+  [[ -n "${home}" && "${home}" != "/" && "${canon}" == "${home}/"* ]] || return 1
   [[ -L "${home}" ]] && return 1
-  if [[ -e "${path}" ]]; then
+  if [[ -e "${path}" && ! -L "${path}" ]]; then
     realhome="$(readlink -f -- "${home}" 2>/dev/null || true)"
     real="$(readlink -f -- "${path}" 2>/dev/null || true)"
     [[ -n "${real}" && -n "${realhome}" && "${real}" == "${realhome}/"* ]] || return 1
@@ -420,7 +505,9 @@ hm_site_lifecycle_remove_path() {
     hm_warn "Odmowa usunięcia ścieżki spoza allowlisty: ${path}"
     return 1
   fi
-  if [[ -e "${path}" || -L "${path}" ]]; then
+  if [[ -L "${path}" ]]; then
+    rm -f -- "${path}"
+  elif [[ -e "${path}" ]]; then
     rm -rf -- "${path}"
   fi
   if [[ -n "${HM_SITE_LIFECYCLE_LOG:-}" ]]; then
@@ -430,7 +517,7 @@ hm_site_lifecycle_remove_path() {
 }
 
 hm_site_lifecycle_execute_delete() {
-  local k line kind path shared
+  local k line kind path shared did_vhost=0
   local -a order=(worker timer unit pm2 compose vhost fpm db firewall port logrotate cron)
   for k in "${order[@]}"; do
     for line in "${HM_DEL_WIZARD[@]+"${HM_DEL_WIZARD[@]}"}"; do
@@ -453,6 +540,10 @@ hm_site_lifecycle_execute_delete() {
         continue
       fi
       hm_site_lifecycle_remove_path "${path}" "${kind}"
+      [[ "${kind}" == "vhost" ]] && did_vhost=1
     done
   done
+  if [[ "${did_vhost}" -eq 1 ]] && declare -F hm_site_web_reload >/dev/null 2>&1; then
+    hm_site_web_reload "${HM_SITE_WEBSERVER:-nginx}" 2>/dev/null || true
+  fi
 }

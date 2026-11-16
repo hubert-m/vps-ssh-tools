@@ -55,6 +55,17 @@ hm_site_write_nofollow() {
   mv -f "${tmp}" "${path}"
 }
 
+# Kasowanie drzewa w HOME bez podążania za symlinkiem katalogu/pliku.
+hm_site_rm_nofollow() {
+  local path="$1"
+  [[ -n "${path}" && "${path}" != "/" ]] || return 1
+  if [[ -L "${path}" ]] || hm_site_path_has_symlink "${path}"; then
+    hm_err "Odmowa kasowania przez symlink: ${path}"
+    return 1
+  fi
+  rm -rf -- "${path}"
+}
+
 hm_site_journal_dir() {
   printf '%s' "${HM_SITE_JOURNAL_DIR:-/var/lib/hmtools/journal}"
 }
@@ -235,7 +246,7 @@ hm_tx_undo_systemd() {
 }
 
 hm_tx_undo_vhost() {
-  local path="$1"
+  local path="$1" bak="${1}.hmbak"
   case "${path}" in
     /etc/nginx/sites-available/*|/etc/nginx/sites-enabled/*|/etc/nginx/conf.d/*)
       ;;
@@ -245,13 +256,29 @@ hm_tx_undo_vhost() {
       ;;
     *) return 1 ;;
   esac
-  rm -f -- "${path}"
+  if [[ -L "${path}" ]]; then
+    rm -f -- "${path}"
+  elif [[ -f "${bak}" ]]; then
+    mv -f -- "${bak}" "${path}"
+  else
+    rm -f -- "${path}"
+  fi
 }
 
 hm_tx_undo_fpm() {
-  local path="$1"
+  local path="$1" bak="${1}.hmbak" ver=""
   [[ "${path}" == *pool.d/*.conf || "${path}" == */fpm.conf ]] || return 1
-  rm -f -- "${path}"
+  if [[ -f "${bak}" ]]; then
+    mv -f -- "${bak}" "${path}"
+  else
+    rm -f -- "${path}"
+  fi
+  if [[ "${path}" =~ /php/([0-9]+\.[0-9]+)/ ]]; then
+    ver="${BASH_REMATCH[1]}"
+  fi
+  if [[ -n "${ver}" ]] && declare -F hm_site_php_fpm_reload >/dev/null 2>&1; then
+    hm_site_php_fpm_reload "${ver}" || true
+  fi
 }
 
 hm_tx_undo_dispatch() {
@@ -290,6 +317,14 @@ hm_tx_undo_dispatch() {
     systemd-unit) hm_tx_undo_systemd "${a}" ;;
     nginx-vhost) hm_tx_undo_vhost "${a}" ;;
     fpm-pool) hm_tx_undo_fpm "${a}" ;;
+    port-release)
+      if declare -F hm_site_web_port_release >/dev/null 2>&1; then
+        hm_site_web_port_release "${a}"
+      fi
+      ;;
+    userdel)
+      hm_tx_undo_legacy "userdel ${a}"
+      ;;
     *) return 1 ;;
   esac
 }
@@ -331,7 +366,13 @@ hm_site_manifest_record_db() {
   local file
   file="$(hm_site_manifest_dir)/.${domain}.dbs"
   mkdir -p "$(hm_site_manifest_dir)"
+  chmod 0700 "$(hm_site_manifest_dir)" 2>/dev/null || true
+  if hm_site_path_has_symlink "${file}" || hm_site_path_has_symlink "$(dirname "${file}")"; then
+    hm_err "Odmowa zapisu .dbs przez symlink."
+    return 1
+  fi
   printf '%s\t%s\t%s\t%s\t%s\n' "${typ}" "${name}" "${user}" "${host}" "${port}" >> "${file}"
+  chmod 0600 "${file}" 2>/dev/null || true
 }
 
 hm_site_manifest_write() {

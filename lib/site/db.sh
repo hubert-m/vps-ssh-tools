@@ -326,20 +326,121 @@ hm_site_redis_major() {
   printf '%s' "${v}"
 }
 
-hm_site_redis_next_db() {
-  local domain="$1" path used="|0|" n=1 line dbn
-  path="$(hm_site_db_ledger_path "${domain}")"
-  if [[ -f "${path}" ]]; then
-    while IFS=$'\t' read -r _ _ _ extra; do
-      [[ "${extra}" =~ ^db=([0-9]+)$ ]] || continue
-      used+="${BASH_REMATCH[1]}|"
-    done < "${path}"
+# Globalny rejestr numerów DB (nie per-domena ledger).
+hm_site_redis_registry_path() {
+  if [[ -n "${HM_SITE_REDIS_REGISTRY:-}" ]]; then
+    printf '%s' "${HM_SITE_REDIS_REGISTRY}"
+    return 0
   fi
+  if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+    printf '%s/redis-dbs.tsv' "${HM_SITE_STATE_DIR:-${TMPDIR:-/tmp}/hmtools-site-state}"
+    return 0
+  fi
+  printf '%s' "/var/lib/hmtools/redis-dbs.tsv"
+}
+
+# Zbiór zajętych DB: rejestr + ledger wszystkich stron (|0|1|…).
+hm_site_redis_used_dbs() {
+  local used="|0|" reg base f typ extra dbn
+  reg="$(hm_site_redis_registry_path)"
+  if [[ -f "${reg}" ]]; then
+    while IFS=$'\t' read -r _ dbn _; do
+      [[ "${dbn}" =~ ^[0-9]+$ ]] || continue
+      used+="${dbn}|"
+    done < "${reg}"
+  fi
+  base="${HM_SITE_STATE_DIR:-}"
+  if [[ -z "${base}" && "${HMTOOLS_TEST:-}" == "1" ]]; then
+    base="${TMPDIR:-/tmp}/hmtools-site-state"
+  fi
+  [[ -n "${base}" ]] || base="/var/lib/hmtools/sites"
+  if [[ -d "${base}" ]]; then
+    for f in "${base}"/*/db-created.tsv; do
+      [[ -f "${f}" ]] || continue
+      while IFS=$'\t' read -r typ _ _ extra; do
+        [[ "${typ}" == "redis" ]] || continue
+        [[ "${extra}" =~ ^db=([0-9]+)$ ]] || continue
+        used+="${BASH_REMATCH[1]}|"
+      done < "${f}"
+    done
+  fi
+  printf '%s' "${used}"
+}
+
+hm_site_redis_registry_release() {
+  local domain="$1" dbn="${2:-}" reg tmp line d n
+  reg="$(hm_site_redis_registry_path)"
+  [[ -f "${reg}" ]] || return 0
+  tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-redis-reg.XXXXXX")"
+  while IFS=$'\t' read -r d n || [[ -n "${d:-}" ]]; do
+    [[ -n "${d}" ]] || continue
+    if [[ "${d}" == "${domain}" ]]; then
+      if [[ -n "${dbn}" && "${n}" != "${dbn}" ]]; then
+        printf '%s\t%s\n' "${d}" "${n}" >> "${tmp}"
+      fi
+      continue
+    fi
+    printf '%s\t%s\n' "${d}" "${n}" >> "${tmp}"
+  done < "${reg}"
+  mv -f "${tmp}" "${reg}"
+  chmod 0600 "${reg}" 2>/dev/null || true
+}
+
+hm_site_redis_next_db() {
+  local domain="$1" reg lock used n=1 got_lock=0
+  reg="$(hm_site_redis_registry_path)"
+  mkdir -p "$(dirname "${reg}")"
+  chmod 0700 "$(dirname "${reg}")" 2>/dev/null || true
+  lock="${reg}.lock"
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>"${lock}"
+    if flock 9; then
+      got_lock=1
+    else
+      exec 9>&-
+      return 1
+    fi
+  fi
+  used="$(hm_site_redis_used_dbs)"
   while [[ "${n}" -le 15 ]]; do
-    [[ "${used}" == *"|${n}|"* ]] || { printf '%s' "${n}"; return 0; }
+    [[ "${used}" == *"|${n}|"* ]] || break
     n=$((n + 1))
   done
-  return 1
+  if [[ "${n}" -gt 15 ]]; then
+    [[ "${got_lock}" -eq 1 ]] && { flock -u 9 2>/dev/null || true; exec 9>&-; }
+    return 1
+  fi
+  printf '%s\t%s\n' "${domain}" "${n}" >> "${reg}"
+  chmod 0600 "${reg}" 2>/dev/null || true
+  if [[ "${got_lock}" -eq 1 ]]; then
+    flock -u 9 2>/dev/null || true
+    exec 9>&-
+  fi
+  printf '%s' "${n}"
+}
+
+# ACL bez FLUSHALL/CONFIG/KEYS — tylko klucze z prefiksem domeny.
+hm_site_redis_acl_rules() {
+  local prefix="$1"
+  printf '~%s:* resetchannels +@all -@dangerous -@admin -flushall -flushdb -keys -config -shutdown -debug -script' \
+    "${prefix}"
+}
+
+# Przy pierwszym provision: wyłącz default nopass (opt-out: HM_REDIS_KEEP_DEFAULT=1).
+hm_site_redis_harden_default() {
+  local marker
+  [[ "${HM_REDIS_KEEP_DEFAULT:-0}" == "1" ]] && return 0
+  marker="$(dirname "$(hm_site_redis_registry_path)")/redis-default-hardened"
+  [[ -f "${marker}" ]] && return 0
+  if [[ "${HM_SITE_DB_MOCK:-0}" == "1" ]] || hm_have_cmd redis-cli; then
+    hm_site_db_apply_sql "ACL SETUSER default off" redis-cli || {
+      hm_warn "Nie wyłączono użytkownika Redis default — ustaw hasło ręcznie albo HM_REDIS_KEEP_DEFAULT=1."
+      return 0
+    }
+  fi
+  : > "${marker}"
+  chmod 0600 "${marker}" 2>/dev/null || true
+  hm_warn "Wyłączono użytkownika Redis default (nopass). Przywróć: HM_REDIS_KEEP_DEFAULT=1 przy provision."
 }
 
 hm_site_redis_provision() {
@@ -356,8 +457,10 @@ hm_site_redis_provision() {
   if [[ "${major}" -ge 6 ]]; then
     pass="$(hm_gen_password)"
     [[ -n "${pass}" ]] || { hm_err "Nie udało się wygenerować hasła Redis."; return 1; }
-    sql="ACL SETUSER ${user} on >${pass} ~${prefix}:* +@all"
+    hm_site_redis_harden_default || true
+    sql="ACL SETUSER ${user} on >${pass} $(hm_site_redis_acl_rules "${prefix}")"
     hm_site_db_apply_sql "${sql}" redis-cli || {
+      hm_site_redis_registry_release "${domain}" "${dbn}"
       hm_err "Redis ACL SETUSER nieudany."
       return 1
     }
@@ -389,13 +492,16 @@ DROP ROLE IF EXISTS ${dbuser};"
 }
 
 hm_site_db_drop_redis() {
-  local user="$1"
+  local user="$1" domain="${2:-}" dbn="${3:-}"
   hm_is_valid_db_name "${user}" || return 1
   hm_site_db_apply_sql "ACL DELUSER ${user}" redis-cli || true
+  if [[ -n "${domain}" ]]; then
+    hm_site_redis_registry_release "${domain}" "${dbn}"
+  fi
 }
 
 hm_site_db_rollback() {
-  local domain="$1" path tmp typ name user extra home
+  local domain="$1" path tmp typ name user extra home dbn
   path="$(hm_site_db_ledger_path "${domain}")"
   [[ -f "${path}" ]] || return 0
   home="$(hm_site_home "${domain}")"
@@ -414,7 +520,11 @@ hm_site_db_rollback() {
     case "${typ}" in
       mysql) hm_site_db_drop_mysql "${name}" "${user}" || hm_warn "Nie usunięto MySQL ${name}." ;;
       postgres) hm_site_db_drop_postgres "${name}" "${user}" || hm_warn "Nie usunięto PostgreSQL ${name}." ;;
-      redis) hm_site_db_drop_redis "${name}" || true ;;
+      redis)
+        dbn=""
+        [[ "${extra}" =~ ^db=([0-9]+)$ ]] && dbn="${BASH_REMATCH[1]}"
+        hm_site_db_drop_redis "${name}" "${domain}" "${dbn}" || true
+        ;;
       sqlite)
         if [[ "${name}" == "${home}/"* && -f "${name}" ]]; then
           rm -f -- "${name}"
@@ -444,7 +554,7 @@ hm_site_db_ledger_remove() {
 }
 
 hm_site_db_rollback_session() {
-  local domain="$1" typ name user extra
+  local domain="$1" typ name user extra dbn
   [[ -n "${HM_SITE_DB_SESSION_LEDGER:-}" ]] || return 0
   while IFS=$'\t' read -r typ name user extra || [[ -n "${typ:-}" ]]; do
     [[ -n "${typ}" ]] || continue
@@ -459,7 +569,11 @@ hm_site_db_rollback_session() {
     case "${typ}" in
       mysql) hm_site_db_drop_mysql "${name}" "${user}" || true ;;
       postgres) hm_site_db_drop_postgres "${name}" "${user}" || true ;;
-      redis) hm_site_db_drop_redis "${name}" || true ;;
+      redis)
+        dbn=""
+        [[ "${extra}" =~ ^db=([0-9]+)$ ]] && dbn="${BASH_REMATCH[1]}"
+        hm_site_db_drop_redis "${name}" "${domain}" "${dbn}" || true
+        ;;
       sqlite)
         local home
         home="$(hm_site_home "${domain}")"

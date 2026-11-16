@@ -210,14 +210,20 @@ hm_site_base_user_exists() {
 }
 
 hm_site_base_user_add() {
-  local user="$1" home="$2" shell="$3"
+  local user="$1" home="$2" shell="$3" rc=0
   if [[ "${HM_SITE_USERADD_MOCK:-}" == "1" ]]; then
     printf '%s:x:1000:1000::%s:%s\n' "${user}" "${home}" "${shell}" >> "${HM_SITE_PASSWD_FILE}"
+    if declare -F hm_tx_note_undo >/dev/null 2>&1; then
+      hm_tx_note_undo "$(printf 'userdel\t%s' "${user}")"
+    fi
     return 0
   fi
   if hm_have_cmd useradd; then
-    useradd --home-dir "${home}" --shell "${shell}" --create-home "${user}"
-    return $?
+    useradd --home-dir "${home}" --shell "${shell}" --create-home "${user}" || rc=$?
+    if [[ "${rc}" -eq 0 ]] && declare -F hm_tx_note_undo >/dev/null 2>&1; then
+      hm_tx_note_undo "$(printf 'userdel\t%s' "${user}")"
+    fi
+    return "${rc}"
   fi
   hm_err "Brak useradd — nie tworzę użytkownika ${user}."
   return 1
@@ -315,6 +321,22 @@ hm_site_base_resolve_user() {
   printf '%s' "${user}"
 }
 
+# User rodzica (manifest / site.env) dla --child-of.
+hm_site_base_parent_user() {
+  local parent="$1" man envf u
+  man="$(hm_site_manifest_path "${parent}" 2>/dev/null || true)"
+  if [[ -n "${man}" && -f "${man}" ]]; then
+    u="$(sed -n 's/.*"user":"\([^"]*\)".*/\1/p' "${man}" | head -1)"
+    [[ -n "${u}" ]] && { printf '%s' "${u}"; return 0; }
+  fi
+  envf="$(hm_site_home "${parent}")/.config/hmtools/site.env"
+  if [[ -f "${envf}" ]]; then
+    u="$(sed -n 's/^user=//p' "${envf}" | head -1)"
+    [[ -n "${u}" ]] && { printf '%s' "${u}"; return 0; }
+  fi
+  hm_site_base_resolve_user "${parent}" ""
+}
+
 hm_site_base_check() {
   local domain="$1" user="${2:-}" shell="${3:-nologin}" preset="${4:-}" child="${5:-}"
   local puny runtime
@@ -328,16 +350,20 @@ hm_site_base_check() {
     hm_err "Domena zajęta: ${domain}"
     return 1
   fi
-  user="$(hm_site_base_resolve_user "${domain}" "${user}")"
+  if [[ -n "${child}" && -z "${user}" ]]; then
+    user="$(hm_site_base_parent_user "${child}")"
+  else
+    user="$(hm_site_base_resolve_user "${domain}" "${user}")"
+  fi
   HM_SITE_BASE_USER="${user}"
   hm_is_valid_unix_user "${user}" || { hm_err "Zła nazwa użytkownika: ${user}"; return 1; }
   if [[ "${shell}" != "nologin" && "${shell}" != "bash" && "${shell}" != "/usr/sbin/nologin" && "${shell}" != "/bin/bash" ]]; then
     hm_err "Shell: nologin albo bash."
     return 1
   fi
+  # Istniejący user bez --child-of = tryb shared (bez useradd), nie błąd.
   if [[ -z "${child}" ]] && hm_site_base_user_exists "${user}" && [[ "${HM_SITE_RESUME:-}" != "1" ]]; then
-    hm_err "Użytkownik już istnieje: ${user}"
-    return 1
+    hm_info "User ${user} już jest — współdzielę konto (bez useradd)."
   fi
   if [[ -n "${HM_SITE_DNS_A:-}" && -n "${HM_SITE_VPS_IP:-}" && "${HM_SITE_DNS_A}" != "${HM_SITE_VPS_IP}" ]]; then
     if [[ "${HM_SITE_SSL:-}" == "1" && "${HM_SITE_CONTINUE_WITHOUT_SSL:-}" != "1" ]]; then
@@ -365,16 +391,20 @@ hm_site_base_apply() {
   fi
   group="${HM_SITE_WEB_GROUP:-www-data}"
   hm_site_base_layout "${home}" "${user}" "${group}" "${releases}" || return 1
-  mkdir -p "${home}/.config/hmtools"
+  mkdir -p "${home}/.config/hmtools" "${home}/app" "${home}/.well-known/acme-challenge"
   {
     printf 'domain=%s\n' "${domain}"
     printf 'user=%s\n' "${user}"
     printf 'preset=%s\n' "${preset}"
     printf 'runtime=%s\n' "${runtime}"
     [[ -n "${child}" ]] && printf 'child_of=%s\n' "${child}"
-  } > "${home}/.config/hmtools/site.env"
+  } | hm_site_write_nofollow "${home}/.config/hmtools/site.env" || return 1
   if [[ "${HM_SITE_ALIASES:-www}" != "none" ]]; then
-    printf '%s\n' "${HM_SITE_ALIASES:-www}" > "${home}/.config/hmtools/aliases"
+    printf '%s\n' "${HM_SITE_ALIASES:-www}" | hm_site_write_nofollow "${home}/.config/hmtools/aliases" || return 1
+  fi
+  if hm_site_base_user_exists "${user}"; then
+    chown -R "${user}:${user}" "${home}/.config" "${home}/app" "${home}/.well-known" 2>/dev/null || true
+    chown "${user}:${group}" "${home}" 2>/dev/null || true
   fi
   HM_SITE_USER="${user}"
   if [[ "${PANEL:-}" == "cyberpanel" && "${WEBSERVER:-}" != "nginx" && "${WEBSERVER:-}" != "apache" ]]; then

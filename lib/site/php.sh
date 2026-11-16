@@ -260,11 +260,12 @@ EOF
   fi
   dir="$(hm_pkg_php_pool_dir "${ver}")" || return 1
   mkdir -p "${dir}" "${home}/logs"
+  mkdir -p "/run/php" 2>/dev/null || true
   pool="${dir}/${domain}.conf"
   bak="${pool}.hmbak"
   rm -f "${bak}"
   if [[ -f "${pool}" ]]; then
-    cp "${pool}" "${bak}"
+    cp -a "${pool}" "${bak}"
   fi
   local owner wgroup webkind
   webkind="${HM_SITE_WEBSERVER:-nginx}"
@@ -309,7 +310,7 @@ EOF
     hm_err "php-fpm${ver} -t nieudany — przywrócono poprzednią pulę."
     return 1
   fi
-  rm -f "${bak}"
+  # Zachowaj .hmbak do undo (przywróć poprzednią pulę zamiast kasować cudzą).
   chmod 0750 "${home}" 2>/dev/null || true
   if declare -F hm_site_resource_add >/dev/null 2>&1; then
     hm_site_resource_add "${domain}" fpm "${pool}" 0 || true
@@ -317,12 +318,29 @@ EOF
   if declare -F hm_tx_note_undo >/dev/null 2>&1; then
     hm_tx_note_undo "$(printf 'fpm-pool\t%s' "${pool}")"
   fi
+  hm_site_php_fpm_reload "${ver}" || true
   printf '%s' "${pool}"
 }
 
+hm_site_php_fpm_reload() {
+  local ver="$1" unit
+  unit="php${ver}-fpm"
+  if [[ "${HM_SITE_PHP_MOCK:-}" == "1" ]]; then
+    [[ -n "${HM_SITE_PHP_LOG:-}" ]] && printf 'systemctl reload %s\n' "${unit}" >> "${HM_SITE_PHP_LOG}"
+    return 0
+  fi
+  if hm_have_cmd systemctl; then
+    systemctl reload "${unit}" 2>/dev/null \
+      || systemctl reload "php-fpm${ver}" 2>/dev/null \
+      || systemctl reload php-fpm 2>/dev/null \
+      || true
+  fi
+}
+
 hm_site_php_composer() {
-  local domain="$1" home bin dir sum sig
+  local domain="$1" home bin dir sum sig user
   home="$(hm_site_home "${domain}")"
+  user="$(hm_site_unix_user "${domain}")"
   dir="${home}/.local/bin"
   mkdir -p "${dir}"
   bin="${dir}/composer"
@@ -332,27 +350,30 @@ hm_site_php_composer() {
     hm_have_cmd curl || { hm_err "Brak curl — nie pobieram Composera."; return 1; }
     curl -fsSL --max-time 60 -o "${bin}" "https://getcomposer.org/download/latest-stable/composer.phar" || return 1
   fi
+  # Oficjalny plik sumy to *.sha256sum (sha384 URL zwraca 404).
   if [[ -n "${HM_COMPOSER_SIG:-}" && -f "${HM_COMPOSER_SIG}" ]]; then
-    sig="$(tr -d '[:space:]' < "${HM_COMPOSER_SIG}")"
+    sig="$(awk 'NF{print $1; exit}' "${HM_COMPOSER_SIG}" | tr -d '[:space:]')"
   else
     hm_have_cmd curl || { rm -f "${bin}"; return 1; }
-    sig="$(curl -fsSL --max-time 30 "https://getcomposer.org/download/latest-stable/composer.phar.sha384" | tr -d '[:space:]')"
+    sig="$(curl -fsSL --max-time 30 "https://getcomposer.org/download/latest-stable/composer.phar.sha256sum" \
+      | awk 'NF{print $1; exit}' | tr -d '[:space:]')"
   fi
-  if hm_have_cmd sha384sum; then
-    sum="$(sha384sum "${bin}" | awk '{print $1}')"
+  if hm_have_cmd sha256sum; then
+    sum="$(sha256sum "${bin}" | awk '{print $1}')"
   elif hm_have_cmd openssl; then
-    sum="$(openssl dgst -sha384 "${bin}" | awk '{print $NF}')"
+    sum="$(openssl dgst -sha256 "${bin}" | awk '{print $NF}')"
   else
     rm -f "${bin}"
-    hm_err "Brak sha384sum — nie weryfikuję Composera."
+    hm_err "Brak sha256sum — nie weryfikuję Composera."
     return 1
   fi
   if [[ -z "${sig}" || "${sum}" != "${sig}" ]]; then
     rm -f "${bin}"
-    hm_err "Suma SHA-384 Composera nie zgadza się."
+    hm_err "Suma SHA-256 Composera nie zgadza się."
     return 1
   fi
   chmod 755 "${bin}"
+  chown -R "${user}:${user}" "${home}/.local" 2>/dev/null || true
   HM_SITE_PHP_COMPOSER_VER="$("${bin}" --version 2>/dev/null | head -1 || true)"
   printf '%s' "${bin}"
 }
@@ -413,5 +434,10 @@ hm_site_php_provision() {
     hm_site_php_composer "${domain}" >/dev/null || return 1
   fi
   hm_site_php_skeleton "${domain}" "${skel}" || return 1
+  if declare -F hm_site_manifest_set_version >/dev/null 2>&1; then
+    local man
+    man="$(hm_site_manifest_path "${domain}" 2>/dev/null || true)"
+    [[ -n "${man}" && -f "${man}" ]] && hm_site_manifest_set_version "${man}" "${ver}" || true
+  fi
   hm_ok "PHP ${ver} dla ${domain} (${sapi}). Composer: ${HM_SITE_PHP_COMPOSER_VER:-pominięty}."
 }

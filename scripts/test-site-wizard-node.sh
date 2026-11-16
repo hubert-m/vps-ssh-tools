@@ -123,6 +123,7 @@ fi
   && ok "nvm-ls-versions" || bad "nvm-ls-versions"
 [[ "$(tr -d '[:space:]' < "${home}/.nvm/alias/default")" == "v24.11.1" ]] && ok "default-alias" || bad "default-alias"
 [[ "$(tr -d '[:space:]' < "${home}/app/.nvmrc")" == "v24.11.1" ]] && ok "nvmrc" || bad "nvmrc"
+[[ "$(tr -d '[:space:]' < "${home}/.nvmrc")" == "v24.11.1" ]] && ok "nvmrc-home" || bad "nvmrc-home"
 ver="$("${home}/.nvm/versions/node/v24.11.1/bin/node")"
 [[ "${ver}" == "v24.11.1" ]] && ok "node-v" || bad "node-v"
 
@@ -165,12 +166,12 @@ cmd_site_new svc.example.pl --runtime node --db none --node 24 --process systemd
   cat "${root}/sys.out" >&2
   exit 1
 }
-unit="${HM_SYSTEMD_UNIT_DIR}/hm-app-svc-example-pl.service"
+unit="${HM_SYSTEMD_UNIT_DIR}/hm-app-svc.example.pl.service"
 if [[ -f "${unit}" ]] && grep -q 'EnvironmentFile=-' "${unit}" && grep -q 'NoNewPrivileges=yes' "${unit}" \
   && grep -q 'ProtectSystem=strict' "${unit}" && grep -q 'ReadWritePaths=' "${unit}" \
   && grep -q 'Environment=HOST=127.0.0.1' "${unit}" && grep -q '^User=app$' "${unit}" \
   && grep -q '/.nvm/versions/node/v24.11.1/bin/node dist/main.js' "${unit}" \
-  && grep -q 'systemctl enable hm-app-svc-example-pl.service' "${HM_SITE_NODE_LOG}"; then
+  && grep -q 'systemctl enable --now hm-app-svc.example.pl.service' "${HM_SITE_NODE_LOG}"; then
   sec2="$(sed -n 's/^JWT_SECRET=//p' "${HM_SITE_HOME_BASE}/svc.example.pl/shared/.env" | head -1)"
   if [[ -n "${sec2}" ]] && ! grep -q "${sec2}" "${unit}"; then
     ok "systemd-unit"

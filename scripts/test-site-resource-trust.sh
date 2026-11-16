@@ -76,6 +76,84 @@ else
   ok "ten bash nie tworzy symlinku — odmowa sprawdzona na katalogu"
 fi
 
+# Exact vhost — bez prefiksu ${domain}*
+other_vh="${root}/vhosts/${domain}-old.conf"
+mkdir -p "${root}/vhosts" /etc/nginx/sites-available 2>/dev/null || true
+export HM_SITE_VHOST_DIR="${root}/vhosts"
+printf 'x\n' > "${HM_SITE_VHOST_DIR}/${domain}.conf"
+printf 'y\n' > "${other_vh}"
+if hm_site_delete_path_allowed "${other_vh}" vhost "${domain}"; then
+  bad "vhost cudzej strony (prefiks)"
+else
+  ok "vhost tylko dokładna nazwa"
+fi
+if hm_site_delete_path_allowed "${HM_SITE_VHOST_DIR}/${domain}.conf" vhost "${domain}"; then
+  ok "vhost własny OK"
+else
+  bad "vhost własny odrzucony"
+fi
+
+# Unit traversal + cudzy unit
+trav="${HM_SITE_SYSTEMD_DIR}/hm-../../ofiara"
+if hm_site_delete_path_allowed "${trav}" unit "${domain}"; then
+  bad "unit z .. przeszedł"
+else
+  ok "unit z .. odrzucony"
+fi
+foreign="${HM_SITE_SYSTEMD_DIR}/hm-other.example.service"
+printf 'u\n' > "${foreign}"
+if hm_site_delete_path_allowed "${foreign}" unit "${domain}"; then
+  bad "cudzy unit przeszedł"
+else
+  ok "cudzy unit odrzucony"
+fi
+
+# resources.ndjson 0600 (na NTFS chmod często nie działa — wtedy pomijamy)
+probe="${root}/mode-probe"
+: > "${probe}"
+chmod 0600 "${probe}" 2>/dev/null || true
+mode_ok=0
+[[ "$(stat -c '%a' "${probe}" 2>/dev/null || stat -f '%OLp' "${probe}" 2>/dev/null || true)" == "600" ]] && mode_ok=1
+if [[ "${mode_ok}" -eq 1 ]]; then
+  mode="$(stat -c '%a' "$(hm_site_resources_path "${domain}")" 2>/dev/null || stat -f '%OLp' "$(hm_site_resources_path "${domain}")" 2>/dev/null || true)"
+  [[ "${mode}" == "600" || "${mode}" == "0600" ]] && ok "resources 0600" || bad "resources mode=${mode}"
+else
+  ok "resources 0600 (platforma bez chmod)"
+fi
+
+# sites-enabled: kasuj link, nie cel
+en_dir="${root}/nginx/sites-enabled"
+av_dir="${root}/nginx/sites-available"
+mkdir -p "${en_dir}" "${av_dir}"
+export HM_SITE_VHOST_ENABLED_DIR="${en_dir}"
+printf 'server{}\n' > "${av_dir}/${domain}.conf"
+ln -sfn "${av_dir}/${domain}.conf" "${en_dir}/${domain}.conf" 2>/dev/null || true
+if [[ -L "${en_dir}/${domain}.conf" ]]; then
+  if hm_site_lifecycle_remove_path "${en_dir}/${domain}.conf" vhost; then
+    [[ -L "${en_dir}/${domain}.conf" ]] && bad "link sites-enabled został" || ok "link sites-enabled usunięty"
+    [[ -f "${av_dir}/${domain}.conf" ]] && ok "cel vhosta nietknięty" || bad "cel vhosta skasowany"
+  else
+    bad "odmowa usunięcia linku sites-enabled"
+  fi
+else
+  ok "brak symlinku sites-enabled — pominięte"
+fi
+
+# zapis HOME bez podążania za symlinkiem
+nvmrc="${home}/.nvmrc"
+rm -f "${nvmrc}"
+ln -s "${victim}/plik" "${nvmrc}" 2>/dev/null || true
+if [[ -L "${nvmrc}" ]]; then
+  if printf '22\n' | hm_site_write_nofollow "${nvmrc}" 2>/dev/null; then
+    bad "write_nofollow nadpisał przez symlink"
+  else
+    ok "write_nofollow odmawia symlinku"
+  fi
+  grep -q sekret "${victim}/plik" && ok "ofiara nvmrc nietknięta" || bad "ofiara nvmrc zmieniona"
+else
+  ok "brak symlinku nvmrc — pominięte"
+fi
+
 if [[ "${fail}" -ne 0 ]]; then
   echo FAILED
   exit 1

@@ -48,7 +48,12 @@ hm_deploy_release_prune() {
     n=$((n + 1))
     [[ "${n}" -le "${keep}" ]] && continue
     [[ "${stamp}" == "${cur}" ]] && continue
-    rm -rf "${home}/releases/${stamp}"
+    if declare -F hm_site_rm_nofollow >/dev/null 2>&1; then
+      hm_site_rm_nofollow "${home}/releases/${stamp}" || true
+    else
+      [[ -L "${home}/releases/${stamp}" ]] && continue
+      rm -rf -- "${home}/releases/${stamp}"
+    fi
   done < <(ls -1 "${home}/releases" 2>/dev/null | sort -r)
 }
 
@@ -61,17 +66,29 @@ hm_deploy_release_apply() {
   rel="${home}/releases/${stamp}"
   mkdir -p "${rel}" "${home}/shared"
   if ! hm_deploy_release_build "${rel}"; then
-    printf 'failed\n' > "${rel}/.hm-release-status"
+    if declare -F hm_site_write_nofollow >/dev/null 2>&1; then
+      printf 'failed\n' | hm_site_write_nofollow "${rel}/.hm-release-status" || true
+    else
+      printf 'failed\n' > "${rel}/.hm-release-status"
+    fi
     hm_err "Build release ${stamp} nieudany. current bez zmian."
     return 1
   fi
   if ! hm_deploy_release_health "${rel}"; then
-    printf 'failed\n' > "${rel}/.hm-release-status"
+    if declare -F hm_site_write_nofollow >/dev/null 2>&1; then
+      printf 'failed\n' | hm_site_write_nofollow "${rel}/.hm-release-status" || true
+    else
+      printf 'failed\n' > "${rel}/.hm-release-status"
+    fi
     hm_err "Healthcheck release ${stamp} nieudany. current bez zmian."
     return 1
   fi
   hm_deploy_switch_current "${home}" "${stamp}" || return 1
-  printf 'ok\n' > "${rel}/.hm-release-status"
+  if declare -F hm_site_write_nofollow >/dev/null 2>&1; then
+    printf 'ok\n' | hm_site_write_nofollow "${rel}/.hm-release-status" || return 1
+  else
+    printf 'ok\n' > "${rel}/.hm-release-status"
+  fi
   hm_deploy_release_prune "${home}" "${HM_DEPLOY_KEEP:-5}"
   hm_ok "current → releases/${stamp}"
 }

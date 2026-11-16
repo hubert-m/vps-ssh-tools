@@ -107,7 +107,19 @@ rm -f "${HM_OVPN_MOCK_LOG}"
 export HM_OVPN_EASYRSA_VERSION=3.1.2
 cmd_openvpn client renew laptop --yes >/dev/null
 grep -q 'easyrsa renew laptop' "${HM_OVPN_MOCK_LOG}" && ok renew-31 || bad renew-31
-grep -q 'easyrsa revoke' "${HM_OVPN_MOCK_LOG}" && bad renew-31-norevoke || ok renew-31-norevoke
+grep -Eq 'easyrsa revoke-renewed laptop|easyrsa revoke laptop' "${HM_OVPN_MOCK_LOG}" && ok renew-31-revoke-old || bad renew-31-revoke-old
+grep -q 'easyrsa gen-crl' "${HM_OVPN_MOCK_LOG}" && ok renew-31-crl || bad renew-31-crl
+
+if cmd_openvpn client revoke server --yes >/dev/null 2>&1; then
+  bad revoke-server-blocked
+else
+  ok revoke-server-blocked
+fi
+if cmd_openvpn client renew ca --yes >/dev/null 2>&1; then
+  bad renew-ca-blocked
+else
+  ok renew-ca-blocked
+fi
 
 rm -f "${HM_OVPN_SERVER}/crl.pem.next"
 cmd_openvpn crl status >"${root}/status.out"

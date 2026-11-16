@@ -169,7 +169,7 @@ grep -q 'extprocessor shop' "${extf}" && ok "lsphp-extprocessor" || bad "lsphp-e
 
 printf '#!/bin/sh\necho Composer version 2.8.4\n' > "${root}/composer.phar"
 chmod 755 "${root}/composer.phar"
-good="$(sha384sum "${root}/composer.phar" | awk '{print $1}')"
+good="$(sha256sum "${root}/composer.phar" | awk '{print $1}')"
 printf 'deadbeef\n' > "${root}/bad.sig"
 printf '%s\n' "${good}" > "${root}/good.sig"
 export HM_COMPOSER_PHAR="${root}/composer.phar"

@@ -1,2 +1,11 @@
 # hmtools vX.Y.Z
 
+- Fix: webs delete — dokładna allowlista vhost/unit (realpath -m), kasowanie symlinku sites-enabled bez podążania; resources/.dbs 0600; zapisy w HOME przez write_nofollow
+- Fix: site new --redis — unikalne REDIS_DB (globalny rejestr), ACL bez FLUSHALL/CONFIG/KEYS, wyłączenie default nopass
+- Fix: report weekly — czytelne sekcje z JSON, Usługi przez services/systemctl, Kopie ze snapshotów (nie pomoc target)
+- Fix: site new Node — port przed nvm, `.nvmrc` w HOME+app, chown app/, unit `hm-app-<domena>`, enable --now, undo user/port
+- Fix: site new PHP — Composer SHA-256 (nie 404 sha384), chown usera, reload FPM, undo puli przywraca .hmbak, wersja w manifeście
+- Fix: site new www — odmowa nadpisania vhosta, SSL realnie (acme/certbot), wspólny port Python↔proxy, reload po delete
+- Fix: site new W03 — chown HOME (.config/app), child dziedziczy usera rodzica, istniejący --user = shared
+- Fix: openvpn revoke/renew — blokada ca/server, revoke-renewed+CRL, mgmt kill z timeout/quit, check via openssl enddate
+

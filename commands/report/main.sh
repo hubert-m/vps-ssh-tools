@@ -27,7 +27,8 @@ hm_html_escape() {
 
 hm_report_push() {
   local title="$1" body="$2" issue=0
-  if printf '%s\n' "${body}" | grep -Eq 'FAIL|failed|wygasa|reboot|ban|ERROR|problem'; then
+  body="$(hm_report_humanize "${title}" "${body}")"
+  if printf '%s\n' "${body}" | grep -Eqi 'FAIL|failed|wygasa|WYGAS|reboot|ban|ERROR|problem|critical|high=|[1-9][0-9]* high'; then
     issue=1
   fi
   HM_REPORT_TITLES+=("${title}")
@@ -42,6 +43,140 @@ hm_report_read_or_skip() {
     return 0
   fi
   hm_report_push "${title}" "$(cat "${file}")"
+}
+
+# JSON → czytelny tekst (poczta).
+hm_report_humanize() {
+  local title="$1" body="$2" out=""
+  body="${body#"${body%%[![:space:]]*}"}"
+  body="${body%"${body##*[![:space:]]}"}"
+  case "${body}" in
+    \{*|\[*) ;;
+    *)
+      printf '%s' "${body}"
+      return 0
+      ;;
+  esac
+  if command -v python3 >/dev/null 2>&1; then
+    out="$(
+      TITLE="${title}" BODY="${body}" python3 - <<'PY' 2>/dev/null || true
+import json, os, sys
+title = os.environ.get("TITLE", "")
+raw = os.environ.get("BODY", "")
+try:
+    data = json.loads(raw)
+except Exception:
+    print(raw)
+    sys.exit(0)
+
+def line(*parts):
+    print(" ".join(str(p) for p in parts if p is not None))
+
+if title == "Aktualizacje" and isinstance(data, dict):
+    c = int(data.get("critical", 0) or 0)
+    h = int(data.get("high", 0) or 0)
+    m = int(data.get("medium", 0) or 0)
+    low = int(data.get("low", 0) or 0)
+    line(f"Aktualizacje: critical={c} high={h} medium={m} low={low}")
+    items = data.get("items") or []
+    for it in items[:12]:
+        if not isinstance(it, dict):
+            continue
+        line(f"  [{it.get('severity','?')}] {it.get('subject') or it.get('id') or '?'}")
+    if len(items) > 12:
+        line(f"  … +{len(items)-12} więcej")
+elif title == "Audyt" and isinstance(data, dict):
+    score = data.get("score", "?")
+    checks = data.get("checks") or []
+    fails = [c for c in checks if isinstance(c, dict) and c.get("status") == "FAIL"]
+    warns = [c for c in checks if isinstance(c, dict) and c.get("status") == "WARN"]
+    line(f"Audyt: {score}/100  FAIL={len(fails)} WARN={len(warns)} checks={len(checks)}")
+    for c in fails[:15]:
+        line(f"  FAIL {c.get('id','?')}: {c.get('desc','')}")
+    if len(fails) > 15:
+        line(f"  … +{len(fails)-15} FAIL")
+elif title == "Zasoby":
+    rows = data if isinstance(data, list) else [data]
+    any_data = False
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        metric = row.get("metric") or row.get("name") or "?"
+        if row.get("empty") is True:
+            line(f"{metric}: brak danych")
+            continue
+        any_data = True
+        bits = []
+        for k in ("avg", "p95", "max", "value", "unit", "scope"):
+            if k in row and row[k] not in (None, ""):
+                bits.append(f"{k}={row[k]}")
+        if not bits:
+            bits = [f"{k}={v}" for k, v in row.items() if k not in ("metric", "name", "empty")]
+        line(f"{metric}: " + (", ".join(bits) if bits else "ok"))
+    if not any_data and rows:
+        line("(uruchom stats collect / stats week)")
+elif title == "Kopie" and isinstance(data, dict) and "snapshots" in data:
+    snaps = data.get("snapshots") or []
+    if not snaps:
+        line("Brak lokalnych snapshotów backup.")
+    else:
+        latest = {}
+        for s in snaps:
+            if not isinstance(s, dict):
+                continue
+            scope = s.get("scope") or "?"
+            stamp = s.get("stamp") or ""
+            if scope not in latest or stamp > latest[scope].get("stamp", ""):
+                latest[scope] = s
+        for scope, s in sorted(latest.items()):
+            ok = "OK" if s.get("ok") is True else "FAIL"
+            age = s.get("age_seconds")
+            age_h = f"{int(age)//3600}h" if isinstance(age, (int, float)) else "?"
+            line(f"{scope}: {s.get('stamp')} {ok} (wiek {age_h})")
+elif title == "Usługi" and isinstance(data, dict) and "services" in data:
+    svcs = data.get("services") or []
+    failed = [s for s in svcs if isinstance(s, dict) and str(s.get("active", "")).lower() not in ("active", "running")]
+    line(f"Usługi: {len(svcs)} zainstalowanych, nieaktywnych={len(failed)}")
+    for s in failed[:20]:
+        line(f"  {s.get('name') or s.get('unit')}: {s.get('active')}")
+    if not failed:
+        line("Brak usług w stanie failed/inactive.")
+else:
+    if isinstance(data, dict):
+        keys = ", ".join(list(data.keys())[:8])
+        line(f"(json) klucze: {keys}")
+    elif isinstance(data, list):
+        line(f"(json) {len(data)} pozycji")
+    else:
+        print(raw)
+PY
+    )"
+    if [[ -n "${out}" ]]; then
+      printf '%s' "${out}"
+      return 0
+    fi
+  fi
+  case "${title}" in
+    Aktualizacje)
+      printf '%s' "${body}" | tr ',' '\n' | grep -E '"(critical|high|medium|low)"' | tr -d '{}"' | sed 's/^/  /' | head -8
+      ;;
+    Audyt)
+      if printf '%s' "${body}" | grep -qoE '"score":[0-9]+'; then
+        printf 'Audyt: %s/100\n' "$(printf '%s' "${body}" | sed -n 's/.*"score":\([0-9]*\).*/\1/p' | head -1)"
+      fi
+      printf '%s' "${body}" | tr '{}' '\n' | grep -F '"status":"FAIL"' | head -10 || true
+      ;;
+    Zasoby)
+      if printf '%s' "${body}" | grep -q '"empty":true'; then
+        printf 'Zasoby: brak danych (stats collect)\n'
+      else
+        printf '%s\n' "${body}" | head -c 400
+      fi
+      ;;
+    *)
+      printf '%s\n' "${body}" | head -c 500
+      ;;
+  esac
 }
 
 hm_report_capture() {
@@ -62,6 +197,15 @@ hm_report_capture() {
     backup)
       declare -F cmd_backup >/dev/null 2>&1 && out="$(cmd_backup "${@:2}" 2>/dev/null || true)"
       ;;
+    services)
+      declare -F cmd_services >/dev/null 2>&1 && out="$(cmd_services "${@:2}" 2>/dev/null || true)"
+      ;;
+    ssl)
+      declare -F cmd_ssl >/dev/null 2>&1 && out="$(cmd_ssl "${@:2}" 2>/dev/null || true)"
+      ;;
+    disk)
+      declare -F cmd_disk >/dev/null 2>&1 && out="$(cmd_disk "${@:2}" 2>/dev/null || true)"
+      ;;
   esac
   if [[ -z "${out}" && $# -gt 0 && "${HMTOOLS_TEST:-}" != "1" ]]; then
     local bin=""
@@ -71,6 +215,80 @@ hm_report_capture() {
     fi
   fi
   printf '%s' "${out}"
+}
+
+# Kopie: lista snapshotów / historia verify — nie „backup status” (pomoc konfiguracji).
+hm_report_backup_body() {
+  local out="" hist root line scope stamp
+  if declare -F hm_json_emit >/dev/null 2>&1; then
+    out="$(hm_json_emit backup_list 2>/dev/null || true)"
+    if [[ -n "${out}" && "${out}" != '{"snapshots":[]}' ]]; then
+      printf '%s' "${out}"
+      return 0
+    fi
+  fi
+  hist="${HM_BACKUP_VERIFY_HISTORY:-/var/lib/hmtools/backup-verify/history.jsonl}"
+  if [[ -f "${hist}" ]]; then
+    out="$(tail -n 8 "${hist}" 2>/dev/null || true)"
+    if [[ -n "${out}" ]]; then
+      printf 'Ostatnie backup verify:\n%s\n' "${out}"
+      return 0
+    fi
+  fi
+  root="${HM_BACKUP_LOCAL_ROOT:-${BACKUP_LOCAL_ROOT:-/backup/hmtools}}"
+  if [[ -d "${root}" ]]; then
+    out=""
+    while IFS= read -r line; do
+      [[ -n "${line}" ]] || continue
+      scope="$(basename "$(dirname "${line}")")"
+      stamp="$(basename "${line}")"
+      if [[ -e "${line}/FAILED" ]]; then
+        out+="${scope}: ${stamp} FAIL"$'\n'
+      else
+        out+="${scope}: ${stamp} OK"$'\n'
+      fi
+    done < <(find "${root}" -mindepth 2 -maxdepth 2 -type d 2>/dev/null | sort | tail -n 20)
+    if [[ -n "${out}" ]]; then
+      printf '%s' "${out}"
+      return 0
+    fi
+  fi
+  # ostatnia szansa: list bez status/help
+  out="$(hm_report_capture backup list 2>/dev/null || true)"
+  case "${out}" in
+    *"Backup — cele"*|*"Dodaj:"*|*"backup target add"*)
+      printf ''
+      ;;
+    *)
+      printf '%s' "${out}"
+      ;;
+  esac
+}
+
+hm_report_services_body() {
+  local out failed
+  if declare -F hm_json_emit >/dev/null 2>&1; then
+    out="$(hm_json_emit services 2>/dev/null || true)"
+    if [[ -n "${out}" && "${out}" != '{"services":[]}' ]]; then
+      printf '%s' "${out}"
+      return 0
+    fi
+  fi
+  out="$(hm_report_capture services list 2>/dev/null || true)"
+  if [[ -n "${out}" ]]; then
+    printf '%s' "${out}"
+    return 0
+  fi
+  if command -v systemctl >/dev/null 2>&1; then
+    failed="$(systemctl --failed --no-legend --plain 2>/dev/null || true)"
+    if [[ -n "${failed}" ]]; then
+      printf 'systemctl --failed:\n%s\n' "${failed}"
+      return 0
+    fi
+    printf 'Brak jednostek w stanie failed.\n'
+    return 0
+  fi
+  printf ''
 }
 
 hm_report_take() {
@@ -96,19 +314,63 @@ hm_report_take() {
   esac
 }
 
+hm_report_take_body() {
+  local title="$1" missing="$2" body="$3"
+  case "${body}" in
+    ""|"[]"|"{}")
+      hm_report_section_note "${title}" "pominięto — ${missing}"
+      ;;
+    *)
+      hm_report_push "${title}" "${body}"
+      ;;
+  esac
+}
+
 hm_report_collect() {
+  local body
   HM_REPORT_TITLES=()
   HM_REPORT_BODIES=()
   HM_REPORT_ISSUES=()
-  hm_report_take "Usługi" "${HM_REPORT_SERVICES:-}" "brak modułu usług"
-  hm_report_take "Strony" "${HM_REPORT_HTTP:-}" "brak monitor http" monitor http status --json
-  hm_report_take "Kopie" "${HM_REPORT_BACKUP:-}" "brak backup" backup status
-  hm_report_take "Certyfikaty" "${HM_REPORT_SSL:-}" "brak ssl"
-  hm_report_take "Aktualizacje" "${HM_REPORT_UPDATES:-}" "brak aktualizacji" vuln os --json
-  hm_report_take "Bany" "${HM_REPORT_BANS:-}" "brak fail2ban"
-  hm_report_take "Dysk" "${HM_REPORT_DISK:-}" "brak statystyk dysku"
-  hm_report_take "Zasoby" "${HM_REPORT_STATS:-}" "brak stats" stats week --json
+
+  if [[ -n "${HM_REPORT_SERVICES:-}" ]]; then
+    hm_report_read_or_skip "Usługi" "${HM_REPORT_SERVICES}" "brak danych usług"
+  else
+    body="$(hm_report_services_body)"
+    hm_report_take_body "Usługi" "brak modułu usług (services list / systemctl)" "${body}"
+  fi
+
+  hm_report_take "Strony" "${HM_REPORT_HTTP:-}" "brak monitor http (monitor add)" monitor http status --json
+
+  if [[ -n "${HM_REPORT_BACKUP:-}" ]]; then
+    hm_report_read_or_skip "Kopie" "${HM_REPORT_BACKUP}" "brak backup"
+  else
+    body="$(hm_report_backup_body)"
+    hm_report_take_body "Kopie" "brak snapshotów backup (backup list / verify)" "${body}"
+  fi
+
+  if [[ -n "${HM_REPORT_SSL:-}" ]]; then
+    hm_report_read_or_skip "Certyfikaty" "${HM_REPORT_SSL}" "brak ssl"
+  else
+    hm_report_take "Certyfikaty" "" "brak ssl (ssl / brak stron)" ssl --json
+  fi
+
+  hm_report_take "Aktualizacje" "${HM_REPORT_UPDATES:-}" "brak aktualizacji (vuln os)" vuln os --json
+
+  if [[ -n "${HM_REPORT_BANS:-}" ]]; then
+    hm_report_read_or_skip "Bany" "${HM_REPORT_BANS}" "brak fail2ban"
+  else
+    hm_report_take "Bany" "" "brak fail2ban (security fail2ban)" security fail2ban
+  fi
+
+  if [[ -n "${HM_REPORT_DISK:-}" ]]; then
+    hm_report_read_or_skip "Dysk" "${HM_REPORT_DISK}" "brak statystyk dysku"
+  else
+    hm_report_take "Dysk" "" "brak dysku (disk)" disk --json
+  fi
+
+  hm_report_take "Zasoby" "${HM_REPORT_STATS:-}" "brak stats (stats week)" stats week --json
   hm_report_take "Audyt" "${HM_REPORT_AUDIT:-}" "brak security audit" security audit --json
+
   if declare -F hm_traffic_summary >/dev/null 2>&1; then
     local traffic
     traffic="$(hm_traffic_summary || true)"

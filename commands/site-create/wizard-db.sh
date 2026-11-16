@@ -518,7 +518,17 @@ cmd_site_new() {
     fi
     local py_fw="${framework}"
     [[ "${py_fw}" == "auto" || -z "${py_fw}" ]] && py_fw="django"
-    if ! hm_site_python_provision "${domain}" "${python_ver}" "${python_source}" "${py_fw}" "${app_server}" "${wsgi}" "${celery}" "${port:-8000}"; then
+    # Jeden port z rejestru — gunicorn i vhost proxy muszą się zgadzać.
+    if declare -F hm_site_web_reserve_port >/dev/null 2>&1; then
+      port="$(hm_site_web_reserve_port "${domain}" "${port:-${proxy_port:-auto}}")" || {
+        [[ -n "${HM_TX_JOURNAL:-}" ]] && hm_tx_rollback "${domain}" || true
+        return 1
+      }
+      proxy_port="${port}"
+    else
+      port="${port:-8000}"
+    fi
+    if ! hm_site_python_provision "${domain}" "${python_ver}" "${python_source}" "${py_fw}" "${app_server}" "${wsgi}" "${celery}" "${port}"; then
       [[ -n "${HM_TX_JOURNAL:-}" ]] && hm_tx_rollback "${domain}" || true
       hm_err "site new nieudany — cofnięto wdrożenie po błędzie Pythona."
       return 1
@@ -543,7 +553,10 @@ cmd_site_new() {
       fi
     fi
     [[ -n "${webserver}" ]] || webserver="nginx"
-    if ! hm_site_web_provision "${domain}" "${webserver}" "${vhost_kind}" "${proxy_port:-auto}" "${web_ssl}" "${yes}" "${php_ver}"; then
+    if [[ "${vhost_kind}" == "proxy" && -n "${port}" && -z "${proxy_port}" ]]; then
+      proxy_port="${port}"
+    fi
+    if ! hm_site_web_provision "${domain}" "${webserver}" "${vhost_kind}" "${proxy_port:-${port:-auto}}" "${web_ssl}" "${yes}" "${php_ver}"; then
       [[ -n "${HM_TX_JOURNAL:-}" ]] && hm_tx_rollback "${domain}" || true
       hm_err "site new nieudany — cofnięto wdrożenie po błędzie vhosta."
       return 1

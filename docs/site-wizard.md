@@ -30,7 +30,7 @@ Drugie uruchomienie na istniejący manifest nic nie dopisuje. `--resume` pomija 
 |-------|-----------|
 | `--runtime php\|node\|python\|dotnet\|static` | Rodzaj aplikacji |
 | `--db mysql\|postgres\|sqlite\|none` | Silnik bazy |
-| `--redis [cache\|queue]` | Redis (ACL, gdy wersja ≥ 6) |
+| `--redis [cache\|queue]` | Redis (ACL ≥ 6: prefiks kluczy, bez FLUSHALL/CONFIG; unikalne `REDIS_DB`; `default` off, opt-out `HM_REDIS_KEEP_DEFAULT=1`) |
 | `--php`, `--php-preset`, `--php-ext`, `--php-sapi` | Wersja i rozszerzenia PHP |
 | `--node`, `--process pm2\|systemd`, `--port` | Node i sposób startu |
 | `--python`, `--python-source`, `--app-server`, `--wsgi`, `--celery` | Interpreter Python, gunicorn/uvicorn, opcjonalny Celery |

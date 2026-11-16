@@ -65,23 +65,42 @@ cmd_report schedule disable >/dev/null
 
 unset HM_REPORT_SERVICES HM_REPORT_BACKUP HM_REPORT_SSL || true
 lib="${root}/var/lib/hmtools"
-mkdir -p "${lib}/stats" "${lib}/monitor" "${lib}/security" "${lib}/backup-verify"
+mkdir -p "${lib}/stats" "${lib}/monitor" "${lib}/security" "${lib}/backup-verify" \
+  "${root}/backup/shop.example/20260101-120000"
 printf 'cpu avg 12\n' > "${lib}/stats/week.json"
 printf 'audit ssh OK\n' > "${lib}/security/audit.json"
 printf 'shop.example\t200\t10\t40\tOK\tok\n' > "${lib}/monitor/latest.txt"
 printf 'os security 0\n' > "${lib}/vuln-os.json"
-printf 'backup-local ostatnia OK 12MB\n' > "${lib}/backup-status.txt"
+: > "${root}/backup/shop.example/20260101-120000/.ok"
+export HM_BACKUP_LOCAL_ROOT="${root}/backup"
 cmd_stats() { cat "${lib}/stats/week.json"; }
-cmd_security() { cat "${lib}/security/audit.json"; }
+cmd_security() {
+  if [[ "${1:-}" == "audit" ]]; then cat "${lib}/security/audit.json"; else echo "fail2ban bans=0"; fi
+}
 cmd_monitor() { cat "${lib}/monitor/latest.txt"; }
-cmd_vuln() { cat "${lib}/vuln-os.json"; }
-cmd_backup() { cat "${lib}/backup-status.txt"; }
+cmd_vuln() { printf '%s\n' '{"critical":0,"high":5,"medium":1,"low":0,"items":[{"severity":"high","subject":"openssl"}]}'; }
+cmd_services() { printf '%s\n' '{"services":[{"name":"nginx","unit":"nginx.service","active":"failed","enabled":"enabled"}]}'; }
+hm_json_emit() {
+  case "$1" in
+    services) cmd_services ;;
+    backup_list) printf '%s\n' '{"snapshots":[{"scope":"shop.example","stamp":"20260101-120000","age_seconds":3600,"ok":true}]}' ;;
+    *) return 1 ;;
+  esac
+}
 live="$(cmd_report weekly --dry-run)"
 printf '%s\n' "${live}" | grep -q 'cpu avg 12' && ok live-stats || bad live-stats
 printf '%s\n' "${live}" | grep -q 'audit ssh OK' && ok live-audit || bad live-audit
 printf '%s\n' "${live}" | grep -q 'shop.example' && ok live-http || bad live-http
-printf '%s\n' "${live}" | grep -q 'os security 0' && ok live-vuln || bad live-vuln
-printf '%s\n' "${live}" | grep -q 'backup-local ostatnia OK' && ok live-backup || bad live-backup
-printf '%s\n' "${live}" | grep -q 'pominięto — brak modułu usług' && ok live-skip-svc || bad live-skip-svc
+printf '%s\n' "${live}" | grep -q 'Aktualizacje: critical=0 high=5' && ok live-vuln-human || bad live-vuln-human
+printf '%s\n' "${live}" | grep -q 'shop.example: 20260101-120000 OK' && ok live-backup || bad live-backup
+printf '%s\n' "${live}" | grep -q 'nginx' && ok live-svc || bad live-svc
+# surowy JSON nie powinien trafić do sekcji Aktualizacje
+printf '%s\n' "${live}" | grep -A2 '## Aktualizacje' | grep -q '"items"' && bad raw-json-upd || ok raw-json-upd
+
+# humanize audyt / zasoby
+fmt_a="$(hm_report_humanize Audyt '{"score":58,"checks":[{"id":"ssh-root","status":"FAIL","desc":"root login"}]}')"
+printf '%s\n' "${fmt_a}" | grep -q '58/100' && ok human-audit || bad human-audit
+fmt_z="$(hm_report_humanize Zasoby '[{"metric":"cpu","empty":true}]')"
+printf '%s\n' "${fmt_z}" | grep -q 'brak danych' && ok human-stats || bad human-stats
 
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

@@ -289,7 +289,8 @@ hm_site_node_install_versions() {
     "export NVM_DIR=\"${home}/.nvm\"; . \"\$NVM_DIR/nvm.sh\" &&${list}" || return 1
   local app="${home}/app"
   mkdir -p "${app}"
-  printf '%s\n' "${def}" > "${app}/.nvmrc"
+  printf '%s\n' "${def}" | hm_site_write_nofollow "${app}/.nvmrc" || return 1
+  printf '%s\n' "${def}" | hm_site_write_nofollow "${home}/.nvmrc" || return 1
 }
 
 hm_site_node_start_ok() {
@@ -481,9 +482,8 @@ EOF
 }
 
 hm_site_node_unit_name() {
-  local safe="${1//./-}"
-  safe="$(printf '%s' "${safe}" | tr -cd 'A-Za-z0-9-')"
-  printf 'hm-app-%s.service' "${safe}"
+  # jak Python/.NET: hm-app-<domena>.service (kropki OK w nazwie unitu)
+  printf 'hm-app-%s.service' "${1}"
 }
 
 hm_site_node_write_systemd() {
@@ -499,6 +499,7 @@ hm_site_node_write_systemd() {
     fi
   fi
   mkdir -p "${dir}" "${home}/logs" "${home}/app"
+  chown -R "${user}:${user}" "${home}/app" 2>/dev/null || chown "${user}:${user}" "${home}/app" 2>/dev/null || true
   dest="${dir}/${name}"
   nodebin="$(hm_site_node_default_bin "${home}")" || return 1
   pathbin="$(dirname "${nodebin}")"
@@ -537,10 +538,10 @@ EOF
   fi
   if [[ "${HM_SITE_NODE_MOCK:-}" == "1" || "$(id -u)" -eq 0 ]]; then
     if [[ -n "${HM_SITE_NODE_LOG:-}" && "${HM_SITE_NODE_MOCK:-}" == "1" ]]; then
-      printf 'systemctl daemon-reload\nsystemctl enable %s\n' "${name}" >> "${HM_SITE_NODE_LOG}"
+      printf 'systemctl daemon-reload\nsystemctl enable --now %s\n' "${name}" >> "${HM_SITE_NODE_LOG}"
     elif [[ "$(id -u)" -eq 0 ]] && hm_have_cmd systemctl; then
       systemctl daemon-reload || return 1
-      systemctl enable "${name}" || return 1
+      systemctl enable --now "${name}" || return 1
     fi
   fi
   printf '%s' "${dest}"
@@ -602,12 +603,9 @@ hm_site_node_provision() {
   done
   [[ "${ok}" -eq 1 ]] || { hm_err "Wersja domyślna nie jest na liście instalacji."; return 1; }
 
-  hm_site_node_install_nvm "${domain}" || return 1
-  hm_site_node_install_versions "${domain}" "${def}" "${vers[@]}" || return 1
-  hm_site_node_pkg "${domain}" "${pkg}" >/dev/null || return 1
-
   home="$(hm_site_home "${domain}")"
   user="$(hm_site_unix_user "${domain}")"
+  # Port przed nvm — zajęty port nie zostawia półinstalacji Node.
   if [[ "${mode}" == "static" ]]; then
     port="0"
     process="none"
@@ -616,6 +614,22 @@ hm_site_node_provision() {
     hm_site_env_upsert "${domain}" "PORT" "${port}" || return 1
     hm_site_env_upsert "${domain}" "HOST" "127.0.0.1" || return 1
   fi
+
+  hm_site_node_install_nvm "${domain}" || return 1
+  hm_site_node_install_versions "${domain}" "${def}" "${vers[@]}" || return 1
+  hm_site_node_pkg "${domain}" "${pkg}" >/dev/null || return 1
+
+  mkdir -p "${home}/app"
+  chown -R "${user}:${user}" "${home}/app" 2>/dev/null || chown "${user}:${user}" "${home}/app" 2>/dev/null || true
+  if [[ ! -f "${home}/app/server.js" && ! -f "${home}/app/dist/main.js" && ! -f "${home}/app/package.json" ]]; then
+    printf '%s\n' \
+      '// Placeholder — wgraj aplikację do app/ (WorkingDirectory unitu).' \
+      "const http=require('http');const p=process.env.PORT||3000;" \
+      "http.createServer((_,r)=>{r.end('ok')}).listen(p,'127.0.0.1');" \
+      | hm_site_write_nofollow "${home}/app/server.js" || true
+    hm_info "Utworzono placeholder app/server.js — podmień kod aplikacji (właściciel: ${user})."
+  fi
+
   hm_site_node_write_proxy "${domain}" "${port}" "${mode}" || return 1
 
   case "${process}" in
@@ -628,5 +642,10 @@ hm_site_node_provision() {
       ;;
     none) ;;
   esac
+  if declare -F hm_site_manifest_set_version >/dev/null 2>&1; then
+    local man
+    man="$(hm_site_manifest_path "${domain}" 2>/dev/null || true)"
+    [[ -n "${man}" && -f "${man}" ]] && hm_site_manifest_set_version "${man}" "${def}" || true
+  fi
   hm_ok "Node ${def} dla ${domain} (proces: ${process}, nasłuch 127.0.0.1:${port})."
 }

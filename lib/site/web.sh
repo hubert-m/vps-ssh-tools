@@ -76,6 +76,31 @@ hm_site_web_port_write() {
   fi
   printf '"%s":%s}\n' "${domain}" "${port}" >> "${tmp}"
   mv -f "${tmp}" "${file}"
+  if declare -F hm_tx_note_undo >/dev/null 2>&1; then
+    hm_tx_note_undo "$(printf 'port-release\t%s' "${domain}")"
+  fi
+}
+
+# Zwolnij rezerwację portu domeny (rollback / webs delete).
+hm_site_web_port_release() {
+  local domain="$1" file tmp line d p first=1
+  file="$(hm_site_web_port_file)"
+  [[ -f "${file}" ]] || return 0
+  tmp="$(mktemp "${file}.XXXXXX")"
+  printf '{' > "${tmp}"
+  while IFS= read -r line; do
+    [[ "${line}" =~ \"([^\"]+)\":([0-9]+) ]] || continue
+    d="${BASH_REMATCH[1]}"
+    p="${BASH_REMATCH[2]}"
+    [[ "${d}" == "${domain}" ]] && continue
+    if [[ "${first}" -eq 0 ]]; then
+      printf ',' >> "${tmp}"
+    fi
+    first=0
+    printf '"%s":%s' "${d}" "${p}" >> "${tmp}"
+  done < <(grep -o '"[^"]*":[0-9][0-9]*' "${file}" || true)
+  printf '}\n' >> "${tmp}"
+  mv -f "${tmp}" "${file}"
 }
 
 hm_site_web_port_read_again() {
@@ -250,10 +275,16 @@ hm_site_web_nginx_enable() {
 hm_site_web_apply_file() {
   local server="$1" kind="$2" dest="$3" body="${4:-}" bak="" journal="" link="" domain=""
   mkdir -p "$(dirname "${dest}")"
+  domain="${dest##*/}"
+  domain="${domain%.conf}"
+  if [[ -f "${dest}" && "${HM_SITE_WEB_ADOPT:-0}" != "1" && "${HMTOOLS_TEST:-}" != "1" ]]; then
+    hm_err "Vhost już istnieje: ${dest} (ustaw HM_SITE_WEB_ADOPT=1 albo --adopt)."
+    return 1
+  fi
   bak="${dest}.hmbak"
   rm -f "${bak}"
   if [[ -f "${dest}" ]]; then
-    cp "${dest}" "${bak}"
+    cp -a "${dest}" "${bak}"
   fi
   printf '%s\n' "${body}" > "${dest}"
   if [[ "${kind}" == "proxy" ]] && ! hm_site_web_upstream_ok "${HM_SITE_WEB_UPSTREAM}"; then
@@ -286,7 +317,7 @@ hm_site_web_apply_file() {
     hm_err "Walidacja ${server} nieudana — przywrócono poprzedni vhost, bez reload."
     return 1
   fi
-  rm -f "${bak}"
+  # .hmbak zostaje do undo (przywróć cudzy vhost zamiast go skasować)
   hm_site_web_track "${domain}" "${dest}"
   [[ -n "${link}" ]] && hm_site_web_track "${domain}" "${link}"
   hm_site_web_reload "${server}"
@@ -360,7 +391,7 @@ EOF
 }
 
 hm_site_web_ssl() {
-  local domain="$1" server="$2" root="$3"
+  local domain="$1" server="$2" root="$3" rc=0
   if [[ "${server}" == "ols" ]] && declare -F hm_sc_issue_ssl >/dev/null 2>&1; then
     hm_sc_issue_ssl "${domain}"
     return $?
@@ -368,6 +399,22 @@ hm_site_web_ssl() {
   if [[ -n "${HM_SITE_WEB_LOG:-}" ]]; then
     printf 'certbot certonly --webroot -w %s -d %s\n' "${root}" "${domain}" >> "${HM_SITE_WEB_LOG}"
   fi
+  if [[ "${HMTOOLS_TEST:-}" == "1" || "${HM_SITE_WEB_MOCK:-}" == "1" ]]; then
+    return 0
+  fi
+  if declare -F hm_ssl_issue_via_acme_webroot >/dev/null 2>&1 && [[ -d "${root}" ]]; then
+    if hm_ssl_issue_via_acme_webroot "${domain}" "${root}"; then
+      return 0
+    fi
+  fi
+  if hm_have_cmd certbot && [[ -d "${root}" ]]; then
+    certbot certonly --non-interactive --agree-tos --webroot -w "${root}" -d "${domain}" || rc=$?
+    if [[ "${rc}" -eq 0 ]]; then
+      hm_ok "SSL (certbot) dla ${domain}."
+      return 0
+    fi
+  fi
+  hm_warn "SSL pominięty dla ${domain} — brak acme/certbot albo błąd wydania. Później: ssl issue ${domain}"
   return 0
 }
 

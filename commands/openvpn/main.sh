@@ -175,9 +175,18 @@ hm_ovpn_copy_crl() {
 hm_ovpn_mgmt_kill() {
   local cn="$1" sock
   sock="$(hm_ovpn_mgmt_sock)"
-  [[ -n "${HM_OVPN_MGMT_LOG:-}" ]] && printf 'kill %s\n' "${cn}" >> "${HM_OVPN_MGMT_LOG}"
+  [[ -n "${HM_OVPN_MGMT_LOG:-}" ]] && printf 'kill %s\nquit\n' "${cn}" >> "${HM_OVPN_MGMT_LOG}"
   if [[ -S "${sock}" ]] && hm_have_cmd nc; then
-    printf 'kill %s\n' "${cn}" | nc -U "${sock}" || hm_warn "sesja nie została rozłączona"
+    # -N zamyka stdin po zapisie; timeout chroni przed wiszącym sockiem.
+    if command -v timeout >/dev/null 2>&1; then
+      printf 'kill %s\nquit\n' "${cn}" | timeout 5 nc -N -U -w 3 "${sock}" 2>/dev/null \
+        || printf 'kill %s\nquit\n' "${cn}" | timeout 5 nc -U -w 3 "${sock}" 2>/dev/null \
+        || hm_warn "sesja nie została rozłączona"
+    else
+      printf 'kill %s\nquit\n' "${cn}" | nc -N -U -w 3 "${sock}" 2>/dev/null \
+        || printf 'kill %s\nquit\n' "${cn}" | nc -U -w 3 "${sock}" 2>/dev/null \
+        || hm_warn "sesja nie została rozłączona"
+    fi
     return 0
   fi
   hm_warn "sesja nie została rozłączona"
@@ -191,7 +200,7 @@ hm_ovpn_client_revoke() {
       *) name="$1"; shift ;;
     esac
   done
-  hm_ovpn_name_ok "${name}" || { hm_err "Zła nazwa klienta."; return 1; }
+  hm_ovpn_name_client "${name}" || { hm_err "Zła nazwa klienta (zarezerwowane: ca/server)."; return 1; }
   local -a steps=("easyrsa revoke ${name}" "easyrsa gen-crl" "kopia crl.pem 0644" "rozłączenie ${name}" "usunięcie ccd i profilu")
   if [[ "${yes}" -eq 1 ]]; then
     hm_confirm_plan "openvpn revoke ${name}" "Stary profil przestanie działać." --yes "${steps[@]}" || return 1
@@ -221,10 +230,10 @@ hm_ovpn_client_renew() {
       *) name="$1"; shift ;;
     esac
   done
-  hm_ovpn_name_ok "${name}" || { hm_err "Zła nazwa klienta."; return 1; }
+  hm_ovpn_name_client "${name}" || { hm_err "Zła nazwa klienta (zarezerwowane: ca/server)."; return 1; }
   [[ "${days}" =~ ^[0-9]+$ ]] || { hm_err "Zła liczba dni."; return 1; }
   ver="$(hm_ovpn_easyrsa_version)"
-  local -a steps=("odnowienie ${name} na ${days} dni" "ponowny eksport profilu")
+  local -a steps=("odnowienie ${name} na ${days} dni" "unieważnienie starego certu" "ponowny eksport profilu")
   if [[ "${yes}" -eq 1 ]]; then
     hm_confirm_plan "openvpn renew ${name}" "Stary profil przestanie działać." --yes "${steps[@]}" || return 1
   else
@@ -237,6 +246,10 @@ hm_ovpn_client_renew() {
       ;;
     *)
       hm_ovpn_easyrsa renew "${name}" || return 1
+      # easy-rsa 3.1.x: renew zostawia stary cert V — revoke-renewed + CRL
+      hm_ovpn_easyrsa revoke-renewed "${name}" || hm_ovpn_easyrsa revoke "${name}" || true
+      hm_ovpn_easyrsa gen-crl || return 1
+      hm_ovpn_copy_crl || true
       ;;
   esac
   if [[ "${HM_OVPN_MOCK:-}" == "1" ]]; then
@@ -332,12 +345,25 @@ hm_ovpn_check() {
       fi
     fi
   fi
-  local kind path warn_at
+  local kind path warn_at cert raw_end
   for kind in ca server; do
     path="$(hm_ovpn_pki)/${kind}.notafter"
     [[ "${kind}" == "server" ]] && path="$(hm_ovpn_pki)/issued/server.notafter"
-    [[ -f "${path}" ]] || continue
-    epoch="$(hm_ovpn_parse_date "$(cat "${path}")" || true)"
+    epoch=""
+    if [[ -f "${path}" ]]; then
+      epoch="$(hm_ovpn_parse_date "$(cat "${path}")" || true)"
+    fi
+    if [[ -z "${epoch}" ]]; then
+      if [[ "${kind}" == "ca" ]]; then
+        cert="$(hm_ovpn_pki)/ca.crt"
+      else
+        cert="$(hm_ovpn_pki)/issued/server.crt"
+      fi
+      if [[ -f "${cert}" ]] && hm_have_cmd openssl; then
+        raw_end="$(openssl x509 -enddate -noout -in "${cert}" 2>/dev/null || true)"
+        epoch="$(hm_ovpn_parse_date "${raw_end}" || true)"
+      fi
+    fi
     [[ -n "${epoch}" ]] || continue
     days="$(hm_ovpn_days_left "${epoch}")"
     warn_at=60
@@ -417,9 +443,11 @@ hm_ovpn_server_renew() {
 }
 
 hm_ovpn_name_client() {
-  local name="${1:-}"
+  local name="${1:-}" srv
   [[ "${name}" =~ ^[A-Za-z0-9_.-]{1,64}$ ]] || return 1
   [[ "${name}" == "server" || "${name}" == "ca" ]] && return 1
+  srv="${HM_OVPN_SERVER_CN:-server}"
+  [[ "${name}" == "${srv}" ]] && return 1
   return 0
 }
 
