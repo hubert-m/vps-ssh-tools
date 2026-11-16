@@ -41,6 +41,14 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: docker compose — `-p`/`-f` z labeli, digesty z inspect, rollback (tag + force-recreate), health bez samej flagi testowej, redakcja wartości, audit/updates z `ps`/`inspect`
 - Fix: cron-run/monitor — nazwy bez `.`/`..`, lock PID+flock (stale→OK, zajęty→rc≠0+alert), timeout zabija grupę (setsid), szersza redakcja, bez trap RETURN
 - Fix: config history — bezpieczny rollback (cat-file, tmp+mv, absolutny dest, allowlista), bez `--yes`, sekrety (gshadow/hmtools.conf/token/debian.cnf), usuwanie znikniętych plików z repo
+- Docs: openvpn — gwarancje architektury (brak reinstall/init-pki, CRL w `hm/`, force nie rusza obcego crl); checklista Ubuntu
+- Fix: openvpn doctor — easyrsa jak install (PATH + `/usr/share/easy-rsa`), PKI z stanu / `…/hm/pki`; docs uninstall (kopia PKI, `--force`)
+- Fix: openvpn ca rotate — bez podwójnego `server`, hm.conf dopiero po sukcesie, pending blokuje re-rotate, finish przepina PKI w stanie; fail2ban port/proto ze stanu
+- Fix: openvpn backup/restore — zaufane ścieżki (bez `rm` z archiwum), odrzucenie symlinków, merge revoke, zachowanie `hm.conf`, legacy wymaga ca.crt/index.txt
+- Fix: site new W12 ops — przed COMMIT; rollback bez `hm-app-*`; firewall soft-fail + usuwanie reguły przy delete; `hm_site_app_unit_name`; PHP z `HM_SITE_RUNTIME_VERSION`
+- Fix: openvpn config — DNS/IPV6/MODE w stanie install; fw para port+proto; NAT/ccd po SUBNET; backup bez PKI + prune; `config set routes`; remove tylko ALLOW
+- Fix: deploy releases — odmowa symlinku `releases`/stamp; status nofollow; prune pod home; populate+build+health przed switch; rollback tylko status `ok`
+- Fix: openvpn status/who/kick — ścieżka statusu z `hm.conf`; kick rc≠0 bez pliku/CN; licznik klientów bez CN=server
 
 ## [v0.1.13]
 

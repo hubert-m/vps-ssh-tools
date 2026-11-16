@@ -100,10 +100,13 @@ grep -q 'BF-CBC' "$(hm_ovpn_conf_file)" && ok fix-keeps-cipher || bad fix-keeps-
 [[ -f "$(hm_ovpn_conf_file).bak-hmtools" ]] && ok fix-backup || bad fix-backup
 
 export HM_OVPN_SSH_IP=203.0.113.5
+printf 'PORT=443\nPROTO=tcp\nPKI=%s\n' "${HM_OVPN_PKI}" > "$(hm_ovpn_state_file)"
 hm_ovpn_fail2ban on >/dev/null
 grep -q '203.0.113.5' "${HM_OVPN_F2B_JAIL}" && ok f2b-ignore || bad f2b-ignore
 grep -q 'TLS Error: TLS handshake failed' "${HM_OVPN_F2B_FILTER}" && ok f2b-filter || bad f2b-filter
 grep -q 'AUTH_FAILED' "${HM_OVPN_F2B_FILTER}" && ok f2b-auth || bad f2b-auth
+grep -q 'port = 443' "${HM_OVPN_F2B_JAIL}" && ok f2b-port || bad f2b-port
+grep -q 'protocol = tcp' "${HM_OVPN_F2B_JAIL}" && ok f2b-proto || bad f2b-proto
 sample="${root}/sample.log"
 printf '%s\n' 'noise' 'TLS Error: TLS handshake failed' 'AUTH_FAILED' > "${sample}"
 out="$(HM_OVPN_F2B_SAMPLE="${sample}" hm_ovpn_fail2ban status)"
@@ -113,11 +116,14 @@ hm_ovpn_fail2ban off >/dev/null
 out="$(hm_ovpn_fail2ban status)"
 printf '%s\n' "${out}" | grep -q 'fail2ban: off' && ok f2b-off || bad f2b-off
 
-mkdir -p "${HM_OVPN_PKI}/private"
+mkdir -p "${HM_OVPN_PKI}/private" "${HM_OVPN_PKI}/issued"
 printf 'SECRET-CA-KEY\n' > "${HM_OVPN_PKI}/private/ca.key"
 printf 'OLD-CA\n' > "${HM_OVPN_PKI}/ca.crt"
-printf 'V\t/CN=laptop/\n' > "${HM_OVPN_PKI}/index.txt"
+printf 'V\t270101000000Z\t\t01\tunknown\t/CN=laptop\n' > "${HM_OVPN_PKI}/index.txt"
+printf 'V\t270101000000Z\t\t02\tunknown\t/CN=server\n' >> "${HM_OVPN_PKI}/index.txt"
+printf 'PORT=443\nPROTO=tcp\nPKI=%s\n' "${HM_OVPN_PKI}" > "$(hm_ovpn_state_file)"
 printf 'port 1194\nca placeholder\n' > "$(hm_ovpn_conf_file)"
+: > "${HM_OVPN_CALL_LOG}"
 if hm_ovpn_ca rotate >/dev/null 2>&1; then bad ca-noyes; else ok ca-noyes; fi
 [[ ! -f "${HM_OVPN_ETC}/ca-bundle.crt" ]] && ok ca-noyes-file || bad ca-noyes-file
 out="$(hm_ovpn_ca rotate --yes)"
@@ -125,12 +131,18 @@ grep -q 'OLD-CA' "${HM_OVPN_ETC}/ca-bundle.crt" && ok ca-old || bad ca-old
 grep -q 'NEW-CA' "${HM_OVPN_ETC}/ca-bundle.crt" && ok ca-new || bad ca-new
 grep -q 'ca-bundle.crt' "$(hm_ovpn_conf_file)" && ok ca-conf || bad ca-conf
 grep -q 'build-client-full laptop' "${HM_OVPN_CALL_LOG}" && ok ca-client || bad ca-client
+grep -q 'build-client-full server' "${HM_OVPN_CALL_LOG}" && bad ca-skip-server || ok ca-skip-server
 printf '%s\n' "${out}" | grep -q 'SECRET-CA-KEY' && bad ca-leak || ok ca-leak
 [[ -f "$(hm_ovpn_ca_pending)" ]] && ok ca-pending || bad ca-pending
+# drugi rotate przy pending → odmowa
+if hm_ovpn_ca rotate --yes >/dev/null 2>"${root}/ca2.err"; then bad ca-second; else ok ca-second; fi
+grep -qi 'trwa\|finish\|abort' "${root}/ca2.err" && ok ca-second-msg || bad ca-second-msg
 out="$(hm_ovpn_ca rotate finish --yes)"
 grep -q 'OLD-CA' "${HM_OVPN_ETC}/ca-bundle.crt" && bad ca-finished-old || ok ca-finished-old
 grep -q 'NEW-CA' "${HM_OVPN_ETC}/ca-bundle.crt" && ok ca-finished-new || bad ca-finished-new
 [[ ! -f "$(hm_ovpn_ca_pending)" ]] && ok ca-pending-gone || bad ca-pending-gone
+grep -q "^PKI=${HM_OVPN_PKI}$" "$(hm_ovpn_state_file)" && ok ca-finish-state || bad ca-finish-state
+grep -q "ca ${HM_OVPN_PKI}/ca.crt" "$(hm_ovpn_conf_file)" && ok ca-finish-conf || bad ca-finish-conf
 printf '%s\n' "${out}" | grep -q 'SECRET-CA-KEY' && bad ca-finish-leak || ok ca-finish-leak
 
 if [[ "${fail}" -eq 0 ]]; then

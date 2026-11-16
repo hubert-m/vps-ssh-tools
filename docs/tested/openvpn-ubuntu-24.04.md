@@ -5,6 +5,8 @@ Ręczna checklista. Pakiety: `apt`.
 - [ ] `detect` pokazuje `OS_ID=ubuntu` i w bannerze `openvpn=no`, dopóki nie ma socketa
 - [ ] `openvpn install --dry-run` nie zmienia `/etc` i nie woła sieci
 - [ ] `openvpn install --yes --endpoint <ip> --port 1194 --proto udp` stawia `openvpn-server@hm`
+- [ ] Drugi `openvpn install` z innym portem odmawia (bez kasowania PKI); zmiany tylko przez `config set`
+- [ ] `install --force` przy obcym `crl.pem` zostawia ten plik; CRL hmtools trafia do `hm/crl.pem`
 - [ ] `openvpn` bez argumentów pokazuje endpoint i liczbę klientów
 - [ ] `openvpn client add laptop --yes` daje profil 0600, klucz nie ma go w `openvpn log`
 - [ ] `openvpn doctor` zgłasza brak, gdy `tls-crypt.key` nie jest 0600

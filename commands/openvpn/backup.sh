@@ -236,19 +236,86 @@ hm_ovpn_snapshot_save() {
   fi
 }
 
-hm_ovpn_snapshot_load() {
-  local src="$1" etc pki clients
+# Zaufane ścieżki rollbacku — NIGDY z przywróconego hmtools.state (PKI=).
+# HM_OVPN_PKI / HM_OVPN_ETC z env (testy) są jawne i dozwolone.
+hm_ovpn_trusted_paths() {
+  local etc pki clients
   etc="$(hm_ovpn_etc)"
-  pki="$(hm_ovpn_pki)"
+  if [[ -n "${HM_OVPN_PKI:-}" ]]; then
+    pki="${HM_OVPN_PKI}"
+  else
+    pki="${etc}/hm/pki"
+    case "${pki}" in
+      "${etc}"/*|"${HM_OVPN_ROOT:-/etc/openvpn}"/*) ;;
+      *) hm_err "Odmowa PKI poza allowlistą OpenVPN (${pki})."; return 1 ;;
+    esac
+  fi
   clients="$(hm_ovpn_export_dir)"
-  rm -rf "${etc}" "${pki}"
-  mkdir -p "${etc}" "${pki}"
-  hm_ovpn_copy_tree "${src}/etc" "${etc}"
-  hm_ovpn_copy_tree "${src}/pki" "${pki}"
+  if [[ -z "${HM_OVPN_ETC:-}" ]]; then
+    case "${etc}" in
+      /etc/openvpn/*|"${HM_OVPN_ROOT:-/etc/openvpn}"/*) ;;
+      *) hm_err "Odmowa etc poza /etc/openvpn."; return 1 ;;
+    esac
+  fi
+  printf '%s\t%s\t%s\n' "${etc}" "${pki}" "${clients}"
+}
+
+hm_ovpn_tree_has_symlinks() {
+  local dir="$1"
+  [[ -d "${dir}" ]] || return 1
+  if find "${dir}" \( -type l -o -type b -o -type c \) 2>/dev/null | grep -q .; then
+    return 0
+  fi
+  return 1
+}
+
+hm_ovpn_safe_copy_tree() {
+  local src="$1" dest="$2" f rel tmp
+  [[ -d "${src}" ]] || return 0
+  if hm_ovpn_tree_has_symlinks "${src}"; then
+    hm_err "Odmowa: drzewo zawiera symlinki/urządzenia."
+    return 1
+  fi
+  mkdir -p "${dest}"
+  while IFS= read -r -d '' f; do
+    rel="${f#"${src}/"}"
+    case "${rel}" in
+      *..*) hm_err "Zła ścieżka w kopii: ${rel}"; return 1 ;;
+    esac
+    mkdir -p "${dest}/$(dirname "${rel}")"
+    tmp="$(mktemp "${dest}/${rel}.XXXXXX")"
+    cp -f "${f}" "${tmp}"
+    mv -f "${tmp}" "${dest}/${rel}"
+  done < <(find "${src}" -type f -print0 2>/dev/null)
+}
+
+hm_ovpn_snapshot_load() {
+  local src="$1" etc pki clients paths
+  paths="$(hm_ovpn_trusted_paths)" || return 1
+  IFS=$'\t' read -r etc pki clients <<< "${paths}"
+  # kasuj tylko zaufane ścieżki (nie PKI= z archiwum)
+  rm -rf "${etc}"
+  mkdir -p "${etc}"
+  case "${pki}" in
+    "${etc}"/*)
+      # pki pod etc — już skasowane z etc
+      mkdir -p "${pki}"
+      ;;
+    *)
+      rm -rf "${pki}"
+      mkdir -p "${pki}"
+      ;;
+  esac
+  hm_ovpn_safe_copy_tree "${src}/etc" "${etc}" || return 1
+  hm_ovpn_safe_copy_tree "${src}/pki" "${pki}" || return 1
   if [[ -d "${src}/clients" ]]; then
-    rm -rf "${clients}"
-    mkdir -p "${clients}"
-    hm_ovpn_copy_tree "${src}/clients" "${clients}"
+    case "${clients}" in
+      */hmtools-openvpn/clients|*/hmtools-openvpn/clients/|"${HM_OVPN_EXPORT:-}"*)
+        rm -rf "${clients}"
+        mkdir -p "${clients}"
+        hm_ovpn_safe_copy_tree "${src}/clients" "${clients}" || return 1
+        ;;
+    esac
   fi
 }
 
@@ -282,6 +349,13 @@ hm_ovpn_restore_modes() {
 }
 
 hm_ovpn_restore_render() {
+  # Zachowaj przywrócony hm.conf (DNS, routes, client-to-client).
+  # Re-render tylko gdy conf brakuje.
+  local conf
+  conf="$(hm_ovpn_conf_file)"
+  if [[ -f "${conf}" && -s "${conf}" ]]; then
+    return 0
+  fi
   local port proto cidr dns group ver
   port="$(hm_ovpn_state_value PORT 2>/dev/null || true)"
   proto="$(hm_ovpn_state_value PROTO 2>/dev/null || true)"
@@ -291,7 +365,44 @@ hm_ovpn_restore_render() {
   [[ -n "${dns}" ]] || dns="quad9"
   group="$(hm_ovpn_group_name)"
   ver="${HM_OVPN_VERSION:-2.6.0}"
-  hm_ovpn_render_conf "$(hm_ovpn_etc)" "${port}" "${proto}" "${cidr}" "${group}" "${ver}" "$(hm_ovpn_dns_ips "${dns}")" > "$(hm_ovpn_conf_file)"
+  hm_ovpn_render_conf "$(hm_ovpn_etc)" "${port}" "${proto}" "${cidr}" "${group}" "${ver}" "$(hm_ovpn_dns_ips "${dns}")" > "${conf}"
+}
+
+# Scal revoke: R z żywej kopii zostaje R po restore starszego archiwum.
+hm_ovpn_merge_revokes() {
+  local live_index="$1" dest_index="$2" line cn serial status
+  [[ -f "${live_index}" && -f "${dest_index}" ]] || return 0
+  local tmp changed=0
+  tmp="$(mktemp)"
+  cp -f "${dest_index}" "${tmp}"
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ "${line}" == R* ]] || continue
+    cn="${line#*/CN=}"
+    cn="${cn%%/*}"
+    [[ -n "${cn}" ]] || continue
+    if grep -qE "^V[[:space:]].*/CN=${cn}(/|[[:space:]]|$)" "${tmp}"; then
+      awk -v cn="${cn}" '
+        $1=="V" && $0 ~ ("/CN=" cn) {
+          sub(/^V/, "R")
+          print
+          next
+        }
+        { print }
+      ' "${tmp}" > "${tmp}.2" && mv -f "${tmp}.2" "${tmp}"
+      changed=1
+      hm_warn "Restore: zachowuję revoke klienta ${cn} (R z bieżącego stanu)."
+    fi
+  done < "${live_index}"
+  if [[ "${changed}" -eq 1 ]]; then
+    mv -f "${tmp}" "${dest_index}"
+    if declare -F hm_ovpn_crl_update >/dev/null 2>&1; then
+      hm_ovpn_crl_update >/dev/null 2>&1 || true
+    elif declare -F hm_ovpn_easyrsa >/dev/null 2>&1; then
+      hm_ovpn_easyrsa gen-crl >/dev/null 2>&1 || true
+    fi
+  else
+    rm -f "${tmp}"
+  fi
 }
 
 hm_ovpn_retarget() {
@@ -356,9 +467,15 @@ hm_ovpn_restore_archive() {
     src="${work}/archive.tar.gz"
   fi
   mkdir -p "${work}/tree"
-  if ! tar -xzf "${src}" -C "${work}/tree" 2>/dev/null; then
+  # bez --same-owner; potem odrzuć symlinki
+  if ! tar --no-same-owner -xzf "${src}" -C "${work}/tree" 2>/dev/null; then
     rm -rf "${work}"
     hm_err "Uszkodzone archiwum. Nic nie zmieniono."
+    return 1
+  fi
+  if hm_ovpn_tree_has_symlinks "${work}/tree"; then
+    rm -rf "${work}"
+    hm_err "Archiwum zawiera symlinki/urządzenia. Odrzucone. Nic nie zmieniono."
     return 1
   fi
   if ! hm_ovpn_restore_verify "${work}/tree"; then
@@ -378,20 +495,48 @@ hm_ovpn_restore_archive() {
       fi
     done < <(hm_ovpn_packages)
   fi
+  local paths etc_t pki_t clients_t live_index=""
+  paths="$(hm_ovpn_trusted_paths)" || { rm -rf "${work}"; return 1; }
+  IFS=$'\t' read -r etc_t pki_t clients_t <<< "${paths}"
   snap="$(mktemp -d)"
   hm_ovpn_snapshot_save "${snap}"
+  [[ -f "${pki_t}/index.txt" ]] && live_index="${snap}/pki/index.txt"
   hm_ovpn_systemctl disable --now "openvpn-server@$(hm_ovpn_instance)" >/dev/null 2>&1 || true
+  # Ignoruj PKI= z archiwum — zawsze zaufane ścieżki
   if [[ -d "${work}/tree/server" ]]; then
-    mkdir -p "$(hm_ovpn_etc)"
-    cp -a "${work}/tree/server/." "$(hm_ovpn_etc)/" 2>/dev/null || cp -R "${work}/tree/server/." "$(hm_ovpn_etc)/"
+    mkdir -p "${etc_t}"
+    hm_ovpn_safe_copy_tree "${work}/tree/server" "${etc_t}" || {
+      hm_ovpn_snapshot_load "${snap}"
+      rm -rf "${work}" "${snap}"
+      return 1
+    }
   fi
   if [[ -d "${work}/tree/server/pki" ]]; then
-    mkdir -p "$(hm_ovpn_pki)"
-    cp -a "${work}/tree/server/pki/." "$(hm_ovpn_pki)/" 2>/dev/null || cp -R "${work}/tree/server/pki/." "$(hm_ovpn_pki)/"
+    mkdir -p "${pki_t}"
+    hm_ovpn_safe_copy_tree "${work}/tree/server/pki" "${pki_t}" || {
+      hm_ovpn_snapshot_load "${snap}"
+      rm -rf "${work}" "${snap}"
+      return 1
+    }
   fi
   if [[ -d "${work}/tree/clients" ]]; then
-    mkdir -p "$(hm_ovpn_export_dir)"
-    cp -a "${work}/tree/clients/." "$(hm_ovpn_export_dir)/" 2>/dev/null || cp -R "${work}/tree/clients/." "$(hm_ovpn_export_dir)/"
+    mkdir -p "${clients_t}"
+    hm_ovpn_safe_copy_tree "${work}/tree/clients" "${clients_t}" || {
+      hm_ovpn_snapshot_load "${snap}"
+      rm -rf "${work}" "${snap}"
+      return 1
+    }
+  fi
+  # wymuś zaufane PKI= w stanie (nie z archiwum)
+  if [[ -f "$(hm_ovpn_state_file)" ]]; then
+    local stmp
+    stmp="$(mktemp)"
+    grep -v '^PKI=' "$(hm_ovpn_state_file)" > "${stmp}" || true
+    printf 'PKI=%s\n' "${pki_t}" >> "${stmp}"
+    mv -f "${stmp}" "$(hm_ovpn_state_file)"
+  fi
+  if [[ -n "${live_index}" && -f "${live_index}" ]]; then
+    hm_ovpn_merge_revokes "${live_index}" "${pki_t}/index.txt"
   fi
   hm_ovpn_restore_modes
   if ! hm_ovpn_restore_render; then

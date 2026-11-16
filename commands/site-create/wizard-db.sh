@@ -600,14 +600,20 @@ cmd_site_new() {
       hm_python_write_vhost "${domain}" "$(hm_site_home "${domain}")" || true
     fi
   fi
+  # Ops w tej samej transakcji (przed COMMIT) — typed undo; błąd krytyczny → rollback TX.
+  # Opcjonalny firewall soft-fail jest w hm_site_ops_apply (ostrzeżenie, bez rollbacku).
+  if [[ "${ops_on}" -eq 1 ]] && declare -F hm_site_ops_apply >/dev/null 2>&1; then
+    if ! hm_site_ops_apply "${domain}" "${ops_cron}" "${ops_cmd}" "${ops_worker}" "${ops_n}" "${ops_health}" "${ops_port}"; then
+      [[ -n "${HM_TX_JOURNAL:-}" ]] && hm_tx_rollback "${domain}" || true
+      hm_err "site new nieudany — cofnięto wdrożenie po błędzie operacji."
+      return 1
+    fi
+  fi
   if declare -F hm_tx_commit >/dev/null 2>&1 && [[ -n "${HM_TX_JOURNAL:-}" ]]; then
     hm_tx_commit "${domain}" "${HM_SITE_USER:-${site_user:-${domain%%.*}}}" "${runtime}" "${webserver}" "$(hm_site_home "${domain}")/shared/.env" || return 1
   fi
   if [[ -n "${save_profile}" ]]; then
     hm_site_profile_save "${save_profile}" "${domain}" "${preset_app}" "${runtime}" "${db}" "${webserver}" || return 1
-  fi
-  if [[ "${ops_on}" -eq 1 ]] && declare -F hm_site_ops_apply >/dev/null 2>&1; then
-    hm_site_ops_apply "${domain}" "${ops_cron}" "${ops_cmd}" "${ops_worker}" "${ops_n}" "${ops_health}" "${ops_port}" || return 1
   fi
   return 0
 }

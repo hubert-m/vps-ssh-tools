@@ -49,7 +49,8 @@ printf '%s\n' "${hint}" | grep -q 'install --dry-run' && ok bare-hint || bad bar
 
 mkdir -p "${HM_OVPN_PKI}"
 printf 'ENDPOINT=vpn.test\nPORT=1194\nPROTO=udp\n' > "$(hm_ovpn_state_file)"
-printf 'V\t270101000000Z\t\t01\tunknown\t/CN=laptop\n' > "${HM_OVPN_PKI}/index.txt"
+printf 'V\t270101000000Z\t\t01\tunknown\t/CN=server\nV\t270101000000Z\t\t02\tunknown\t/CN=laptop\n' \
+  > "${HM_OVPN_PKI}/index.txt"
 st="$(LANG=C cmd_openvpn status)"
 printf '%s\n' "${st}" | grep -q 'endpoint: vpn.test' && ok status-ep || bad status-ep
 printf '%s\n' "${st}" | grep -q 'klienci: 1' && ok status-clients || bad status-clients
@@ -64,7 +65,27 @@ chmod 0600 "$(hm_ovpn_tls_key_path)" "${HM_OVPN_PKI}/private/ca.key" 2>/dev/null
 drc=0
 doc="$(hm_ovpn_doctor)" || drc=$?
 printf '%s\n' "${doc}" | grep -q 'pakiet openvpn: jest' && ok doctor-pkg || bad doctor-pkg
+printf '%s\n' "${doc}" | grep -q 'pakiet easy-rsa: jest' && ok doctor-easyrsa || bad doctor-easyrsa
 printf '%s\n' "${doc}" | grep -q 'unit: jest' && ok doctor-unit || bad doctor-unit
+printf '%s\n' "${doc}" | grep -q "pki: ${HM_OVPN_PKI}" && ok doctor-pki-path || bad doctor-pki-path
+# domyślna ścieżka bez HM_OVPN_PKI → …/hm/pki
+(
+  unset HM_OVPN_PKI
+  d="$(hm_ovpn_pki)"
+  [[ "${d}" == "${HM_OVPN_ETC}/hm/pki" ]] && ok pki-default-hm || bad pki-default-hm
+)
+# easyrsa tylko w /usr/share (symulacja)
+mkdir -p "${root}/share/easy-rsa"
+printf '#!/usr/bin/env bash\nexit 0\n' > "${root}/share/easy-rsa/easyrsa"
+chmod +x "${root}/share/easy-rsa/easyrsa" || true
+# tymczasowo schowaj easyrsa z PATH mocków
+mv "${root}/bin/easyrsa" "${root}/bin/easyrsa.bak" 2>/dev/null || true
+# podmień detekcję ścieżek przez HM_OVPN_EASYRSA wskazujący share
+export HM_OVPN_EASYRSA="${root}/share/easy-rsa/easyrsa"
+doc2="$(hm_ovpn_doctor)" || true
+printf '%s\n' "${doc2}" | grep -q 'pakiet easy-rsa: jest' && ok doctor-easyrsa-share || bad doctor-easyrsa-share
+unset HM_OVPN_EASYRSA
+mv "${root}/bin/easyrsa.bak" "${root}/bin/easyrsa" 2>/dev/null || true
 mode="$(hm_ovpn_mode "$(hm_ovpn_tls_key_path)" || true)"
 if [[ "${mode}" == "600" || "${mode}" == "400" ]]; then
   [[ "${drc}" -eq 0 ]] && ok doctor-mode || bad doctor-mode
@@ -108,6 +129,17 @@ if cmd_openvpn kick ghost >/dev/null 2>&1; then bad kick-missing; else ok kick-m
 export HM_OVPN_MGMT_LOG="${root}/mgmt.log"
 cmd_openvpn kick host.example --yes >/dev/null
 grep -q 'kill host.example' "${HM_OVPN_MGMT_LOG}" && ok kick-dot || bad kick-dot
+# kick bez pliku statusu → rc≠0
+unset HM_OVPN_STATUS
+if cmd_openvpn kick host.example --yes >/dev/null 2>&1; then bad kick-nostatus; else ok kick-nostatus; fi
+# ścieżka statusu z hm.conf (jak install: /run/… albo lokalna)
+runstat="${root}/run-status-hm.log"
+mkdir -p "${root}/run"
+printf 'CLIENT_LIST,fromconf,9.9.9.9:1,10.8.0.9,,1,1,t,,,AES\n' > "${runstat}"
+printf 'status %s 30\nport 1194\n' "${runstat}" > "$(hm_ovpn_conf_file)"
+who2="$(cmd_openvpn who)"
+printf '%s\n' "${who2}" | grep -q 'fromconf' && ok who-from-conf || bad who-from-conf
+printf '%s\n' "$(cmd_openvpn status)" | grep -q "status_file: ${runstat}" && ok status-path-conf || bad status-path-conf
 
 export HM_OVPN_JOURNAL="${root}/journal.log"
 cat > "${HM_OVPN_JOURNAL}" <<'EOF'

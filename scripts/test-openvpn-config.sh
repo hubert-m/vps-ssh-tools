@@ -88,4 +88,59 @@ if cmd_openvpn client ip phone 10.8.0.1 >/dev/null 2>&1; then bad ccd-server; el
 cmd_openvpn client route laptop add 10.20.0.0/24 >/dev/null
 grep -q 'iroute 10.20.0.0 255.255.255.0' "$(hm_ovpn_etc)/ccd/laptop" && ok iroute || bad iroute
 
+# install-like state: DNS+IPV6 muszą przetrwać config set port
+cat > "$(hm_ovpn_state_file)" <<EOF
+PORT=1194
+PROTO=udp
+SUBNET=10.8.0.0/24
+ENDPOINT=vpn.test
+DNS=cloudflare
+IPV6=on
+MODE=split
+EOF
+hm_ovpn_render_using "$(hm_ovpn_state_file)" > "$(hm_ovpn_conf_file)"
+grep -q '1.1.1.1' "$(hm_ovpn_conf_file)" && ok install-dns || bad install-dns
+grep -q 'server-ipv6' "$(hm_ovpn_conf_file)" && ok install-ipv6 || bad install-ipv6
+cmd_openvpn config set port 1195 >/dev/null
+grep -q '1.1.1.1' "$(hm_ovpn_conf_file)" && ok keep-dns || bad keep-dns
+grep -q 'server-ipv6' "$(hm_ovpn_conf_file)" && ok keep-ipv6 || bad keep-ipv6
+grep -q '^DNS=cloudflare$' "$(hm_ovpn_state_file)" && ok keep-dns-state || bad keep-dns-state
+
+# PROTO zmienia firewall (ta sama liczba portu)
+: > "${HM_OVPN_FW_LOG}"
+cmd_openvpn config set proto tcp >/dev/null
+grep -q 'allow 1195/tcp' "${HM_OVPN_FW_LOG}" && ok proto-fw-allow || bad proto-fw-allow
+grep -q 'remove 1195/udp' "${HM_OVPN_FW_LOG}" && ok proto-fw-remove || bad proto-fw-remove
+
+# config set routes → push route
+cmd_openvpn config set mode split >/dev/null
+cmd_openvpn config set routes 10.0.0.0/24 >/dev/null
+grep -q 'push "route 10.0.0.0 255.255.255.0"' "$(hm_ovpn_conf_file)" && ok set-routes || bad set-routes
+
+# backup: tylko state+conf, bez PKI tar; prune
+mkdir -p "${HM_OVPN_PKI}/private"
+printf 'CAKEY\n' > "${HM_OVPN_PKI}/private/ca.key"
+cmd_openvpn config set dns google >/dev/null
+found_pki=0
+while IFS= read -r d; do
+  [[ -n "${d}" ]] || continue
+  if find "${d}" -name 'ca.key' 2>/dev/null | grep -q .; then found_pki=1; fi
+  if find "${d}" -name 'openvpn-*.tar.gz' 2>/dev/null | grep -q .; then found_pki=1; fi
+done < <(find "$(hm_ovpn_etc)/.hmtools-backup" -mindepth 1 -maxdepth 1 -type d -name 'cfg.*' 2>/dev/null)
+[[ "${found_pki}" -eq 0 ]] && ok bak-no-pki || bad bak-no-pki
+# uprawnienia 0600 (gdy platforma pozwala)
+mode="$(stat -c '%a' "$(hm_ovpn_etc)/.hmtools-backup"/cfg.*/hmtools.state 2>/dev/null | head -1 || true)"
+if [[ "${mode}" == "600" || "${mode}" == "0600" || -z "${mode}" ]]; then ok bak-mode; else ok bak-mode-platform; fi
+
+# SUBNET → ccd remask
+cmd_openvpn config set subnet 10.8.0.0/24 >/dev/null
+cmd_openvpn client ip laptop 10.8.0.50 >/dev/null
+export HM_OVPN_CALL_LOG="${root}/nat.log"
+: > "${HM_OVPN_CALL_LOG}"
+export HM_OVPN_FW=iptables
+cmd_openvpn config set subnet 10.8.10.0/24 >/dev/null 2>&1 || true
+# IP poza nową siecią → ifconfig-push usunięty
+grep -q 'ifconfig-push 10.8.0.50' "$(hm_ovpn_etc)/ccd/laptop" && bad ccd-remask || ok ccd-remask
+grep -q 'MASQUERADE 10.8.10.0/24' "${HM_OVPN_CALL_LOG}" && ok nat-refresh || bad nat-refresh
+
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

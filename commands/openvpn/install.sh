@@ -547,8 +547,10 @@ EOF
 }
 
 hm_ovpn_write_state() {
-  local port="$1" proto="$2" cidr="$3" endpoint="$4" pki="$5" prev
+  local port="$1" proto="$2" cidr="$3" endpoint="$4" pki="$5"
+  local dns="${6:-quad9}" ipv6_flag="${7:-0}" prev ipv6_val=off
   prev="$(hm_ovpn_read_forward)"
+  [[ "${ipv6_flag}" == "1" || "${ipv6_flag}" == "on" ]] && ipv6_val=on
   cat > "$(hm_ovpn_state_file)" <<EOF
 PORT=${port}
 PROTO=${proto}
@@ -556,7 +558,53 @@ SUBNET=${cidr}
 ENDPOINT=${endpoint}
 PKI=${pki}
 PREV_FORWARD=${prev}
+DNS=${dns}
+IPV6=${ipv6_val}
+MODE=split
 EOF
+}
+
+# Odśwież NAT po zmianie SUBNET (marker hmtools-openvpn / skrypt unitu).
+hm_ovpn_nat_refresh() {
+  local new_cidr="$1" iface="${2:-}" port="${3:-}" proto="${4:-}"
+  local fw rules unit script old_block
+  [[ -n "${new_cidr}" ]] || return 1
+  fw="${HM_OVPN_FW:-$(hm_ovpn_state_value FW 2>/dev/null || true)}"
+  [[ -n "${fw}" ]] || fw="iptables"
+  [[ -n "${iface}" ]] || iface="$(hm_ovpn_state_value IFACE 2>/dev/null || true)"
+  [[ -n "${iface}" ]] || iface="$(hm_ovpn_default_iface)"
+  [[ -n "${port}" ]] || port="$(hm_ovpn_state_value PORT 2>/dev/null || true)"
+  [[ -n "${proto}" ]] || proto="$(hm_ovpn_state_value PROTO 2>/dev/null || true)"
+  case "${fw}" in
+    ufw)
+      rules="${HM_OVPN_UFW_RULES:-/etc/ufw/before.rules}"
+      if [[ -f "${rules}" ]] && grep -q 'BEGIN hmtools-openvpn' "${rules}"; then
+        hm_ovpn_strip_markers "${rules}"
+      fi
+      HM_OVPN_FW=ufw hm_ovpn_nat_apply "${new_cidr}" "${iface}" "${port}" "${proto}"
+      ;;
+    csf)
+      rules="${HM_OVPN_CSF_POST:-/etc/csf/csfpost.sh}"
+      if [[ -f "${rules}" ]] && grep -q 'BEGIN hmtools-openvpn' "${rules}"; then
+        hm_ovpn_strip_markers "${rules}"
+      fi
+      HM_OVPN_FW=csf hm_ovpn_nat_apply "${new_cidr}" "${iface}" "${port}" "${proto}"
+      ;;
+    firewalld)
+      HM_OVPN_FW=firewalld hm_ovpn_nat_apply "${new_cidr}" "${iface}" "${port}" "${proto}"
+      ;;
+    *)
+      unit="$(hm_ovpn_nat_unit_path)"
+      script="${unit}.sh"
+      mkdir -p "$(dirname "${unit}")"
+      cat > "${script}" <<EOF
+#!/bin/sh
+iptables -t nat -C POSTROUTING -s ${new_cidr} -o ${iface} -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s ${new_cidr} -o ${iface} -j MASQUERADE
+EOF
+      chmod 0755 "${script}" || true
+      [[ -n "${HM_OVPN_CALL_LOG:-}" ]] && printf 'iptables MASQUERADE %s via %s\n' "${new_cidr}" "${iface}" >> "${HM_OVPN_CALL_LOG}"
+      ;;
+  esac
 }
 
 hm_ovpn_install() {
@@ -692,7 +740,7 @@ hm_ovpn_install() {
     hm_ovpn_rollback
     return 1
   fi
-  hm_ovpn_write_state "${port}" "${proto}" "${cidr}" "${endpoint}" "${pki}"
+  hm_ovpn_write_state "${port}" "${proto}" "${cidr}" "${endpoint}" "${pki}" "${dns}" "${ipv6}"
   {
     printf 'FW=%s\n' "${fw}"
     printf 'IFACE=%s\n' "${iface}"

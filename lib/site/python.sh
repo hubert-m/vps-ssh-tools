@@ -265,7 +265,7 @@ hm_site_python_provision() {
       exec="${venv}/bin/gunicorn --workers ${workers} --bind ${bind} ${wsgi}"
       ;;
   esac
-  unit="${HM_SYSTEMD_UNIT_DIR:-/etc/systemd/system}/hm-app-${domain}.service"
+  unit="${HM_SYSTEMD_UNIT_DIR:-/etc/systemd/system}/$(hm_site_app_unit_name "${domain}")"
   hm_python_write_unit "${unit}" "${user}" "${home}" "${exec}" "${fw}"
   hm_python_note_unit "${unit}" "${domain}"
   if [[ "${fw}" == "django" ]]; then
@@ -275,10 +275,10 @@ hm_site_python_provision() {
     mkdir -p "${HM_SITE_MANIFEST_DIR}"
     printf '{"runtime":{"type":"python","version":"%s"},"framework":"%s"}\n' "${ver}" "${fw}" > "${HM_SITE_MANIFEST_DIR}/${domain}.json"
   fi
-  hm_python_systemctl enable --now "hm-app-${domain}.service"
-  state="$(hm_python_systemctl is-active "hm-app-${domain}.service")"
+  hm_python_systemctl enable --now "$(hm_site_app_unit_name "${domain}")"
+  state="$(hm_python_systemctl is-active "$(hm_site_app_unit_name "${domain}")")"
   [[ "${state}" == "active" || "${HMTOOLS_TEST:-}" != "1" ]] || {
-    hm_err "hm-app-${domain} nie jest active."
+    hm_err "$(hm_site_app_unit_name "${domain}") nie jest active."
     return 1
   }
   if [[ "${celery}" == "1" ]]; then

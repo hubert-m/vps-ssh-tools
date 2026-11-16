@@ -28,6 +28,8 @@ export HM_OVPN_APPLOG="${root}/applog"
 export HM_OVPN_BACKUP_DIR="${root}/backups"
 mkdir -p "${HM_OVPN_PKI}/private" "${HM_OVPN_ETC}"
 printf 'SECRET-BACKUP-CA\n' > "${HM_OVPN_PKI}/private/ca.key"
+printf 'CA-CRT\n' > "${HM_OVPN_PKI}/ca.crt"
+printf 'V\t270101000000Z\t\t01\tunknown\t/CN=laptop\n' > "${HM_OVPN_PKI}/index.txt"
 # shellcheck disable=SC1091
 source commands/openvpn/main.sh
 
@@ -118,5 +120,59 @@ after="$(find "${BACKUP_LOCAL_ROOT}/openvpn" -name 'openvpn-*.tar.gz' | wc -l | 
 mkdir -p "${root}/sink"
 BACKUP_INCLUDE_OPENVPN=1 hm_ovpn_backup_for_full "${root}/sink"
 find "${root}/sink" -name 'openvpn-*.tar.gz' | grep -q . && ok full-include || bad full-include
+
+# symlink w archiwum → odrzucenie (prawdziwy SYMTYPE w tar; Git Bash nie tworzy symlinków)
+symarch="${root}/sym.tar.gz"
+python3 - "${symarch}" <<'PY'
+import hashlib, sys, tarfile, io
+out = sys.argv[1]
+conf = b"port 1194\n"
+h = hashlib.sha256(conf).hexdigest()
+manifest = f"version=1\nsha256 {h} server/hm.conf\n".encode()
+with tarfile.open(out, "w:gz") as tf:
+    for name, data in (("manifest.txt", manifest), ("server/hm.conf", conf)):
+        info = tarfile.TarInfo(name=name)
+        info.size = len(data)
+        info.mode = 0o644
+        tf.addfile(info, io.BytesIO(data))
+    link = tarfile.TarInfo(name="server/evil.link")
+    link.type = tarfile.SYMTYPE
+    link.linkname = "/etc/passwd"
+    link.mode = 0o777
+    tf.addfile(link)
+PY
+printf 'SAFE\n' > "${HM_OVPN_PKI}/private/ca.key"
+if cmd_openvpn restore "${symarch}" --yes >/dev/null 2>"${root}/sym.err"; then bad symlink-rc; else ok symlink-rc; fi
+grep -q 'SAFE' "${HM_OVPN_PKI}/private/ca.key" && ok symlink-kept || bad symlink-kept
+
+# revoke merge: live R, archive V → po restore zostaje R
+# świeże archiwum (pełne) — unikaj pustego $archive po wcześniejszych find
+archive=""
+while IFS= read -r archive; do
+  break
+done < <(find "${BACKUP_LOCAL_ROOT}/openvpn" -name 'openvpn-*.tar.gz' | sort | tail -1)
+printf 'V\t270101000000Z\t\t01\tunknown\t/CN=laptop\n' > "${HM_OVPN_PKI}/index.txt"
+mkdir -p "${root}/arch-tree"
+tar -xzf "${archive}" -C "${root}/arch-tree"
+printf 'V\t270101000000Z\t\t01\tunknown\t/CN=laptop\n' > "${root}/arch-tree/server/pki/index.txt"
+# przełóż archiwum z V
+printf 'client-to-client\npush "dhcp-option DNS 9.9.9.9"\nport 1194\n' > "${root}/arch-tree/server/hm.conf"
+(
+  cd "${root}/arch-tree"
+  # odśwież manifest nie wymagany dla tego testu merge — użyjemy snapshot ścieżek
+  true
+)
+# przygotuj live R i snap merge bezpośrednio
+live_idx="${root}/live-index.txt"
+printf 'R\t270101000000Z\t270102000000Z\t01\tunknown\t/CN=laptop\n' > "${live_idx}"
+dest_idx="${root}/dest-index.txt"
+printf 'V\t270101000000Z\t\t01\tunknown\t/CN=laptop\n' > "${dest_idx}"
+hm_ovpn_merge_revokes "${live_idx}" "${dest_idx}"
+grep -qE '^R[[:space:]].*/CN=laptop' "${dest_idx}" && ok revoke-merge || bad revoke-merge
+
+# legacy dir bez ca.crt → odmowa
+mkdir -p "${root}/junk"
+printf 'x\n' > "${root}/junk/foo"
+if cmd_openvpn restore "${root}/junk" --yes >/dev/null 2>&1; then bad legacy-junk; else ok legacy-junk; fi
 
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

@@ -13,6 +13,7 @@ hm_ovpn_config_canon() {
     client-to-client|CLIENT_TO_CLIENT) printf 'CLIENT_TO_CLIENT' ;;
     max-clients|MAX_CLIENTS) printf 'MAX_CLIENTS' ;;
     keepalive|KEEPALIVE) printf 'KEEPALIVE' ;;
+    routes|ROUTES) printf 'ROUTES' ;;
     *) return 1 ;;
   esac
 }
@@ -219,8 +220,47 @@ hm_ovpn_fw_port() {
   if [[ "${action}" == "allow" ]] && declare -F hm_os_firewall_allow >/dev/null 2>&1; then
     hm_os_firewall_allow "${port}" "${proto}" "" "hmtools-openvpn" || true
   elif [[ "${action}" == "remove" ]] && declare -F hm_os_firewall_remove >/dev/null 2>&1; then
+    # tylko ALLOW port/proto — bez deny (patrz _hm_os_do_firewall_remove)
     hm_os_firewall_remove "${port}/${proto}" || true
   fi
+}
+
+hm_ovpn_config_backup_prune() {
+  local dir keep="${1:-5}" skip="${2:-}" n=0 path
+  dir="$(hm_ovpn_etc)/.hmtools-backup"
+  [[ -d "${dir}" ]] || return 0
+  # najnowsze pierwsze (ls -t); zawsze pomiń bieżący bak
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    [[ -n "${skip}" && "${path}" == "${skip}" ]] && continue
+    n=$((n + 1))
+    if [[ "${n}" -gt "${keep}" ]]; then
+      rm -rf -- "${path}"
+    fi
+  done < <(ls -1dt "${dir}"/cfg.* 2>/dev/null || true)
+}
+
+# Po zmianie SUBNET: zaktualizuj maskę w ccd lub usuń IP spoza sieci.
+hm_ovpn_ccd_remask() {
+  local cidr="$1" file ip mask line
+  [[ -d "$(hm_ovpn_ccd_dir)" ]] || return 0
+  mask="$(hm_ovpn_mask_for "${cidr#*/}")"
+  for file in "$(hm_ovpn_ccd_dir)/"*; do
+    [[ -f "${file}" ]] || continue
+    ip="$(awk '/^ifconfig-push / { print $2; exit }' "${file}")"
+    [[ -n "${ip}" ]] || continue
+    if hm_ovpn_ip_in_subnet "${ip}" "${cidr}"; then
+      {
+        grep -v '^ifconfig-push ' "${file}" || true
+        printf 'ifconfig-push %s %s\n' "${ip}" "${mask}"
+      } > "${file}.tmp"
+      mv -f "${file}.tmp" "${file}"
+    else
+      hm_warn "ccd $(basename "${file}"): IP ${ip} poza ${cidr} — usuwam ifconfig-push."
+      grep -v '^ifconfig-push ' "${file}" > "${file}.tmp" || true
+      mv -f "${file}.tmp" "${file}"
+    fi
+  done
 }
 
 hm_ovpn_config_active() {
@@ -236,7 +276,8 @@ hm_ovpn_config_active() {
 
 hm_ovpn_config_apply() {
   local key="$1" val="$2" dry="$3"
-  local file conf oldport oldproto newport newproto bak rendered
+  local file conf oldport oldproto oldsubnet newport newproto newsubnet bak rendered
+  local fw_changed=0
   file="$(hm_ovpn_state_file)"
   conf="$(hm_ovpn_conf_file)"
   [[ -f "${file}" ]] || { hm_err "Brak pliku stanu."; return 1; }
@@ -246,21 +287,15 @@ hm_ovpn_config_apply() {
   fi
   oldport="$(hm_ovpn_state_value PORT 2>/dev/null || true)"
   oldproto="$(hm_ovpn_state_value PROTO 2>/dev/null || true)"
+  oldsubnet="$(hm_ovpn_state_value SUBNET 2>/dev/null || true)"
   rendered="$(mktemp)"
   cp -f "${file}" "${rendered}.state"
   hm_ovpn_state_put "${rendered}.state" "${key}" "${val}"
-  local saved_state
-  saved_state="$(hm_ovpn_state_file)"
-  if HM_OVPN_ETC="$(dirname "${rendered}.state")" true; then
-    :
-  fi
-  # render czyta hm_ovpn_state_file, więc podstawiamy kopię na czas renderu
+  # render z kopii stanu (hm_ovpn_render_using czyta podany plik)
   local render_dir
   render_dir="$(mktemp -d)"
   cp -f "${rendered}.state" "${render_dir}/hmtools.state"
-  if HM_OVPN_STATE_FILE="${render_dir}/hmtools.state" hm_ovpn_render_using "${render_dir}/hmtools.state" > "${rendered}"; then
-    :
-  else
+  if ! hm_ovpn_render_using "${render_dir}/hmtools.state" > "${rendered}"; then
     : > "${rendered}"
   fi
   if [[ "${dry}" -eq 1 ]]; then
@@ -273,13 +308,13 @@ hm_ovpn_config_apply() {
     rm -rf "${rendered}" "${rendered}.state" "${render_dir}"
     return 0
   fi
+  # tylko hm.conf + state (bez pełnego PKI); 0600; przytnij historię
   mkdir -p "$(hm_ovpn_etc)/.hmtools-backup"
   bak="$(mktemp -d "$(hm_ovpn_etc)/.hmtools-backup/cfg.XXXXXX")"
   cp -f "${file}" "${bak}/hmtools.state"
   [[ -f "${conf}" ]] && cp -f "${conf}" "${bak}/hm.conf"
-  if declare -F hm_ovpn_backup_cmd >/dev/null 2>&1; then
-    BACKUP_LOCAL_ROOT="${bak}" hm_ovpn_backup_cmd --local >/dev/null || true
-  fi
+  chmod 0600 "${bak}/hmtools.state" "${bak}/hm.conf" 2>/dev/null || true
+  hm_ovpn_config_backup_prune 5 "${bak}"
   mv -f "${rendered}.state" "${file}"
   if [[ -s "${rendered}" ]]; then
     mv -f "${rendered}" "${conf}"
@@ -289,14 +324,18 @@ hm_ovpn_config_apply() {
   rm -rf "${render_dir}"
   newport="$(hm_ovpn_state_value PORT 2>/dev/null || true)"
   newproto="$(hm_ovpn_state_value PROTO 2>/dev/null || true)"
-  if [[ -n "${newport}" && "${newport}" != "${oldport}" ]]; then
+  newsubnet="$(hm_ovpn_state_value SUBNET 2>/dev/null || true)"
+  if [[ "${newport}" != "${oldport}" || "${newproto}" != "${oldproto}" ]]; then
+    fw_changed=1
+  fi
+  if [[ "${fw_changed}" -eq 1 && -n "${newport}" ]]; then
     hm_ovpn_fw_port allow "${newport}" "${newproto:-udp}"
   fi
   if [[ -s "${conf}" ]]; then
     if ! hm_ovpn_systemctl restart "openvpn-server@$(hm_ovpn_instance)" || ! hm_ovpn_config_active; then
       cp -f "${bak}/hmtools.state" "${file}"
       [[ -f "${bak}/hm.conf" ]] && cp -f "${bak}/hm.conf" "${conf}"
-      if [[ -n "${newport}" && "${newport}" != "${oldport}" ]]; then
+      if [[ "${fw_changed}" -eq 1 && -n "${newport}" ]]; then
         hm_ovpn_fw_port remove "${newport}" "${newproto:-udp}"
       fi
       hm_ovpn_systemctl restart "openvpn-server@$(hm_ovpn_instance)" >/dev/null 2>&1 || true
@@ -304,8 +343,17 @@ hm_ovpn_config_apply() {
       return 1
     fi
   fi
-  if [[ -n "${oldport}" && "${newport}" != "${oldport}" ]]; then
-    hm_ovpn_fw_port remove "${oldport}" "${oldproto:-udp}"
+  if [[ "${fw_changed}" -eq 1 && -n "${oldport}" ]]; then
+    # zdejmij starą parę port/proto (nie gdy identyczna)
+    if [[ "${oldport}" != "${newport}" || "${oldproto}" != "${newproto}" ]]; then
+      hm_ovpn_fw_port remove "${oldport}" "${oldproto:-udp}"
+    fi
+  fi
+  if [[ "${key}" == "SUBNET" && -n "${newsubnet}" && "${newsubnet}" != "${oldsubnet}" ]]; then
+    if declare -F hm_ovpn_nat_refresh >/dev/null 2>&1; then
+      hm_ovpn_nat_refresh "${newsubnet}" || hm_warn "NAT nie odświeżył się dla ${newsubnet}."
+    fi
+    hm_ovpn_ccd_remask "${newsubnet}"
   fi
   if [[ -f "${conf}" && -f "${bak}/hm.conf" ]]; then
     diff -u "${bak}/hm.conf" "${conf}" || true

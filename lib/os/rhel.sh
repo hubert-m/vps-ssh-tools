@@ -201,8 +201,8 @@ _hm_os_do_firewall_remove() {
   else
     return 1
   fi
+  # tylko remove-port (ALLOW); nie kasuj drop/deny rich-rules
   firewall-cmd --permanent --remove-port="${port}/${proto}" 2>/dev/null || true
-  firewall-cmd --permanent --remove-rich-rule="rule family=ipv4 port port=${port} protocol=${proto} drop" 2>/dev/null || true
   firewall-cmd --reload 2>/dev/null || true
   return 0
 }

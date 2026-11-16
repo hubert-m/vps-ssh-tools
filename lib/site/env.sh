@@ -19,6 +19,11 @@ hm_site_home() {
   printf '/home/%s' "${domain}"
 }
 
+# Jedna nazwa unitu aplikacji dla Node/Python/.NET (kropki OK w nazwie).
+hm_site_app_unit_name() {
+  printf 'hm-app-%s.service' "${1:-}"
+}
+
 hm_site_unix_user() {
   local domain="${1:-}" home
   if [[ -n "${HM_SITE_USER:-}" && ( -z "${HM_SITE_DOMAIN:-}" || "${HM_SITE_DOMAIN}" == "${domain}" ) ]]; then

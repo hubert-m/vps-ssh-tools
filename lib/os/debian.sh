@@ -334,7 +334,7 @@ _hm_os_do_firewall_remove() {
       ufw delete deny from "${ip}" >/dev/null 2>&1 || true
       return 0
     fi
-    # port/proto
+    # port/proto — tylko ALLOW (nie ruszaj DENY / cudzych reguł)
     local port proto="tcp"
     if [[ "${spec}" == */* ]]; then
       port="${spec%%/*}"
@@ -343,7 +343,6 @@ _hm_os_do_firewall_remove() {
       port="${spec}"
     fi
     ufw delete allow "${port}/${proto}" >/dev/null 2>&1 || true
-    ufw delete deny "${port}/${proto}" >/dev/null 2>&1 || true
     return 0
   fi
   return 1

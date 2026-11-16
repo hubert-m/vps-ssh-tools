@@ -59,23 +59,92 @@ hm_site_ops_remove() {
   case "${path}" in
     /usr/*|/bin/*|/sbin/*|/lib/*|/lib64/*) return 1 ;;
   esac
+  # nigdy nie kasuj unitu aplikacji — ops nie tworzy hm-app-*
+  case "$(basename "${path}")" in
+    hm-app-*) return 1 ;;
+  esac
   rm -f "${path}"
 }
 
+hm_site_ops_is_app_unit() {
+  local base
+  base="$(basename "${1:-}")"
+  [[ "${base}" == hm-app-* ]]
+}
+
+hm_site_ops_firewall_backend() {
+  if declare -F hm_have_cmd >/dev/null 2>&1; then
+    hm_have_cmd ufw && { printf 'ufw'; return 0; }
+    hm_have_cmd firewall-cmd && { printf 'firewalld'; return 0; }
+    hm_have_cmd csf && { printf 'csf'; return 0; }
+  else
+    command -v ufw >/dev/null 2>&1 && { printf 'ufw'; return 0; }
+    command -v firewall-cmd >/dev/null 2>&1 && { printf 'firewalld'; return 0; }
+    command -v csf >/dev/null 2>&1 && { printf 'csf'; return 0; }
+  fi
+  return 1
+}
+
+hm_site_ops_journal_rm() {
+  local path="$1"
+  [[ -n "${path}" ]] || return 0
+  if [[ -n "${HM_TX_JOURNAL:-}" && -f "${HM_TX_JOURNAL}" ]]; then
+    # jedna ścieżka — legacy undo odrzuca listy ze spacjami
+    printf 'undo=rm -f %s\n' "${path}" >> "${HM_TX_JOURNAL}"
+  fi
+}
+
+hm_site_ops_journal_unit() {
+  local path="$1"
+  [[ -n "${path}" ]] || return 0
+  if [[ -n "${HM_TX_JOURNAL:-}" && -f "${HM_TX_JOURNAL}" ]]; then
+    printf 'undo=systemd-unit\t%s\n' "${path}" >> "${HM_TX_JOURNAL}"
+  fi
+}
+
+# Rollback wyłącznie zasobów ops (worker/timer/cron/logrotate/firewall).
+# Nigdy kind=unit ani hm-app-*. Opcjonalnie: tylko podane ścieżki (ta transakcja).
 hm_site_ops_rollback() {
-  local domain="$1" file line
+  local domain="$1"
+  shift || true
+  local -a only=("$@")
+  local file line path base kind
+  local -A allow=()
+  local p
+  for p in "${only[@]+"${only[@]}"}"; do
+    [[ -n "${p}" ]] && allow["${p}"]=1
+  done
   file="$(hm_site_resources_path "${domain}")"
-  [[ -f "${file}" ]] || return 0
+  [[ -f "${file}" ]] || {
+    for p in "${only[@]+"${only[@]}"}"; do
+      [[ -n "${p}" ]] || continue
+      hm_site_ops_is_app_unit "${p}" && continue
+      case "$(basename "${p}")" in
+        hm-worker-*|hm-cron-*) hm_site_ops_disable "$(basename "${p}")" ;;
+      esac
+      hm_site_ops_remove "${p}" || true
+    done
+    return 0
+  }
   while IFS= read -r line || [[ -n "${line}" ]]; do
     [[ -n "${line}" ]] || continue
     hm_site_resource_read "${line}" || continue
-    case "${HM_SITE_RES_KIND}" in
-      worker|timer|unit|cron)
-        hm_site_ops_disable "$(basename "${HM_SITE_RES_PATH}")"
-        hm_site_ops_remove "${HM_SITE_RES_PATH}" || true
+    kind="${HM_SITE_RES_KIND}"
+    path="${HM_SITE_RES_PATH}"
+    base="$(basename "${path}")"
+    # nigdy aplikacja
+    [[ "${kind}" == "unit" ]] && continue
+    hm_site_ops_is_app_unit "${path}" && continue
+    if [[ "${#allow[@]}" -gt 0 && -z "${allow[${path}]+x}" ]]; then
+      continue
+    fi
+    case "${kind}" in
+      worker|timer|cron)
+        hm_site_ops_disable "${base}"
+        hm_site_ops_remove "${path}" || true
         ;;
       logrotate|firewall)
-        hm_site_ops_remove "${HM_SITE_RES_PATH}" || true
+        hm_site_ops_remove "${path}" || true
         ;;
     esac
   done < "${file}"
@@ -118,9 +187,13 @@ hm_site_ops_health_alerts() {
 
 hm_site_ops_php_bin() {
   local domain="$1" ver="" man
+  ver="${HM_SITE_RUNTIME_VERSION:-}"
   man="$(hm_site_manifest_path "${domain}" 2>/dev/null || true)"
-  if [[ -n "${man}" && -f "${man}" ]]; then
+  if [[ -z "${ver}" && -n "${man}" && -f "${man}" ]]; then
     ver="$(sed -n 's/.*"type":"php","version":"\([^"]*\)".*/\1/p' "${man}" | head -1)"
+  fi
+  if [[ -z "${ver}" && -n "${man}" && -f "${man}" ]]; then
+    ver="$(sed -n 's/.*"version":"\([^"]*\)".*/\1/p' "${man}" | head -1)"
   fi
   if [[ -n "${ver}" ]]; then
     printf '/usr/bin/php%s' "${ver}"
@@ -165,9 +238,6 @@ hm_site_ops_enable_now() {
     [[ -n "${name}" ]] || continue
     if [[ -n "${HM_SITE_OPS_LOG:-}" ]]; then
       printf 'enable %s\n' "${name}" >> "${HM_SITE_OPS_LOG}"
-    fi
-    if [[ -n "${HM_TX_JOURNAL:-}" && -f "${HM_TX_JOURNAL}" ]]; then
-      printf 'undo=systemd-unit\t%s\n' "${name}" >> "${HM_TX_JOURNAL}"
     fi
   done
   [[ "${HMTOOLS_TEST:-}" == "1" ]] && return 0
@@ -222,8 +292,8 @@ hm_site_ops_apply() {
   local domain="$1" cron_kind="${2:-}" cron_cmd="${3:-}" worker_kind="${4:-}"
   local workers="${5:-1}" health_path="${6:-}" open_port="${7:-}"
   local home safe unitdir lrdir fwdir lr svc tmr wexec mem reg pub snip envf
-  local i exec created=""
-  local -a enable_units=()
+  local i exec
+  local -a enable_units=() created_paths=()
   if [[ -z "${cron_kind}" && -n "${cron_cmd}" ]]; then
     cron_kind="cmd"
   fi
@@ -259,9 +329,10 @@ ${home}/logs/*.log {
 }
 EOF
   hm_site_resource_add "${domain}" logrotate "${lr}" 0
-  created="${lr}"
+  created_paths+=("${lr}")
+  hm_site_ops_journal_rm "${lr}"
   if ! hm_site_ops_logrotate_debug "${lr}"; then
-    hm_site_ops_rollback "${domain}"
+    hm_site_ops_rollback "${domain}" "${created_paths[@]}"
     hm_err "logrotate odrzucił konfigurację ${domain}."
     return 1
   fi
@@ -297,9 +368,11 @@ WantedBy=timers.target
 EOF
     hm_site_resource_add "${domain}" cron "${svc}" 0
     hm_site_resource_add "${domain}" timer "${tmr}" 0
-    created="${created} ${svc} ${tmr}"
+    created_paths+=("${svc}" "${tmr}")
+    hm_site_ops_journal_unit "${svc}"
+    hm_site_ops_journal_unit "${tmr}"
     if ! hm_site_ops_verify_unit "${svc}" || ! hm_site_ops_verify_unit "${tmr}"; then
-      hm_site_ops_rollback "${domain}"
+      hm_site_ops_rollback "${domain}" "${created_paths[@]}"
       hm_err "systemd-analyze odrzucił timer ${domain}."
       return 1
     fi
@@ -309,7 +382,7 @@ EOF
   if [[ -n "${worker_kind}" ]]; then
     wexec="$(hm_site_ops_worker_exec "${home}" "${worker_kind}" "${domain}")" || {
       hm_err "Nieznany worker: ${worker_kind}"
-      hm_site_ops_rollback "${domain}"
+      hm_site_ops_rollback "${domain}" "${created_paths[@]}"
       return 1
     }
     mem="${HM_SITE_MEMORY_MAX:-512M}"
@@ -338,9 +411,10 @@ ExecStart=${wexec}
 WantedBy=multi-user.target
 EOF
     hm_site_resource_add "${domain}" worker "${svc}" 0
-    created="${created} ${svc}"
+    created_paths+=("${svc}")
+    hm_site_ops_journal_unit "${svc}"
     if ! hm_site_ops_verify_unit "${svc}"; then
-      hm_site_ops_rollback "${domain}"
+      hm_site_ops_rollback "${domain}" "${created_paths[@]}"
       hm_err "systemd-analyze odrzucił worker ${domain}."
       return 1
     fi
@@ -354,7 +428,7 @@ EOF
         printf 'hm-worker-%s@%s.service\n' "${safe}" "${i}"
       done
     } | hm_site_write_nofollow "${reg}" || {
-      hm_site_ops_rollback "${domain}"
+      hm_site_ops_rollback "${domain}" "${created_paths[@]}"
       return 1
     }
     for ((i = 1; i <= workers; i++)); do
@@ -374,21 +448,27 @@ EOF
     snip="${fwdir}/hm-${safe}.rules"
     printf '%s/tcp # hm:%s\n' "${open_port}" "${domain}" > "${snip}"
     hm_site_resource_add "${domain}" firewall "${snip}" 0
-    created="${created} ${snip}"
+    created_paths+=("${snip}")
+    hm_site_ops_journal_rm "${snip}"
     if [[ -n "${HM_SITE_OPS_LOG:-}" ]]; then
       printf 'firewall allow %s/tcp hm:%s\n' "${open_port}" "${domain}" >> "${HM_SITE_OPS_LOG}"
     fi
-    if [[ "${HMTOOLS_TEST:-}" != "1" ]] && declare -F hm_os_firewall_allow >/dev/null 2>&1; then
-      hm_os_firewall_allow "${open_port}" tcp "" "hm:${domain}" || {
-        hm_site_ops_rollback "${domain}"
-        hm_err "Firewall nie przyjął portu ${open_port}."
-        return 1
-      }
+    # opcjonalne: brak backendu / błąd allow = ostrzeżenie, bez rollbacku strony/ops
+    if [[ "${HMTOOLS_TEST:-}" != "1" ]]; then
+      if ! hm_site_ops_firewall_backend >/dev/null 2>&1; then
+        hm_warn "Brak ufw/firewalld/csf — zapisano snippet ${snip}, reguła nie zastosowana."
+      elif declare -F hm_os_firewall_allow >/dev/null 2>&1; then
+        if ! hm_os_firewall_allow "${open_port}" tcp "" "hm:${domain}"; then
+          hm_warn "Firewall nie przyjął portu ${open_port} — snippet zapisany, reszta ops bez zmian."
+        fi
+      else
+        hm_warn "Brak hm_os_firewall_allow — snippet zapisany bez aplikacji reguły."
+      fi
     fi
   fi
   if [[ "${#enable_units[@]}" -gt 0 ]]; then
     hm_site_ops_enable_now "${enable_units[@]}" || {
-      hm_site_ops_rollback "${domain}"
+      hm_site_ops_rollback "${domain}" "${created_paths[@]}"
       hm_err "systemctl nie włączył jednostek ${domain}."
       return 1
     }
@@ -403,9 +483,6 @@ EOF
       return 1
     fi
     printf '%s\n' "${domain}" >> "${blist}"
-  fi
-  if [[ -n "${HM_TX_JOURNAL:-}" && -f "${HM_TX_JOURNAL}" && -n "${created}" ]]; then
-    printf 'undo=rm -f %s\n' "${created}" >> "${HM_TX_JOURNAL}"
   fi
   hm_ok "Operacje ${domain}: logi, cron, workery, firewall."
 }

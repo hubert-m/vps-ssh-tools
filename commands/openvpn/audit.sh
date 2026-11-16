@@ -220,7 +220,7 @@ hm_ovpn_f2b_phrases() {
 }
 
 hm_ovpn_fail2ban() {
-  local action="${1:-status}" jail filter ip sample n phrase
+  local action="${1:-status}" jail filter ip sample n phrase f2b_port f2b_proto
   jail="$(hm_ovpn_f2b_jail)"
   filter="$(hm_ovpn_f2b_filter)"
   case "${action}" in
@@ -233,6 +233,10 @@ hm_ovpn_fail2ban() {
         ip="${SSH_CONNECTION%% *}"
       fi
       [[ "${ip}" =~ ^[0-9a-fA-F:.]+$ ]] || ip="127.0.0.1"
+      f2b_port="$(hm_ovpn_state_get PORT 2>/dev/null || true)"
+      f2b_proto="$(hm_ovpn_state_get PROTO 2>/dev/null || true)"
+      [[ "${f2b_port}" =~ ^[0-9]+$ ]] || f2b_port="1194"
+      [[ "${f2b_proto}" == "tcp" || "${f2b_proto}" == "udp" ]] || f2b_proto="udp"
       mkdir -p "$(dirname "${jail}")" "$(dirname "${filter}")"
       {
         printf '%s\n' '[Definition]'
@@ -249,8 +253,8 @@ journalmatch = _SYSTEMD_UNIT=openvpn-server@$(hm_ovpn_instance).service
 maxretry = 5
 findtime = 600
 bantime = 3600
-port = 1194
-protocol = udp
+port = ${f2b_port}
+protocol = ${f2b_proto}
 ignoreip = 127.0.0.1/8 ::1 ${ip}
 EOF
       if [[ "${HMTOOLS_TEST:-}" != "1" ]] && declare -F hm_firewall_fail2ban_ignore >/dev/null 2>&1; then
@@ -340,11 +344,52 @@ hm_ovpn_ca_strip_old() {
   ' "${bundle}" > "${tmp}" && mv -f "${tmp}" "${bundle}"
 }
 
+hm_ovpn_ca_cn_skip() {
+  # nie buduj ponownie certu serwera / CA jako „klienta”
+  case "${1:-}" in
+    server|ca|CA|Easy-RSA\ CA) return 0 ;;
+  esac
+  return 1
+}
+
+hm_ovpn_ca_state_set_pki() {
+  local pki="$1" state tmp
+  state="$(hm_ovpn_state_file)"
+  [[ -f "${state}" ]] || return 0
+  tmp="$(mktemp)"
+  if grep -q '^PKI=' "${state}"; then
+    awk -v p="${pki}" 'BEGIN{done=0} /^PKI=/ { print "PKI=" p; done=1; next } { print } END { if (!done) print "PKI=" p }' "${state}" > "${tmp}"
+  else
+    cat "${state}" > "${tmp}"
+    printf 'PKI=%s\n' "${pki}" >> "${tmp}"
+  fi
+  mv -f "${tmp}" "${state}"
+}
+
+hm_ovpn_ca_abort() {
+  local pending conf bak new old
+  pending="$(hm_ovpn_ca_pending)"
+  [[ -f "${pending}" ]] || { hm_err "Brak rotacji w toku."; return 1; }
+  conf="$(hm_ovpn_conf_file)"
+  bak="${conf}.hmtools-ca-rotate.bak"
+  new="$(grep '^NEW=' "${pending}" | head -n 1 || true)"; new="${new#NEW=}"
+  old="$(grep '^OLD=' "${pending}" | head -n 1 || true)"; old="${old#OLD=}"
+  if [[ -f "${bak}" ]]; then
+    mv -f "${bak}" "${conf}"
+  fi
+  [[ -n "${new}" ]] && rm -rf "${new}"
+  # pki.old zostawiamy jako archiwum; aktywne PKI bez zmian
+  rm -f "${pending}"
+  hm_ok "Rotacja CA przerwana (--abort). Przywrócono hm.conf."
+}
+
 hm_ovpn_ca_rotate() {
-  local finish=0 days="3650" yes=0 pki old new bundle conf index line cn
+  local finish=0 abort=0 days="3650" yes=0 pki old new bundle conf index line cn
+  local conf_bak pending
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      finish) finish=1; shift ;;
+      finish|--finish) finish=1; shift ;;
+      abort|--abort) abort=1; shift ;;
       --days) days="${2:-3650}"; shift 2 || true ;;
       --days=*) days="${1#*=}"; shift ;;
       --yes|-y) yes=1; shift ;;
@@ -352,15 +397,24 @@ hm_ovpn_ca_rotate() {
     esac
   done
   [[ "${days}" =~ ^[0-9]+$ ]] || { hm_err "Złe --days."; return 1; }
+  if [[ "${abort}" -eq 1 ]]; then
+    hm_ovpn_ca_abort
+    return
+  fi
   if [[ "${finish}" -eq 1 ]]; then
     hm_ovpn_ca_finish "${yes}"
     return
+  fi
+  pending="$(hm_ovpn_ca_pending)"
+  if [[ -f "${pending}" ]]; then
+    hm_err "Rotacja CA już trwa (${pending}). Użyj: openvpn ca rotate finish | openvpn ca rotate --abort"
+    return 1
   fi
   pki="$(hm_ovpn_pki)"
   [[ -d "${pki}" ]] || { hm_err "Brak PKI."; return 1; }
   conf="$(hm_ovpn_conf_file)"
   [[ -f "${conf}" ]] || { hm_err "Brak konfiguracji OpenVPN."; return 1; }
-  local -a steps=("kopia PKI" "nowa CA obok starej" "bundle obu CA" "nowe certyfikaty klientów")
+  local -a steps=("kopia PKI" "nowa CA obok starej" "bundle obu CA" "nowe certyfikaty klientów" "podmiana hm.conf")
   if [[ "${yes}" -eq 1 ]]; then
     hm_confirm_plan "openvpn ca rotate" "Okres przejściowy: stara i nowa CA." --yes "${steps[@]}" || return 1
   else
@@ -369,49 +423,72 @@ hm_ovpn_ca_rotate() {
   hm_ovpn_backup "${HM_OVPN_BACKUP_DIR:-$(hm_ovpn_root)/backups}/ca-$(date -u +%Y%m%d%H%M%S)" || return 1
   old="${pki}.old"
   new="${pki}.new"
+  # nie kasuj pki.new/old gdy pending — już zablokowane wyżej
   rm -rf "${old}" "${new}"
   mkdir -p "${old}" "${new}"
   cp -a "${pki}/." "${old}/" 2>/dev/null || cp -R "${pki}/." "${old}/"
   (
     umask 077
     export EASYRSA_PKI="${new}" EASYRSA_BATCH=1
-    hm_ovpn_easyrsa init-pki
-    hm_ovpn_easyrsa build-ca nopass
-    hm_ovpn_easyrsa build-server-full server nopass
-  ) || return 1
-  bundle="$(hm_ovpn_etc)/ca-bundle.crt"
-  hm_ovpn_ca_bundle_write "${bundle}" "${new}/ca.crt" "${old}/ca.crt"
-  hm_ovpn_ca_set_line "${conf}" ca "${bundle}"
-  if [[ -f "${new}/issued/server.crt" ]]; then
-    hm_ovpn_ca_set_line "${conf}" cert "${new}/issued/server.crt"
-  fi
-  if [[ -f "${new}/private/server.key" ]]; then
-    hm_ovpn_ca_set_line "${conf}" key "${new}/private/server.key"
-  fi
+    hm_ovpn_easyrsa init-pki \
+      && hm_ovpn_easyrsa build-ca nopass \
+      && hm_ovpn_easyrsa build-server-full server nopass
+  ) || {
+    rm -rf "${new}"
+    hm_err "Nie udało się zbudować nowej CA/serwera. hm.conf bez zmian."
+    return 1
+  }
+  # klienci V z indeksu starego PKI — bez CN=server
   index="${old}/index.txt"
   if [[ -f "${index}" ]]; then
     while IFS= read -r line; do
       [[ "${line}" == V* ]] || continue
       cn="${line#*/CN=}"
       cn="${cn%%/*}"
+      cn="${cn%%$'\t'*}"
       [[ -n "${cn}" ]] || continue
-      EASYRSA_PKI="${new}" EASYRSA_BATCH=1 hm_ovpn_easyrsa build-client-full "${cn}" nopass || return 1
+      hm_ovpn_ca_cn_skip "${cn}" && continue
+      if ! EASYRSA_PKI="${new}" EASYRSA_BATCH=1 hm_ovpn_easyrsa build-client-full "${cn}" nopass; then
+        rm -rf "${new}"
+        hm_err "build-client-full ${cn} nieudany. hm.conf bez zmian."
+        return 1
+      fi
     done < "${index}"
   fi
-  cat > "$(hm_ovpn_ca_pending)" <<EOF
+  # dopiero po sukcesie PKI — kopia hm.conf i podmiana
+  conf_bak="${conf}.hmtools-ca-rotate.bak"
+  cp -a "${conf}" "${conf_bak}" || return 1
+  bundle="$(hm_ovpn_etc)/ca-bundle.crt"
+  hm_ovpn_ca_bundle_write "${bundle}" "${new}/ca.crt" "${old}/ca.crt"
+  hm_ovpn_ca_set_line "${conf}" ca "${bundle}"
+  if [[ "${HM_OVPN_MOCK:-}" == "1" ]]; then
+    mkdir -p "${new}/issued" "${new}/private"
+    [[ -f "${new}/ca.crt" ]] || printf 'NEW-CA\n' > "${new}/ca.crt"
+    [[ -f "${new}/issued/server.crt" ]] || printf 'NEW-SERVER\n' > "${new}/issued/server.crt"
+    [[ -f "${new}/private/server.key" ]] || printf 'NEW-KEY\n' > "${new}/private/server.key"
+  fi
+  if [[ -f "${new}/issued/server.crt" ]]; then
+    hm_ovpn_ca_set_line "${conf}" cert "${new}/issued/server.crt"
+  fi
+  if [[ -f "${new}/private/server.key" ]]; then
+    hm_ovpn_ca_set_line "${conf}" key "${new}/private/server.key"
+  fi
+  cat > "${pending}" <<EOF
 DAYS=${days}
 BUNDLE=${bundle}
 NEW=${new}
 OLD=${old}
+PKI=${pki}
+CONF_BAK=${conf_bak}
 EOF
   hm_ok "Rotacja CA: okres przejściowy. Bundle: ${bundle}"
 }
 
 hm_ovpn_ca_finish() {
-  local yes="$1" pending bundle new old conf
+  local yes="$1" pending bundle new old conf pki_active state_pki
   pending="$(hm_ovpn_ca_pending)"
   [[ -f "${pending}" ]] || { hm_err "Brak rotacji w toku."; return 1; }
-  local -a steps=("zostawić tylko nową CA" "zarchiwizować starą PKI")
+  local -a steps=("zostawić tylko nową CA" "przepiąć PKI w stanie" "zarchiwizować starą PKI")
   if [[ "${yes}" -eq 1 ]]; then
     hm_confirm_plan "openvpn ca rotate finish" "Starzy klienci przestaną się łączyć." --yes "${steps[@]}" || return 1
   else
@@ -423,6 +500,9 @@ hm_ovpn_ca_finish() {
   new="${new#NEW=}"
   old="$(grep '^OLD=' "${pending}" | head -n 1 || true)"
   old="${old#OLD=}"
+  pki_active="$(grep '^PKI=' "${pending}" | head -n 1 || true)"
+  pki_active="${pki_active#PKI=}"
+  [[ -n "${pki_active}" ]] || pki_active="$(hm_ovpn_pki)"
   conf="$(hm_ovpn_conf_file)"
   if [[ -n "${old}" && -d "${old}" ]]; then
     HM_OVPN_PKI="${old}" hm_ovpn_backup "${HM_OVPN_BACKUP_DIR:-$(hm_ovpn_root)/backups}/ca-old-$(date -u +%Y%m%d%H%M%S)" || return 1
@@ -430,12 +510,31 @@ hm_ovpn_ca_finish() {
   if [[ -n "${bundle}" && -f "${bundle}" ]]; then
     hm_ovpn_ca_strip_old "${bundle}"
   fi
-  if [[ -n "${new}" && -f "${new}/ca.crt" && -f "${conf}" ]]; then
+  # przepnij aktywną PKI na zawartość pki.new
+  if [[ -n "${new}" && -d "${new}" ]]; then
+    if [[ -n "${pki_active}" && -d "${pki_active}" ]]; then
+      rm -rf "${pki_active}.pre-finish" 2>/dev/null || true
+      mv "${pki_active}" "${pki_active}.pre-finish" 2>/dev/null || true
+      mkdir -p "${pki_active}"
+      cp -a "${new}/." "${pki_active}/" 2>/dev/null || cp -R "${new}/." "${pki_active}/"
+      rm -rf "${new}" "${pki_active}.pre-finish"
+      state_pki="${pki_active}"
+    else
+      state_pki="${new}"
+    fi
+    hm_ovpn_ca_state_set_pki "${state_pki}"
+    if [[ -f "${conf}" ]]; then
+      hm_ovpn_ca_set_line "${conf}" ca "${state_pki}/ca.crt"
+      [[ -f "${state_pki}/issued/server.crt" ]] && hm_ovpn_ca_set_line "${conf}" cert "${state_pki}/issued/server.crt"
+      [[ -f "${state_pki}/private/server.key" ]] && hm_ovpn_ca_set_line "${conf}" key "${state_pki}/private/server.key"
+    fi
+  elif [[ -n "${new}" && -f "${new}/ca.crt" && -f "${conf}" ]]; then
     hm_ovpn_ca_set_line "${conf}" ca "${new}/ca.crt"
+    hm_ovpn_ca_state_set_pki "${new}"
   fi
   rm -rf "${old}"
-  rm -f "${pending}"
-  hm_ok "Rotacja CA zakończona. Zostaje nowa CA."
+  rm -f "${pending}" "${conf}.hmtools-ca-rotate.bak"
+  hm_ok "Rotacja CA zakończona. PKI=${state_pki:-${new}}."
 }
 
 hm_ovpn_ca() {
@@ -445,7 +544,7 @@ hm_ovpn_ca() {
       hm_ovpn_ca_rotate "$@"
       ;;
     *)
-      hm_err "Użycie: openvpn ca rotate [--days N] [--yes] | openvpn ca rotate finish [--yes]"
+      hm_err "Użycie: openvpn ca rotate [--days N] [--yes] | openvpn ca rotate finish [--yes] | openvpn ca rotate --abort"
       return 1
       ;;
   esac

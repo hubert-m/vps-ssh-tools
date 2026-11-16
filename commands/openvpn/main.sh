@@ -54,7 +54,12 @@ hm_ovpn_pki() {
       return 0
     fi
   fi
-  printf '%s' "$(hm_ovpn_root)/pki"
+  # domyślnie jak install: …/server/hm/pki (nie /etc/openvpn/pki)
+  if declare -F hm_ovpn_etc >/dev/null 2>&1; then
+    printf '%s' "$(hm_ovpn_etc)/hm/pki"
+  else
+    printf '%s' "$(hm_ovpn_root)/server/hm/pki"
+  fi
 }
 hm_ovpn_server_dir() { printf '%s' "${HM_OVPN_SERVER:-$(hm_ovpn_root)/server}"; }
 hm_ovpn_export_dir() { printf '%s' "${HM_OVPN_EXPORT:-/root/hmtools-openvpn/clients}"; }
@@ -952,14 +957,18 @@ hm_ovpn_status() {
 }
 
 hm_ovpn_doctor() {
-  local rc=0 mode unit key ca bin
+  local rc=0 mode unit key ca bin ersa pki
   if command -v openvpn >/dev/null 2>&1; then
     printf 'pakiet openvpn: jest\n'
   else
     printf 'pakiet openvpn: brak\n'
     rc=1
   fi
-  if command -v easyrsa >/dev/null 2>&1; then
+  # ta sama detekcja co install (PATH + /usr/share/easy-rsa/…)
+  ersa="$(hm_ovpn_easyrsa_bin)"
+  if [[ -n "${ersa}" && "${ersa}" != "easyrsa" && -x "${ersa}" ]]; then
+    printf 'pakiet easy-rsa: jest (%s)\n' "${ersa}"
+  elif command -v easyrsa >/dev/null 2>&1; then
     printf 'pakiet easy-rsa: jest\n'
   else
     printf 'pakiet easy-rsa: brak\n'
@@ -972,8 +981,10 @@ hm_ovpn_doctor() {
     printf 'unit: brak\n'
     rc=1
   fi
+  pki="$(hm_ovpn_pki)"
+  printf 'pki: %s\n' "${pki}"
   key="$(hm_ovpn_tls_key_path)"
-  ca="$(hm_ovpn_pki)/private/ca.key"
+  ca="${pki}/private/ca.key"
   for bin in "${key}" "${ca}"; do
     if [[ ! -e "${bin}" ]]; then
       printf 'uprawnienia %s: brak\n' "${bin}"
@@ -1091,7 +1102,7 @@ hm_ovpn_backup() {
 }
 
 hm_ovpn_restore() {
-  local dest="" yes=0 src
+  local dest="" yes=0 src paths etc pki
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --yes|-y) yes=1; shift ;;
@@ -1099,14 +1110,34 @@ hm_ovpn_restore() {
     esac
   done
   [[ "${yes}" -eq 1 ]] || { hm_err "restore wymaga --yes."; return 1; }
-  [[ -n "${dest}" && -d "${dest}" ]] || { hm_err "Brak katalogu kopii."; return 1; }
+  # Legacy katalog: tylko gdy wygląda na kopię PKI hmtools (ca.crt + index) i bez symlinków
+  [[ -n "${dest}" && -d "${dest}" ]] || { hm_err "Brak katalogu kopii. Preferuj: openvpn restore <archiwum.tar.gz> --yes"; return 1; }
   case "${dest}" in
     *..*) hm_err "Zła ścieżka kopii."; return 1 ;;
   esac
-  src="$(hm_ovpn_pki)"
+  if [[ ! -f "${dest}/ca.crt" || ! -f "${dest}/index.txt" ]]; then
+    hm_err "Katalog nie wygląda na kopię PKI (brak ca.crt/index.txt). Użyj archiwum z manifestem."
+    return 1
+  fi
+  if declare -F hm_ovpn_tree_has_symlinks >/dev/null 2>&1 && hm_ovpn_tree_has_symlinks "${dest}"; then
+    hm_err "Katalog kopii zawiera symlinki. Odrzucone."
+    return 1
+  fi
+  if declare -F hm_ovpn_trusted_paths >/dev/null 2>&1; then
+    paths="$(hm_ovpn_trusted_paths)" || return 1
+    IFS=$'\t' read -r etc pki _ <<< "${paths}"
+    src="${pki}"
+  else
+    src="$(hm_ovpn_etc)/hm/pki"
+  fi
   mkdir -p "${src}"
-  cp -a "${dest}/." "${src}/" 2>/dev/null || cp -R "${dest}/." "${src}/"
-  hm_ok "Przywrócono PKI z ${dest}"
+  if declare -F hm_ovpn_safe_copy_tree >/dev/null 2>&1; then
+    hm_ovpn_safe_copy_tree "${dest}" "${src}" || return 1
+  else
+    find "${src}" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+    cp -a "${dest}/." "${src}/" 2>/dev/null || cp -R "${dest}/." "${src}/"
+  fi
+  hm_ok "Przywrócono PKI z ${dest} → ${src}"
 }
 
 cmd_openvpn() {

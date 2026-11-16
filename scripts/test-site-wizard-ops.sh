@@ -95,10 +95,18 @@ grep -q 'https://shop.example/up' "$(hm_site_state_dir "${domain}")/health.url" 
 grep -q 'hm-worker-shop.example@1.service' "${HM_SITE_HEALTH_REG}" || bad "inst-1"
 grep -q 'hm-worker-shop.example@2.service' "${HM_SITE_HEALTH_REG}" || bad "inst-2"
 grep -q '^undo=rm -f ' "${HM_TX_JOURNAL}" || bad "undo"
+grep -q $'^undo=systemd-unit\t' "${HM_TX_JOURNAL}" || bad "undo-unit"
+# spacje w jednej linii undo=rm -f a b c są odrzucane — jedna ścieżka na wpis
+grep -E '^undo=rm -f .+\s.+' "${HM_TX_JOURNAL}" && bad "undo-multi" || true
 ok "units"
 ok "logrotate"
 ok "ports-closed"
 ok "journal-undo"
+
+# C7: rollback ops NIE rusza hm-app-*
+app_unit="${HM_SITE_SYSTEMD_DIR}/$(hm_site_app_unit_name "${domain}")"
+printf '[Unit]\nDescription=app\n[Service]\nExecStart=/bin/true\n' > "${app_unit}"
+hm_site_resource_add "${domain}" unit "${app_unit}" 0
 
 printf 'hm-worker-shop.example@1.service inactive\nhm-worker-shop.example@2.service active\n' \
   > "${HM_SYSTEMCTL_STATE}"
@@ -124,9 +132,12 @@ ok "health-worker"
 
 hm_site_ops_rollback "${domain}" || bad "rollback"
 [[ ! -f "${svc}" && ! -f "${tmr}" && ! -f "${worker}" && ! -f "${lr}" ]] || bad "rollback-files"
+[[ -f "${app_unit}" ]] || bad "rollback-kept-app"
+grep -q "disable $(basename "${app_unit}")" "${HM_SITE_OPS_LOG}" && bad "rollback-no-disable-app" || true
 grep -q 'disable hm-cron-shop.example-schedule.timer' "${HM_SITE_OPS_LOG}" || bad "disable-timer"
 grep -q 'disable hm-worker-shop.example@.service' "${HM_SITE_OPS_LOG}" || bad "disable-worker"
 ok "rollback"
+ok "rollback-keep-app"
 
 export HM_SYSTEMD_ANALYZE="${root}/analyze-fail.sh"
 bad_domain="bad.example"
@@ -168,4 +179,19 @@ grep -q 'echo cron-ok' "${HM_SITE_SYSTEMD_DIR}/hm-cron-cmd.example-schedule.serv
 ok "open-port"
 ok "docker-warn"
 ok "backup"
+
+# PHP z HM_SITE_RUNTIME_VERSION (przed COMMIT / bez pełnego JSON type)
+ver_domain="ver.example"
+mkdir -p "${HM_SITE_HOME_BASE}/${ver_domain}"
+printf '{"domain":"%s"}\n' "${ver_domain}" > "${HM_SITE_MANIFEST_DIR}/${ver_domain}.json"
+export HM_SITE_RUNTIME_VERSION=8.4
+hm_site_ops_apply "${ver_domain}" "" "" queue 1 "" "" || bad "ver-apply"
+grep -q '/usr/bin/php8.4' "${HM_SITE_SYSTEMD_DIR}/hm-worker-ver.example@.service" || bad "ver-php"
+unset HM_SITE_RUNTIME_VERSION
+ok "runtime-version"
+
+# wspólna nazwa unitu
+[[ "$(hm_site_app_unit_name "a.b")" == "hm-app-a.b.service" ]] || bad "unit-name"
+ok "app-unit-name"
+
 echo ALL OK

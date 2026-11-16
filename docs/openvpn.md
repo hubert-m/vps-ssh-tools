@@ -17,6 +17,15 @@ Stan w `hmtools.state` jest źródłem prawdy. `hm.conf` powstaje z niego ponown
 
 Kolejność: install, klienci, revoke, REPL, status, uninstall, config, backup, audit. MVP to install, klienci, revoke i REPL. WireGuard, QR całego profilu i login z hasłem są poza tym modułem. Przejście na żywym VPS (install, client add, who, revoke, backup, restore, uninstall, SSH bez zmian) jest na checkliście w `docs/tested/`.
 
+### Gwarancje architektury
+
+- **Jedno źródło prawdy:** `/etc/openvpn/server/hmtools.state` (nadpisywalne `HM_OVPN_*`). `hm.conf` jest renderowany ze stanu, nie edytowany ręcznie jako źródło.
+- **Brak reinstall/init-pki:** gdy instalacja hmtools już istnieje (`hm.conf` + stan albo PKI), `openvpn install` odmawia — zmiany idą przez `config set` / klientów. Ponowne `init-pki` nie kasuje CA.
+- **CRL tylko w `hm/`:** `crl-verify` wskazuje `…/hm/crl.pem`. `install --force` przy obcej konfiguracji **nie** nadpisuje cudzego `crl.pem` w katalogu serwera.
+- **Obca konfiguracja:** obce `*.conf` blokują install bez `--force`; `--force` wymaga krytycznego potwierdzenia i nie rusza plików spoza markera hmtools przy uninstall bez manifestu.
+- **NAT / firewall:** bloki oznaczone `hmtools-openvpn`; SSH i reguły spoza markera zostają. `PREV_FORWARD` w stanie służy uninstallowi.
+- **Testy:** `scripts/test-openvpn-*.sh` (mock CLI, bez żywego demona).
+
 ## Instalacja
 
 ```bash
@@ -40,7 +49,11 @@ openvpn crl update
 
 Profil `.ovpn` ma klucz w pliku 0600. Treść klucza nie trafia do applog. `openvpn who` czyta lokalny plik statusu, `openvpn kick <nazwa>` wysyła `kill` na socket management.
 
-`openvpn backup [katalog]` kopiuje sam katalog PKI. `openvpn backup --local` składa `tar.gz` z konfiguracją, PKI, profilami i manifestem SHA-256 (plik 0600). Wysyłka `--target` bez `BACKUP_ENCRYPT_PASSPHRASE` jest blokowana. `openvpn restore <plik> --yes` sprawdza sumy, a przy nieudanym starcie wraca do poprzedniego stanu. `openvpn uninstall` najpierw robi tę kopię, potem zdejmuje tylko bloki `hmtools-openvpn`, unit, sysctl, cron i jail. `ip_forward` wraca do wartości z manifestu. Reguły spoza markera, w tym SSH, zostają. Bez manifestu komenda odmawia; `--force` zdejmuje same markery. `--dry-run` nic nie zmienia. `openvpn doctor` sprawdza binarki, unit i tryb `tls-crypt.key` oraz `ca.key`. `openvpn config set` składa `hm.conf` ze stanu. Przed zapisem powstaje kopia, a nieudany restart przywraca poprzedni plik. `--dry-run` nic nie zmienia. `openvpn client ip` zapisuje `ccd` i nie restartuje usługi.
+`openvpn backup [katalog]` kopiuje sam katalog PKI. `openvpn backup --local` składa `tar.gz` z konfiguracją, PKI, profilami i manifestem SHA-256 (plik 0600). Wysyłka `--target` bez `BACKUP_ENCRYPT_PASSPHRASE` jest blokowana. `openvpn restore <plik> --yes` sprawdza sumy, a przy nieudanym starcie wraca do poprzedniego stanu.
+
+`openvpn uninstall` domyślnie robi **kopię katalogu PKI** (nie pełne `tar.gz` z `--local`), potem zdejmuje bloki `hmtools-openvpn`, unit, sysctl, cron i jail. `ip_forward` wraca do `PREV_FORWARD` z manifestu. Reguły spoza markera, w tym SSH, zostają. Bez manifestu komenda odmawia; `--force` pozwala zdjąć markery / sysctl bez manifestu i **nie kasuje** obcych plików spoza allowlisty hmtools. `--no-backup` pomija kopię PKI. `--dry-run` nic nie zmienia.
+
+`openvpn doctor` wykrywa `easyrsa` jak install (PATH albo `/usr/share/easy-rsa/…`), unit oraz tryb `tls-crypt.key` i `ca.key` ze ścieżki PKI z `hmtools.state` (domyślnie `…/hm/pki`). `openvpn config set` składa `hm.conf` ze stanu. Przed zapisem powstaje kopia, a nieudany restart przywraca poprzedni plik. `--dry-run` nic nie zmienia. `openvpn client ip` zapisuje `ccd` i nie restartuje usługi.
 
 `openvpn audit` tylko czyta konfigurację i wypisuje `OK`, `UWAGA` albo `BŁĄD` z podpowiedzią. `openvpn audit --fix` poprawia uprawnienia, usuwa `compress` i dopisuje `tls-version-min 1.2`. Szyfr zostaje, bo zmiana wymaga nowych profili. `openvpn fail2ban on` stawia jail `hmtools-openvpn` na błędy TLS i `AUTH_FAILED`, z adresem bieżącej sesji SSH w `ignoreip`. `openvpn ca rotate` trzyma starą i nową CA w jednym bundlu, a `openvpn ca rotate finish` zostawia tylko nową. Port `1194/udp` jest znanym portem w `security ports`.
 

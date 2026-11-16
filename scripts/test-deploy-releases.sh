@@ -27,6 +27,8 @@ printf 'a\n' > "${HM_DEPLOY_HOME}/releases/20260101010101/index.html"
 printf 'b\n' > "${HM_DEPLOY_HOME}/releases/20260101010102/index.html"
 
 # shellcheck disable=SC1091
+source lib/site/tx.sh
+# shellcheck disable=SC1091
 source commands/git/main.sh
 
 ln -sfn target "${root}/probe" 2>/dev/null || true
@@ -72,6 +74,59 @@ if command -v openssl >/dev/null 2>&1; then
   grep -q "${secret}" "${log}" && bad hook-leak2 || ok hook-noleak2
 else
   ok hook-openssl-platform
+fi
+
+# C5: releases jako symlink → odmowa prune / apply
+vic="${root}/victim"
+mkdir -p "${vic}/keep1" "${vic}/keep2" "${vic}/drop1" "${vic}/drop2"
+printf 'x\n' > "${vic}/drop1/f"
+sec_home="${root}/sec"
+mkdir -p "${sec_home}"
+ln -sfn "${vic}" "${sec_home}/releases" 2>/dev/null || true
+if ls -ld "${sec_home}/releases" 2>/dev/null | grep -q -- '->'; then
+  export HM_DEPLOY_HOME="${sec_home}"
+  if hm_deploy_release_prune "${sec_home}" 2 >/dev/null 2>&1; then bad prune-symlink-rc; else ok prune-symlink-rc; fi
+  [[ -d "${vic}/drop1" ]] && ok prune-victim-kept || bad prune-victim-kept
+  if hm_deploy_release_apply 20990101010101 >/dev/null 2>&1; then bad apply-symlink-rc; else ok apply-symlink-rc; fi
+  [[ -d "${vic}/drop1" ]] && ok apply-victim-kept || bad apply-victim-kept
+else
+  ok prune-symlink-platform
+  ok prune-victim-kept
+  ok apply-symlink-platform
+  ok apply-victim-kept
+fi
+
+# status przez symlink odmowa
+export HM_DEPLOY_HOME="${root}/app"
+mkdir -p "${HM_DEPLOY_HOME}/releases/statustest"
+ln -sfn "${root}/evil-status" "${HM_DEPLOY_HOME}/releases/statustest/.hm-release-status" 2>/dev/null || true
+printf 'SAFE\n' > "${root}/evil-status"
+if ls -ld "${HM_DEPLOY_HOME}/releases/statustest/.hm-release-status" 2>/dev/null | grep -q -- '->'; then
+  if hm_deploy_status_write "${HM_DEPLOY_HOME}/releases/statustest/.hm-release-status" "ok" >/dev/null 2>&1; then
+    bad status-symlink-rc
+  else
+    ok status-symlink-rc
+  fi
+  grep -q 'SAFE' "${root}/evil-status" && ok status-symlink-kept || bad status-symlink-kept
+else
+  ok status-symlink-platform
+  ok status-symlink-kept
+fi
+
+# rollback tylko status=ok
+export HM_DEPLOY_HOME="${root}/rb"
+mkdir -p "${HM_DEPLOY_HOME}/releases/20260101010101" "${HM_DEPLOY_HOME}/releases/20260101010102" "${HM_DEPLOY_HOME}/releases/20260101010103"
+printf 'ok\n' > "${HM_DEPLOY_HOME}/releases/20260101010101/.hm-release-status"
+printf 'failed\n' > "${HM_DEPLOY_HOME}/releases/20260101010102/.hm-release-status"
+printf 'ok\n' > "${HM_DEPLOY_HOME}/releases/20260101010103/.hm-release-status"
+ln -sfn "releases/20260101010103" "${HM_DEPLOY_HOME}/current" 2>/dev/null || true
+if ls -ld "${HM_DEPLOY_HOME}/current" 2>/dev/null | grep -q -- '->'; then
+  hm_deploy_release_rollback || bad rb-ok-rc
+  now="$(readlink "${HM_DEPLOY_HOME}/current")"
+  [[ "${now}" == "releases/20260101010101" ]] && ok rb-skip-failed || bad rb-skip-failed
+else
+  ok rb-ok-platform
+  ok rb-skip-failed
 fi
 
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

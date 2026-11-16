@@ -513,11 +513,21 @@ hm_site_delete_path_allowed() {
 }
 
 hm_site_lifecycle_remove_path() {
-  local path="$1" kind="$2"
+  local path="$1" kind="$2" port_line port_spec
   [[ -n "${path}" && "${path}" != "/" ]] || return 1
   if ! hm_site_delete_path_allowed "${path}" "${kind}"; then
     hm_warn "Odmowa usunięcia ścieżki spoza allowlisty: ${path}"
     return 1
+  fi
+  if [[ "${kind}" == "firewall" && -f "${path}" && ! -L "${path}" ]]; then
+    port_line="$(head -1 "${path}" 2>/dev/null || true)"
+    port_spec="${port_line%%#*}"
+    port_spec="${port_spec%%[[:space:]]*}"
+    if [[ -n "${port_spec}" && "${HMTOOLS_TEST:-}" != "1" ]] \
+      && declare -F hm_os_firewall_remove >/dev/null 2>&1; then
+      hm_os_firewall_remove "${port_spec}" 2>/dev/null || \
+        hm_warn "Nie usunięto reguły firewalla ${port_spec} (snippet i tak kasowany)."
+    fi
   fi
   if [[ -L "${path}" ]]; then
     rm -f -- "${path}"

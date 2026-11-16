@@ -482,7 +482,10 @@ EOF
 }
 
 hm_site_node_unit_name() {
-  # jak Python/.NET: hm-app-<domena>.service (kropki OK w nazwie unitu)
+  if declare -F hm_site_app_unit_name >/dev/null 2>&1; then
+    hm_site_app_unit_name "${1}"
+    return 0
+  fi
   printf 'hm-app-%s.service' "${1}"
 }
 

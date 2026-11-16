@@ -1,6 +1,45 @@
 #!/usr/bin/env bash
 # status, who, kick, log — odczyt pliku status v3 i journala.
 
+# Jedna ścieżka statusu: HM_OVPN_STATUS → dyrektywa status w hm.conf → /run/… → etc.
+hm_ovpn_status_file() {
+  local conf f
+  if [[ -n "${HM_OVPN_STATUS:-}" ]]; then
+    printf '%s' "${HM_OVPN_STATUS}"
+    return 0
+  fi
+  conf="$(hm_ovpn_conf_file 2>/dev/null || true)"
+  if [[ -n "${conf}" && -f "${conf}" ]]; then
+    f="$(awk '/^[[:space:]]*status[[:space:]]+/ { print $2; exit }' "${conf}" 2>/dev/null || true)"
+    if [[ -n "${f}" && "${f}" != /* ]]; then
+      f="$(hm_ovpn_etc)/${f}"
+    fi
+    if [[ -n "${f}" ]]; then
+      printf '%s' "${f}"
+      return 0
+    fi
+  fi
+  for f in /run/openvpn-server/status-hm.log "$(hm_ovpn_etc)/status-hm.log"; do
+    [[ -f "${f}" ]] && { printf '%s' "${f}"; return 0; }
+  done
+  printf '%s' /run/openvpn-server/status-hm.log
+}
+
+# Liczba certów V/R w index.txt z pominięciem CN=server.
+hm_ovpn_index_count() {
+  local kind="${1:-V}" file n=0 line
+  file="$(hm_ovpn_pki)/index.txt"
+  [[ -f "${file}" ]] || { printf '0'; return 0; }
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ "${line}" == "${kind}"* ]] || continue
+    if [[ "${line}" =~ /CN=server(/|[[:space:]]|$) ]]; then
+      continue
+    fi
+    n=$((n + 1))
+  done < "${file}"
+  printf '%s' "${n}"
+}
+
 hm_ovpn_status_level() {
   local level="OK"
   if [[ "${HM_OVPN_ACTIVE:-}" == "failed" ]]; then
@@ -42,16 +81,12 @@ hm_ovpn_status() {
   ep="$(hm_ovpn_state_value ENDPOINT 2>/dev/null || true)"
   port="$(hm_ovpn_state_value PORT 2>/dev/null || true)"
   proto="$(hm_ovpn_state_value PROTO 2>/dev/null || true)"
-  if [[ -f "$(hm_ovpn_pki)/index.txt" ]]; then
-    n="$(grep -c '^V' "$(hm_ovpn_pki)/index.txt" 2>/dev/null || true)"
-    revoked="$(grep -c '^R' "$(hm_ovpn_pki)/index.txt" 2>/dev/null || true)"
-    [[ "${n}" =~ ^[0-9]+$ ]] || n="0"
-    [[ "${revoked}" =~ ^[0-9]+$ ]] || revoked="0"
-  fi
+  n="$(hm_ovpn_index_count V)"
+  revoked="$(hm_ovpn_index_count R)"
   level="$(hm_ovpn_status_level)"
   if [[ "${json}" -eq 1 ]]; then
-    printf '{"endpoint":"%s","port":"%s","proto":"%s","clients":%s,"revoked":%s,"level":"%s"}\n' \
-      "${ep}" "${port:-1194}" "${proto:-udp}" "${n}" "${revoked}" "${level}"
+    printf '{"endpoint":"%s","port":"%s","proto":"%s","clients":%s,"revoked":%s,"level":"%s","status_file":"%s"}\n' \
+      "${ep}" "${port:-1194}" "${proto:-udp}" "${n}" "${revoked}" "${level}" "$(hm_ovpn_status_file)"
     return 0
   fi
   printf 'instancja: %s\n' "$(hm_ovpn_instance)"
@@ -59,6 +94,7 @@ hm_ovpn_status() {
   printf 'port: %s/%s\n' "${port:-1194}" "${proto:-udp}"
   printf 'klienci: %s\n' "${n}"
   printf 'uniewaznieni: %s\n' "${revoked}"
+  printf 'status_file: %s\n' "$(hm_ovpn_status_file)"
   printf 'unit: %s\n' "${HM_OVPN_ACTIVE:-nieznany}"
   if [[ -f "$(hm_ovpn_etc)/hm/crl.pem" || -f "$(hm_ovpn_etc)/crl.pem" ]]; then
     printf 'crl: jest\n'
@@ -76,8 +112,8 @@ hm_ovpn_who() {
       *) shift ;;
     esac
   done
-  file="${HM_OVPN_STATUS:-$(hm_ovpn_etc)/status-hm.log}"
-  [[ -f "${file}" ]] || { hm_info "Brak pliku statusu."; return 0; }
+  file="$(hm_ovpn_status_file)"
+  [[ -f "${file}" ]] || { hm_info "Brak pliku statusu (${file})."; return 0; }
   if [[ "${json}" -eq 0 ]] && declare -F hm_table_begin >/dev/null 2>&1; then
     hm_table_begin LLLLLL
     hm_table_row CN REAL VPN RX TX SZYFR
@@ -117,8 +153,13 @@ hm_ovpn_kick() {
     esac
   done
   hm_ovpn_name_ok "${name}" || { hm_err "Zła nazwa klienta."; return 1; }
-  local file="${HM_OVPN_STATUS:-$(hm_ovpn_etc)/status-hm.log}"
-  if [[ -f "${file}" ]] && ! grep -q "CLIENT_LIST,${name}," "${file}"; then
+  local file
+  file="$(hm_ovpn_status_file)"
+  if [[ ! -f "${file}" ]]; then
+    hm_err "Brak pliku statusu (${file}) — nie mogę potwierdzić klienta ${name}."
+    return 1
+  fi
+  if ! grep -q "CLIENT_LIST,${name}," "${file}"; then
     hm_err "Nie ma klienta ${name}."
     return 1
   fi

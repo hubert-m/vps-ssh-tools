@@ -109,7 +109,7 @@ hm_dotnet_redact() {
 
 hm_dotnet_unit_path() {
   local domain="$1"
-  printf '%s/hm-app-%s.service' "${HM_SYSTEMD_UNIT_DIR:-/etc/systemd/system}" "${domain}"
+  printf '%s/%s' "${HM_SYSTEMD_UNIT_DIR:-/etc/systemd/system}" "$(hm_site_app_unit_name "${domain}")"
 }
 
 hm_dotnet_bin() {
@@ -320,7 +320,7 @@ hm_site_dotnet_provision() {
       return 1
     }
   fi
-  hm_dotnet_systemctl enable --now "hm-app-${domain}.service"
+  hm_dotnet_systemctl enable --now "$(hm_site_app_unit_name "${domain}")"
   hm_info "ASP.NET wymaga UseForwardedHeaders dla X-Forwarded-For i X-Forwarded-Proto."
   if ! hm_dotnet_publish_allowed; then
     hm_info "Bez SDK wgraj artefakt rsync do ${home}/current/ (dotnet publish wymaga SDK)."
