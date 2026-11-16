@@ -16,6 +16,8 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [vX.Y.Z]
 
+## [v0.1.14]
+
 - Fix: chrome clean — `hm_chrome_path_in_use` wykrywa `--user-data-dir=` i SingletonLock (PID); test path-in-use
 - Feat: `system` — status NTP/chrony/timesyncd, strefa, hostname/FQDN/rDNS, locale; time sync on, timezone set, hostname set (CyberPanel SSL), locale fix; ostrzeżenia offset>1s / rDNS≠hostname; test-system-time-locale (HM_SYSTEM_*)
 - Feat: start hmtools — lekki WARN gdy LANG=C/POSIX
