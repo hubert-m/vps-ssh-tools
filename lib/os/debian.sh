@@ -321,20 +321,19 @@ _hm_os_do_firewall_remove() {
   local spec="${1:-}"
   [[ -n "${spec}" ]] || return 1
   if hm_have_cmd ufw; then
-    # numer reguły
+    # numer reguły — jawny (admin / debug); bez auto-skanowania
     if [[ "${spec}" =~ ^[0-9]+$ ]]; then
       printf 'y\n' | ufw delete "${spec}" >/dev/null 2>&1 && return 0
       ufw --force delete "${spec}" >/dev/null 2>&1 && return 0
       return 1
     fi
-    # from:IP
+    # from:IP — tylko allow z komentarzem hmtools (whitelist)
     if [[ "${spec}" == from:* ]]; then
       local ip="${spec#from:}"
-      ufw delete allow from "${ip}" >/dev/null 2>&1 || true
-      ufw delete deny from "${ip}" >/dev/null 2>&1 || true
+      _hm_os_ufw_delete_ours_matching "from ${ip}" || true
       return 0
     fi
-    # port/proto — tylko ALLOW (nie ruszaj DENY / cudzych reguł)
+    # port/proto — wyłącznie ALLOW z komentarzem hmtools/hm: (nie DENY, nie obce ALLOW)
     local port proto="tcp"
     if [[ "${spec}" == */* ]]; then
       port="${spec%%/*}"
@@ -342,10 +341,40 @@ _hm_os_do_firewall_remove() {
     else
       port="${spec}"
     fi
-    ufw delete allow "${port}/${proto}" >/dev/null 2>&1 || true
+    _hm_os_ufw_delete_ours_matching "${port}/${proto}" || true
     return 0
   fi
   return 1
+}
+
+# Usuń z ufw tylko reguły ALLOW oznaczone komentarzem hmtools (od najwyższego numeru).
+_hm_os_ufw_delete_ours_matching() {
+  local needle="${1:-}" line num rest cmt
+  local -a nums=()
+  [[ -n "${needle}" ]] || return 1
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ "${line}" =~ ^\[[[:space:]]*([0-9]+)\][[:space:]]+(.*)$ ]] || continue
+    num="${BASH_REMATCH[1]}"
+    rest="${BASH_REMATCH[2]}"
+    [[ "${rest}" == *ALLOW* ]] || continue
+    [[ "${rest}" == *"${needle}"* ]] || continue
+    [[ "${rest}" == *"#"* ]] || continue
+    cmt="${rest#*#}"
+    if declare -F _hm_os_fw_comment_ours >/dev/null 2>&1; then
+      _hm_os_fw_comment_ours "${cmt}" || continue
+    else
+      case "${cmt}" in *hmtools*|*hm:*) ;; *) continue ;; esac
+    fi
+    nums+=("${num}")
+  done < <(ufw status numbered 2>/dev/null || true)
+  [[ "${#nums[@]}" -gt 0 ]] || return 0
+  local i
+  for ((i = ${#nums[@]} - 1; i >= 0; i--)); do
+    printf 'y\n' | ufw delete "${nums[i]}" >/dev/null 2>&1 \
+      || ufw --force delete "${nums[i]}" >/dev/null 2>&1 \
+      || true
+  done
+  return 0
 }
 
 _hm_os_do_firewall_whitelist() {

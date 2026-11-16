@@ -16,6 +16,13 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [vX.Y.Z]
 
+- Fix: clone/wp/mail/dashboard — `umask 077` tylko w podpowłoce przy zapisie hasła (bez przecieku na REPL); test umask-no-leak
+- Feat: users — list/add(--key)/lock/unlock/expire/del, sudo grant|revoke (visudo -c), audit UID0/puste hasła/NOPASSWD; ochrona root/sesji; test-users-sudo
+- Feat: mysql users/grant/revoke/passwd/slow/tune — ochrona kont systemowych, hasła przez plik 0600 + hm_print_secret, tune tylko doradza; test-mysql-users-tune
+- Feat: logs search + rotate — IP/URL/status/site/.gz, --count-by; rotate status/fix (logrotate -d, journald SystemMaxUse); test-logs-search
+- Fix: ssl purge LE — tylko dokładna domena (a.pl ≠ a.pl.bak), symlink katalogu bez podążania; test-ssl-issue (detect/status/purge) zielony
+- Fix: hm_os_firewall — CSF udp→UDP_IN/UDP6_IN (tcp→TCP_IN/TCP6_IN); ufw remove tylko ALLOW z komentarzem hmtools (deny i obce allow zostają); domyślny comment hmtools
+- Fix: site W13 — webs delete: sites-enabled przed available, systemctl disable+daemon-reload, DROP z .dbs, cleanup manifest/resources/state, reload nginx/fpm; site runtime php/node realny switch + odmowa symlinków; test-site-lifecycle
 - Fix: webs delete — dokładna allowlista vhost/unit (realpath -m), kasowanie symlinku sites-enabled bez podążania; resources/.dbs 0600; zapisy w HOME przez write_nofollow
 - Fix: site new --redis — unikalne REDIS_DB (globalny rejestr), ACL bez FLUSHALL/CONFIG/KEYS, wyłączenie default nopass
 - Fix: report weekly — czytelne sekcje z JSON, Usługi przez services/systemctl, Kopie ze snapshotów (nie pomoc target)
@@ -49,6 +56,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: openvpn config — DNS/IPV6/MODE w stanie install; fw para port+proto; NAT/ccd po SUBNET; backup bez PKI + prune; `config set routes`; remove tylko ALLOW
 - Fix: deploy releases — odmowa symlinku `releases`/stamp; status nofollow; prune pod home; populate+build+health przed switch; rollback tylko status `ok`
 - Fix: openvpn status/who/kick — ścieżka statusu z `hm.conf`; kick rc≠0 bez pliku/CN; licznik klientów bez CN=server
+- Fix: openvpn uninstall — pełna kopia przed usunięciem; PREV_FORWARD tylko z manifestu; --force bez PKI/ccd; strip markerów z trybem; ufw delete; export allowlista
 
 ## [v0.1.13]
 

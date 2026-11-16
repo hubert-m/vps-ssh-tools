@@ -249,6 +249,30 @@ else
 fi
 rm -f "${passf}"
 
+# --- umask nie przecieka z hm_clone_mysql_create_quiet ---
+umask 022
+before="$(umask)"
+passf2="$(hm_mktemp .p2)"
+hm_clone_mysql_create_quiet "clonedb" "cloneuser" "${passf2}" >/dev/null || true
+after="$(umask)"
+if [[ "${before}" == "${after}" && "${after}" == "0022" ]]; then
+  echo "OK   umask-no-leak"
+else
+  echo "FAIL umask-no-leak before=${before} after=${after}"
+  fail=1
+fi
+mode="$(stat -c '%a' "${passf2}" 2>/dev/null || stat -f '%OLp' "${passf2}" 2>/dev/null || echo '?')"
+if [[ "${mode}" == "600" || "${mode}" == "0600" ]]; then
+  echo "OK   passfile-0600"
+elif [[ -s "${passf2}" ]]; then
+  # MSYS/Git Bash często ignoruje chmod/umask na NTFS — umask-no-leak jest kryterium.
+  echo "OK   passfile-written (mode=${mode} na tym FS)"
+else
+  echo "FAIL passfile-0600 mode=${mode}"
+  fail=1
+fi
+rm -f "${passf2}"
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED=${fail}"
   exit 1

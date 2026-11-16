@@ -36,8 +36,12 @@ trap 'rm -rf "${tmpdir}"' EXIT
 source lib/os_family.sh
 
 CSF_CONF="${tmpdir}/csf.conf"
+export CSF_CONF
 cat > "${CSF_CONF}" <<'EOF'
 TCP_IN = "20,21,22,80,443,8090"
+TCP6_IN = "22,80,443"
+UDP_IN = "53"
+UDP6_IN = "53"
 TCP_OUT = "1:65535"
 EOF
 
@@ -57,6 +61,88 @@ if [[ "${list}" == "22,80,443,8443" ]]; then
 else
   echo "FAIL csf-tcp-in-set: ${list}"; fail=1
 fi
+
+# CSF UDP allow/remove — nie rusza TCP_IN
+export HMTOOLS_TEST=1
+_hm_os_csf_allow_port 1194 udp
+uin="$(_hm_os_csf_in_get UDP_IN)"
+tin="$(_hm_os_csf_in_get TCP_IN)"
+if [[ "${uin}" == *1194* && "${tin}" != *1194* ]]; then
+  echo "OK   csf-udp-allow"
+else
+  echo "FAIL csf-udp-allow uin=${uin} tin=${tin}"; fail=1
+fi
+_hm_os_csf_deny_port 1194 udp
+uin="$(_hm_os_csf_in_get UDP_IN)"
+if [[ "${uin}" != *1194* && "${tin}" == "22,80,443,8443" ]]; then
+  echo "OK   csf-udp-remove"
+else
+  echo "FAIL csf-udp-remove uin=${uin} tin=${tin}"; fail=1
+fi
+# TCP allow nie trafia do UDP_IN
+_hm_os_csf_allow_port 8443 tcp
+uin="$(_hm_os_csf_in_get UDP_IN)"
+tin="$(_hm_os_csf_in_get TCP_IN)"
+if [[ "${tin}" == *8443* && "${uin}" != *8443* ]]; then
+  echo "OK   csf-tcp-not-udp"
+else
+  echo "FAIL csf-tcp-not-udp"; fail=1
+fi
+
+# ufw remove — tylko ALLOW z komentarzem hmtools
+# shellcheck disable=SC1091
+source lib/os/debian.sh
+UFW_STATUS="${tmpdir}/ufw.status"
+UFW_DELETED="${tmpdir}/ufw.deleted"
+: > "${UFW_DELETED}"
+cat > "${UFW_STATUS}" <<'EOF'
+Status: active
+
+     To                         Action      From
+     --                         ------      ----
+[ 1] 22/tcp                     ALLOW IN    Anywhere                   # hmtools
+[ 2] 1194/udp                   DENY IN     Anywhere
+[ 3] 1194/udp                   ALLOW IN    Anywhere                   # hmtools-openvpn
+[ 4] 1194/udp                   ALLOW IN    Anywhere
+EOF
+ufw() {
+  case "${1:-}" in
+    status)
+      cat "${UFW_STATUS}"
+      ;;
+    delete)
+      shift || true
+      # ufw delete N  /  ufw --force delete N
+      local n=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --force) shift || true ;;
+          *) n="$1"; break ;;
+        esac
+      done
+      printf '%s\n' "${n}" >> "${UFW_DELETED}"
+      ;;
+    *) return 0 ;;
+  esac
+}
+hm_have_cmd() { [[ "$1" == "ufw" ]] && return 0; return 1; }
+_hm_os_do_firewall_remove "1194/udp"
+if grep -qx '3' "${UFW_DELETED}" && ! grep -qx '2' "${UFW_DELETED}" && ! grep -qx '4' "${UFW_DELETED}"; then
+  echo "OK   ufw-remove-ours-only"
+else
+  echo "FAIL ufw-remove-ours-only deleted=$(tr '\n' ',' < "${UFW_DELETED}")"; fail=1
+fi
+if grep -q 'DENY' "${UFW_STATUS}" && grep -q '\[ 4\]' "${UFW_STATUS}"; then
+  echo "OK   ufw-deny-and-foreign-kept-in-status"
+else
+  echo "FAIL ufw-status-intact"; fail=1
+fi
+cmt="$(_hm_os_fw_comment "")"
+[[ "${cmt}" == "hmtools" ]] && echo "OK   fw-comment-default" || { echo "FAIL fw-comment-default"; fail=1; }
+cmt="$(_hm_os_fw_comment "openvpn")"
+[[ "${cmt}" == "hmtools:openvpn" ]] && echo "OK   fw-comment-prefix" || { echo "FAIL fw-comment-prefix ${cmt}"; fail=1; }
+unset -f ufw
+hm_have_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 # --- firewall module helpers ---
 # shellcheck disable=SC1091

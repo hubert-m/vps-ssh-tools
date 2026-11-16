@@ -136,21 +136,67 @@ hm_site_runtime_restore() {
 }
 
 hm_site_runtime_php() {
-  local domain="$1" ver="$2" path old home pool
+  local domain="$1" ver="$2" path old home pool runtime user line old_pool="" new_pool=""
   path="$(hm_site_manifest_path "${domain}")"
   [[ -f "${path}" ]] || { hm_err "Brak manifestu."; return 1; }
+  runtime="$(sed -n 's/.*"runtime":{"type":"\([^"]*\)".*/\1/p' "${path}" | head -1)"
+  [[ "${runtime}" == "php" ]] || { hm_err "site runtime php: serwis nie jest PHP (${runtime:-brak})."; return 1; }
   old="$(hm_site_runtime_version "${path}")"
   home="$(hm_site_home "${domain}")"
+  user="$(hm_site_unix_user "${domain}" 2>/dev/null || true)"
+  [[ -n "${user}" ]] || user="$(stat -c '%U' "${home}" 2>/dev/null || echo root)"
   pool="${HM_SITE_FPM_POOL:-$(hm_site_state_dir "${domain}")/fpm.conf}"
   mkdir -p "$(dirname "${pool}")" "$(dirname "${path}")"
-  [[ -f "${pool}" ]] && cp -f "${pool}" "${pool}.hmbak"
-  cp -f "${path}" "${path}.hmbak"
+  if [[ -L "${pool}" || -L "${path}" ]]; then
+    hm_err "Odmowa zmiany PHP przez symlink (pula/manifest)."
+    return 1
+  fi
+  [[ -f "${pool}" && ! -L "${pool}" ]] && cp -f "${pool}" "${pool}.hmbak"
+  [[ ! -L "${path}" ]] && cp -f "${path}" "${path}.hmbak"
+  if [[ -f "$(hm_site_resources_path "${domain}")" ]]; then
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+      hm_site_resource_read "${line}" || continue
+      [[ "${HM_SITE_RES_KIND}" == "fpm" && "${HM_SITE_RES_SHARED}" != "1" ]] || continue
+      old_pool="${HM_SITE_RES_PATH}"
+      break
+    done < "$(hm_site_resources_path "${domain}")"
+  fi
   if [[ "${HM_SITE_RUNTIME_FAIL:-}" == "1" ]]; then
     rm -f "${pool}.hmbak" "${path}.hmbak"
     hm_err "PHP ${ver} nie przeszedł testu — zostaje ${old:-dotychczasowa}."
     return 1
   fi
-  printf 'php=%s\nlisten=127.0.0.1\n' "${ver}" > "${pool}"
+  if [[ "${HMTOOLS_TEST:-}" != "1" ]] && declare -F hm_site_php_write_pool >/dev/null 2>&1; then
+    if declare -F hm_site_php_ensure_repo >/dev/null 2>&1; then
+      hm_site_php_ensure_repo "${ver}" 1 || {
+        hm_site_runtime_restore "${path}.hmbak" "${path}"
+        hm_site_runtime_restore "${pool}.hmbak" "${pool}"
+        hm_err "Nie zainstalowano PHP ${ver} — zostaje ${old:-dotychczasowa}."
+        return 1
+      }
+    fi
+    if declare -F hm_site_php_install_exts >/dev/null 2>&1; then
+      hm_site_php_install_exts "${ver}" fpm || true
+    fi
+    new_pool="$(hm_site_php_write_pool "${domain}" "${ver}" "${user}" "${home}" fpm)" || {
+      hm_site_runtime_restore "${path}.hmbak" "${path}"
+      hm_site_runtime_restore "${pool}.hmbak" "${pool}"
+      hm_err "Pula FPM ${ver} nieudana — zostaje ${old:-dotychczasowa}."
+      return 1
+    }
+    if [[ -n "${old_pool}" && "${old_pool}" != "${new_pool}" && -f "${old_pool}" && ! -L "${old_pool}" ]]; then
+      if hm_site_delete_path_allowed "${old_pool}" fpm "${domain}"; then
+        rm -f -- "${old_pool}"
+      fi
+    fi
+    printf 'php=%s\npool=%s\n' "${ver}" "${new_pool}" | hm_site_write_nofollow "${pool}" || true
+  else
+    printf 'php=%s\nlisten=127.0.0.1\n' "${ver}" | hm_site_write_nofollow "${pool}" || {
+      hm_site_runtime_restore "${path}.hmbak" "${path}"
+      hm_site_runtime_restore "${pool}.hmbak" "${pool}"
+      return 1
+    }
+  fi
   hm_site_manifest_set_version "${path}" "${ver}" || {
     hm_site_runtime_restore "${path}.hmbak" "${path}"
     hm_site_runtime_restore "${pool}.hmbak" "${pool}"
@@ -164,12 +210,17 @@ hm_site_runtime_php() {
       return 1
     fi
   fi
+  if [[ "${HMTOOLS_TEST:-}" != "1" ]] && declare -F hm_site_php_fpm_reload >/dev/null 2>&1; then
+    [[ -n "${old}" ]] && hm_site_php_fpm_reload "${old}" 2>/dev/null || true
+    hm_site_php_fpm_reload "${ver}" 2>/dev/null || true
+  fi
+  HM_SITE_RUNTIME_VERSION="${ver}"
   rm -f "${pool}.hmbak" "${path}.hmbak"
   hm_ok "PHP ${domain} → ${ver}"
 }
 
 hm_site_runtime_node() {
-  local domain="$1" ver="$2" path old home nvmrc unit line runtime
+  local domain="$1" ver="$2" path old home nvmrc unit line runtime tmp
   path="$(hm_site_manifest_path "${domain}")"
   [[ -f "${path}" ]] || { hm_err "Brak manifestu."; return 1; }
   runtime="$(sed -n 's/.*"runtime":{"type":"\([^"]*\)".*/\1/p' "${path}" | head -1)"
@@ -178,7 +229,16 @@ hm_site_runtime_node() {
   home="$(hm_site_home "${domain}")"
   nvmrc="${home}/.nvmrc"
   mkdir -p "${home}"
-  [[ -f "${nvmrc}" ]] && cp -f "${nvmrc}" "${nvmrc}.hmbak"
+  if [[ -L "${path}" ]] || { declare -F hm_site_path_has_symlink >/dev/null 2>&1 && hm_site_path_has_symlink "${path}"; }; then
+    hm_err "Odmowa zmiany Node przez symlink (manifest)."
+    return 1
+  fi
+  if [[ -L "${nvmrc}" ]] || { declare -F hm_site_path_has_symlink >/dev/null 2>&1 && hm_site_path_has_symlink "${nvmrc}"; }; then
+    hm_err "Odmowa zmiany Node przez symlink (.nvmrc)."
+    return 1
+  fi
+  # write_nofollow i tak odmówi, gdy katalog HOME ma symlink w ścieżce
+  [[ -f "${nvmrc}" && ! -L "${nvmrc}" ]] && cp -f "${nvmrc}" "${nvmrc}.hmbak"
   cp -f "${path}" "${path}.hmbak"
   unit=""
   if [[ -f "$(hm_site_resources_path "${domain}")" ]]; then
@@ -189,11 +249,28 @@ hm_site_runtime_node() {
       break
     done < "$(hm_site_resources_path "${domain}")"
   fi
-  [[ -n "${unit}" && -f "${unit}" ]] && cp -f "${unit}" "${unit}.hmbak"
+  if [[ -n "${unit}" ]]; then
+    if [[ -L "${unit}" ]]; then
+      hm_err "Odmowa zapisu unitu przez symlink: ${unit}"
+      rm -f "${nvmrc}.hmbak" "${path}.hmbak"
+      return 1
+    fi
+    [[ -f "${unit}" ]] && cp -f "${unit}" "${unit}.hmbak"
+  fi
   if [[ "${HM_SITE_RUNTIME_FAIL:-}" == "1" ]]; then
     rm -f "${nvmrc}.hmbak" "${path}.hmbak" "${unit}.hmbak"
     hm_err "Node ${ver} nie wstał — zostaje ${old:-dotychczasowa}."
     return 1
+  fi
+  if [[ "${HMTOOLS_TEST:-}" != "1" ]] && declare -F hm_site_node_install_versions >/dev/null 2>&1; then
+    hm_site_node_install_nvm "${domain}" 2>/dev/null || true
+    hm_site_node_install_versions "${domain}" "${ver}" "${ver}" || {
+      hm_site_runtime_restore "${path}.hmbak" "${path}"
+      hm_site_runtime_restore "${nvmrc}.hmbak" "${nvmrc}"
+      [[ -n "${unit}" ]] && hm_site_runtime_restore "${unit}.hmbak" "${unit}"
+      hm_err "nvm install ${ver} nieudany — zostaje ${old:-dotychczasowa}."
+      return 1
+    }
   fi
   printf '%s\n' "${ver}" | hm_site_write_nofollow "${nvmrc}" || {
     hm_site_runtime_restore "${nvmrc}.hmbak" "${nvmrc}"
@@ -202,9 +279,21 @@ hm_site_runtime_node() {
     return 1
   }
   if [[ -n "${unit}" && -f "${unit}" && -n "${old}" ]]; then
-    sed "s/${old}/${ver}/g" "${unit}" > "${unit}.new"
-    cat "${unit}.new" > "${unit}"
-    rm -f "${unit}.new"
+    tmp="$(mktemp)"
+    # Tylko ścieżki nvm/node/vN — nie podmieniaj przypadkowych podciągów wersji.
+    sed -E \
+      -e "s#(versions/node/v)${old}([/\"[:space:]])#\\1${ver}\\2#g" \
+      -e "s#(node/v)${old}([/\"[:space:]])#\\1${ver}\\2#g" \
+      -e "s#(/v)${old}(/bin/node)#\\1${ver}\\2#g" \
+      "${unit}" > "${tmp}"
+    if ! hm_site_write_nofollow "${unit}" < "${tmp}"; then
+      rm -f "${tmp}"
+      hm_site_runtime_restore "${path}.hmbak" "${path}"
+      hm_site_runtime_restore "${nvmrc}.hmbak" "${nvmrc}"
+      hm_site_runtime_restore "${unit}.hmbak" "${unit}"
+      return 1
+    fi
+    rm -f "${tmp}"
   fi
   hm_site_manifest_set_version "${path}" "${ver}" || {
     hm_site_runtime_restore "${path}.hmbak" "${path}"
@@ -212,6 +301,12 @@ hm_site_runtime_node() {
     [[ -n "${unit}" ]] && hm_site_runtime_restore "${unit}.hmbak" "${unit}"
     return 1
   }
+  if [[ "${HMTOOLS_TEST:-}" != "1" && -n "${unit}" ]] \
+    && declare -F hm_have_cmd >/dev/null 2>&1 && hm_have_cmd systemctl; then
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl restart "$(basename -- "${unit}")" >/dev/null 2>&1 || true
+  fi
+  HM_SITE_RUNTIME_VERSION="${ver}"
   rm -f "${nvmrc}.hmbak" "${path}.hmbak" "${unit}.hmbak"
   hm_ok "Node ${domain} → ${ver}"
 }
@@ -512,6 +607,19 @@ hm_site_delete_path_allowed() {
   return 0
 }
 
+hm_site_lifecycle_disable_unit() {
+  local path="$1" base
+  base="$(basename -- "${path}")"
+  [[ "${base}" == hm-*.service || "${base}" == hm-*.timer || "${base}" == hm-*@*.service ]] || return 0
+  if [[ -n "${HM_SITE_LIFECYCLE_LOG:-}" ]]; then
+    printf 'disable\t%s\n' "${base}" >> "${HM_SITE_LIFECYCLE_LOG}"
+  fi
+  [[ "${HMTOOLS_TEST:-}" == "1" ]] && return 0
+  if declare -F hm_have_cmd >/dev/null 2>&1 && hm_have_cmd systemctl; then
+    systemctl disable --now "${base}" >/dev/null 2>&1 || true
+  fi
+}
+
 hm_site_lifecycle_remove_path() {
   local path="$1" kind="$2" port_line port_spec
   [[ -n "${path}" && "${path}" != "/" ]] || return 1
@@ -519,6 +627,11 @@ hm_site_lifecycle_remove_path() {
     hm_warn "Odmowa usunięcia ścieżki spoza allowlisty: ${path}"
     return 1
   fi
+  case "${kind}" in
+    worker|timer|unit|cron|pm2)
+      hm_site_lifecycle_disable_unit "${path}"
+      ;;
+  esac
   if [[ "${kind}" == "firewall" && -f "${path}" && ! -L "${path}" ]]; then
     port_line="$(head -1 "${path}" 2>/dev/null || true)"
     port_spec="${port_line%%#*}"
@@ -528,6 +641,24 @@ hm_site_lifecycle_remove_path() {
       hm_os_firewall_remove "${port_spec}" 2>/dev/null || \
         hm_warn "Nie usunięto reguły firewalla ${port_spec} (snippet i tak kasowany)."
     fi
+  fi
+  # Najpierw link sites-enabled (gdy kasujemy sites-available) — bez wiszących symlinków.
+  if [[ "${kind}" == "vhost" ]]; then
+    local en base_v
+    case "${path}" in
+      */sites-available/*)
+        base_v="$(basename -- "${path}")"
+        en="$(dirname -- "${path}")"
+        en="${en%/sites-available}/sites-enabled/${base_v}"
+        if [[ -L "${en}" || -e "${en}" ]] && hm_site_delete_path_allowed "${en}" vhost; then
+          rm -f -- "${en}"
+          if [[ -n "${HM_SITE_LIFECYCLE_LOG:-}" ]]; then
+            printf 'vhost\t%s\n' "${en}" >> "${HM_SITE_LIFECYCLE_LOG}"
+          fi
+          hm_ok "Usunięto vhost link: ${en}"
+        fi
+        ;;
+    esac
   fi
   if [[ -L "${path}" ]]; then
     rm -f -- "${path}"
@@ -540,10 +671,116 @@ hm_site_lifecycle_remove_path() {
   hm_ok "Usunięto ${kind}: ${path}"
 }
 
+# Usuń bazy/userów z .{domena}.dbs (manifest kreatora).
+hm_site_lifecycle_drop_manifest_dbs() {
+  local domain="${1:-${HM_DEL_DOMAIN:-}}" dbfile typ name dbuser host port
+  [[ -n "${domain}" ]] || return 0
+  [[ "${HM_DEL_KEEP_DB:-0}" == "1" ]] && return 0
+  dbfile="$(hm_site_manifest_dir)/.${domain}.dbs"
+  [[ -f "${dbfile}" && ! -L "${dbfile}" ]] || return 0
+  while IFS=$'\t' read -r typ name dbuser host port || [[ -n "${typ}" ]]; do
+    [[ -n "${typ}" && -n "${name}" ]] || continue
+    case "${typ}" in
+      mysql|mariadb)
+        if declare -F hm_mysql_exec >/dev/null 2>&1; then
+          hm_mysql_exec -e "DROP DATABASE IF EXISTS \`${name}\`;" 2>/dev/null \
+            && hm_ok "DROP DATABASE ${name} (manifest)" || hm_warn "DROP ${name} nieudany"
+          if [[ -n "${dbuser}" ]]; then
+            hm_mysql_exec -e "DROP USER IF EXISTS '${dbuser}'@'localhost'; FLUSH PRIVILEGES;" 2>/dev/null || true
+          fi
+        fi
+        ;;
+      postgres|postgresql|pg)
+        if declare -F hm_pg_exec >/dev/null 2>&1; then
+          hm_pg_exec -c "DROP DATABASE IF EXISTS \"${name}\";" 2>/dev/null || true
+        fi
+        ;;
+      redis)
+        hm_info "Redis ACL ${name} — usuń ręcznie jeśli nie współdzielony."
+        ;;
+    esac
+  done < "${dbfile}"
+}
+
+hm_site_lifecycle_cleanup_meta() {
+  local domain="${1:-${HM_DEL_DOMAIN:-}}" man res state dbfile
+  [[ -n "${domain}" ]] || return 0
+  man="$(hm_site_manifest_path "${domain}" 2>/dev/null || true)"
+  res="$(hm_site_resources_path "${domain}" 2>/dev/null || true)"
+  state="$(hm_site_state_dir "${domain}" 2>/dev/null || true)"
+  dbfile="$(hm_site_manifest_dir)/.${domain}.dbs"
+  if declare -F hm_site_resource_clear >/dev/null 2>&1; then
+    hm_site_resource_clear "${domain}" || true
+  fi
+  if [[ -n "${res}" && -f "${res}" && ! -L "${res}" ]]; then
+    rm -f -- "${res}"
+  fi
+  [[ -n "${man}" && -f "${man}" && ! -L "${man}" ]] && rm -f -- "${man}"
+  if [[ "${HM_DEL_KEEP_DB:-0}" != "1" && -f "${dbfile}" && ! -L "${dbfile}" ]]; then
+    rm -f -- "${dbfile}"
+  fi
+  # --keep-db / --keep-files: nie kasuj całego stanu (mogą leżeć dump/db.sql albo lokalne pliki).
+  if [[ "${HM_DEL_KEEP_DB:-0}" != "1" && "${HM_DEL_KEEP_FILES:-0}" != "1" \
+        && -n "${state}" && -d "${state}" && ! -L "${state}" ]]; then
+    case "${state}" in
+      /var/lib/hmtools/sites/*|"${HM_SITE_STATE_BASE:-/var/lib/hmtools/sites}"/*|"${HM_SITE_STATE_DIR:-/var/lib/hmtools/sites}"/*)
+        rm -rf -- "${state}"
+        ;;
+    esac
+  fi
+  if [[ -n "${HM_SITE_LIFECYCLE_LOG:-}" ]]; then
+    printf 'meta\t%s\n' "${domain}" >> "${HM_SITE_LIFECYCLE_LOG}"
+  fi
+}
+
+hm_site_lifecycle_delete_one() {
+  local kind="$1" path="$2" shared="$3"
+  if [[ "${shared}" == "1" ]]; then
+    hm_info "Zostawiam współdzielone ${kind}: ${path}"
+    return 0
+  fi
+  if [[ "${HM_DEL_KEEP_DB:-0}" == "1" && "${kind}" == "db" ]]; then
+    hm_info "Zostawiam bazę (--keep-db): ${path}"
+    return 0
+  fi
+  if [[ "${HM_DEL_KEEP_FILES:-0}" == "1" && -n "${HM_DEL_ROOT:-}" && "${path}" == "${HM_DEL_ROOT}"* ]]; then
+    hm_info "Zostawiam plik (--keep-files): ${path}"
+    return 0
+  fi
+  hm_site_lifecycle_remove_path "${path}" "${kind}"
+}
+
 hm_site_lifecycle_execute_delete() {
-  local k line kind path shared did_vhost=0
+  local k line kind path shared did_vhost=0 did_fpm=0 did_unit=0 fpm_ver="" web
   local -a order=(worker timer unit pm2 compose vhost fpm db firewall port logrotate cron)
+  hm_site_lifecycle_drop_manifest_dbs "${HM_DEL_DOMAIN:-}" || true
   for k in "${order[@]}"; do
+    if [[ "${k}" == "vhost" ]]; then
+      # 1) sites-enabled (linki), 2) pozostałe vhosty
+      for line in "${HM_DEL_WIZARD[@]+"${HM_DEL_WIZARD[@]}"}"; do
+        [[ -n "${line}" ]] || continue
+        kind="${line%%$'\t'*}"
+        path="${line#*$'\t'}"
+        shared="${path##*$'\t'}"
+        path="${path%$'\t'*}"
+        [[ "${kind}" == "vhost" ]] || continue
+        case "${path}" in */sites-enabled/*) ;; *) continue ;; esac
+        [[ "${shared}" == "1" ]] || did_vhost=1
+        hm_site_lifecycle_delete_one "${kind}" "${path}" "${shared}" || true
+      done
+      for line in "${HM_DEL_WIZARD[@]+"${HM_DEL_WIZARD[@]}"}"; do
+        [[ -n "${line}" ]] || continue
+        kind="${line%%$'\t'*}"
+        path="${line#*$'\t'}"
+        shared="${path##*$'\t'}"
+        path="${path%$'\t'*}"
+        [[ "${kind}" == "vhost" ]] || continue
+        case "${path}" in */sites-enabled/*) continue ;; esac
+        [[ "${shared}" == "1" ]] || did_vhost=1
+        hm_site_lifecycle_delete_one "${kind}" "${path}" "${shared}" || true
+      done
+      continue
+    fi
     for line in "${HM_DEL_WIZARD[@]+"${HM_DEL_WIZARD[@]}"}"; do
       [[ -n "${line}" ]] || continue
       kind="${line%%$'\t'*}"
@@ -551,23 +788,30 @@ hm_site_lifecycle_execute_delete() {
       shared="${path##*$'\t'}"
       path="${path%$'\t'*}"
       [[ "${kind}" == "${k}" ]] || continue
-      if [[ "${shared}" == "1" ]]; then
-        hm_info "Zostawiam współdzielone ${kind}: ${path}"
-        continue
+      hm_site_lifecycle_delete_one "${kind}" "${path}" "${shared}" || true
+      if [[ "${kind}" == "fpm" ]]; then
+        did_fpm=1
+        [[ "${path}" =~ /php/([0-9]+\.[0-9]+)/ ]] && fpm_ver="${BASH_REMATCH[1]}"
       fi
-      if [[ "${HM_DEL_KEEP_DB:-0}" == "1" && "${kind}" == "db" ]]; then
-        hm_info "Zostawiam bazę (--keep-db): ${path}"
-        continue
-      fi
-      if [[ "${HM_DEL_KEEP_FILES:-0}" == "1" && -n "${HM_DEL_ROOT:-}" && "${path}" == "${HM_DEL_ROOT}"* ]]; then
-        hm_info "Zostawiam plik (--keep-files): ${path}"
-        continue
-      fi
-      hm_site_lifecycle_remove_path "${path}" "${kind}"
-      [[ "${kind}" == "vhost" ]] && did_vhost=1
+      case "${kind}" in worker|timer|unit|cron) did_unit=1 ;; esac
     done
   done
-  if [[ "${did_vhost}" -eq 1 ]] && declare -F hm_site_web_reload >/dev/null 2>&1; then
-    hm_site_web_reload "${HM_SITE_WEBSERVER:-nginx}" 2>/dev/null || true
+  if [[ "${did_unit}" -eq 1 && "${HMTOOLS_TEST:-}" != "1" ]] \
+    && declare -F hm_have_cmd >/dev/null 2>&1 && hm_have_cmd systemctl; then
+    systemctl daemon-reload >/dev/null 2>&1 || true
   fi
+  if [[ "${did_vhost}" -eq 1 ]]; then
+    web="${HM_SITE_WEBSERVER:-${WEBSERVER:-nginx}}"
+    if declare -F hm_site_web_validate >/dev/null 2>&1; then
+      hm_site_web_validate "${web}" 2>/dev/null || hm_warn "Walidacja ${web} po delete — sprawdź vhosty."
+    fi
+    if declare -F hm_site_web_reload >/dev/null 2>&1; then
+      hm_site_web_reload "${web}" 2>/dev/null || true
+    fi
+  fi
+  if [[ "${did_fpm}" -eq 1 && -n "${fpm_ver}" ]] \
+    && declare -F hm_site_php_fpm_reload >/dev/null 2>&1; then
+    hm_site_php_fpm_reload "${fpm_ver}" 2>/dev/null || true
+  fi
+  hm_site_lifecycle_cleanup_meta "${HM_DEL_DOMAIN:-}" || true
 }

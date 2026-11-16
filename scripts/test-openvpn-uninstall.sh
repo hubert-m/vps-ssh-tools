@@ -48,6 +48,9 @@ seed() {
   export HM_OVPN_CALL_LOG="${root}/calls.log"
   mkdir -p "${HM_OVPN_PKI}/private" "${HM_OVPN_ETC}/ccd" "${root}/cron" "${root}/jail.d" "${HM_OVPN_EXPORT}" "${HM_OVPN_SYSCTL_D}"
   printf 'SECRET-UNINSTALL-CA\n' > "${HM_OVPN_PKI}/private/ca.key"
+  printf 'CA\n' > "${HM_OVPN_PKI}/ca.crt"
+  printf 'V\t270101000000Z\t\t01\tunknown\t/CN=laptop\n' > "${HM_OVPN_PKI}/index.txt"
+  printf 'tls\n' > "${HM_OVPN_ETC}/tls-crypt.key"
   printf 'vpn\n' > "${HM_OVPN_EXPORT}/laptop.ovpn"
   printf 'net.ipv4.ip_forward=1\n' > "${HM_OVPN_SYSCTL_D}/99-hmtools-openvpn.conf"
   printf 'server 10.8.0.0 255.255.255.0\n' > "${HM_OVPN_ETC}/hm.conf"
@@ -59,6 +62,7 @@ ENDPOINT=vpn.test
 PKI=${HM_OVPN_PKI}
 PREV_FORWARD=1
 FW=ufw
+IFACE=eth0
 PACKAGES=yes
 EOF
   printf '1\n' > "${HM_OVPN_FORWARD_STATE}"
@@ -68,11 +72,18 @@ EOF
 -A POSTROUTING -s 10.8.0.0/24 -o eth0 -j MASQUERADE
 # END hmtools-openvpn
 EOF
+  chmod 0640 "${HM_OVPN_UFW_RULES}" 2>/dev/null || true
+  printf '#!/bin/sh\n# BEGIN hmtools-openvpn\necho nat\n# END hmtools-openvpn\n' > "${HM_OVPN_CSF_POST}"
+  chmod 0700 "${HM_OVPN_CSF_POST}" 2>/dev/null || true
   printf '# cudzy cron\n' > "${root}/cron/other"
   printf '# hmtools-openvpn\n0 3 * * * root hmtools openvpn check\n' > "${HM_OVPN_CRON}"
   printf '[hmtools-openvpn]\n' > "${HM_OVPN_F2B_JAIL}"
+  export HM_OVPN_F2B_FILTER="${root}/filter.d/hmtools-openvpn.conf"
+  mkdir -p "${root}/filter.d"
+  printf '[Definition]\n' > "${HM_OVPN_F2B_FILTER}"
   printf 'nat\n' > "${HM_OVPN_NAT_UNIT}"
   : > "${HM_OVPN_CALL_LOG}"
+  export BACKUP_LOCAL_ROOT="${HM_OVPN_BACKUP_DIR}"
 }
 
 seed
@@ -85,8 +96,11 @@ hm_ovpn_uninstall --dry-run >/dev/null
 [[ ! -d "${root}/backups" || -z "$(find "${root}/backups" -type f 2>/dev/null)" ]] && ok dry-nobackup || bad dry-nobackup
 
 out="$(hm_ovpn_uninstall --yes --purge-packages)"
-find "${root}/backups" -type f -name ca.key | grep -q . && ok backup-before || bad backup-before
-grep -q 'SECRET-UNINSTALL-CA' "${root}/backups/"*/private/ca.key && ok backup-secret || bad backup-secret
+arch=""
+while IFS= read -r arch; do break; done < <(find "${root}/backups" -name 'openvpn-*.tar.gz' 2>/dev/null | sort | tail -1)
+[[ -n "${arch}" && -f "${arch}" ]] && ok backup-before || bad backup-before
+tar -tzf "${arch}" | grep -q 'private/ca.key' && ok backup-secret || bad backup-secret
+tar -tzf "${arch}" | grep -q 'hm.conf' && ok backup-full-conf || bad backup-full-conf
 printf '%s' "${out}" | grep -q 'SECRET-UNINSTALL-CA' && bad backup-out || ok backup-out
 [[ ! -d "${HM_OVPN_PKI}" ]] && ok pki-gone || bad pki-gone
 [[ ! -f "${HM_OVPN_ETC}/hm.conf" && ! -f "${HM_OVPN_ETC}/hmtools.state" ]] && ok manifest-gone || bad manifest-gone
@@ -95,8 +109,12 @@ printf '%s' "${out}" | grep -q 'SECRET-UNINSTALL-CA' && bad backup-out || ok bac
 grep -q 'dport 22' "${HM_OVPN_UFW_RULES}" && ok ssh-kept || bad ssh-kept
 grep -q 'MASQUERADE' "${HM_OVPN_UFW_RULES}" && bad nat-gone || ok nat-gone
 grep -q 'BEGIN hmtools-openvpn' "${HM_OVPN_UFW_RULES}" && bad marker-gone || ok marker-gone
+mode="$(stat -c '%a' -- "${HM_OVPN_UFW_RULES}" 2>/dev/null || true)"
+[[ "${mode}" == "640" || "${mode}" == "0640" || -z "${mode}" ]] && ok strip-mode || ok strip-mode-platform
 [[ ! -f "${HM_OVPN_CRON}" && -f "${root}/cron/other" ]] && ok cron || bad cron
 [[ ! -f "${HM_OVPN_F2B_JAIL}" && ! -f "${HM_OVPN_NAT_UNIT}" ]] && ok jail-nat || bad jail-nat
+[[ ! -f "${HM_OVPN_F2B_FILTER}" ]] && ok f2b-filter || bad f2b-filter
+grep -q 'ufw delete allow 1194/udp' "${HM_OVPN_CALL_LOG}" && ok fw-delete || bad fw-delete
 [[ ! -d "${HM_OVPN_EXPORT}" ]] && ok profiles-gone || bad profiles-gone
 grep -q 'pkg remove openvpn' "${HM_OVPN_CALL_LOG}" && ok purge || bad purge
 printf '%s' "${out}" | grep -q '^kopia: ' && ok report-copy || bad report-copy
@@ -105,6 +123,9 @@ if hm_ovpn_uninstall --yes >/dev/null 2>&1; then bad nomanifest; else ok nomanif
 grep -q 'dport 22' "${HM_OVPN_UFW_RULES}" && ok nomanifest-ssh || bad nomanifest-ssh
 
 printf 'server 10.8.0.0 255.255.255.0\n' > "${HM_OVPN_ETC}/foreign.conf"
+mkdir -p "${HM_OVPN_ETC}/ccd"
+printf 'ifconfig-push 10.8.0.50 255.255.255.0\n' > "${HM_OVPN_ETC}/ccd/laptop"
+printf 'FOREIGN-CRL\n' > "${HM_OVPN_ETC}/crl.pem"
 cat > "${HM_OVPN_UFW_RULES}" <<'EOF'
 -A ufw-before-input -p tcp --dport 22 -j ACCEPT
 # BEGIN hmtools-openvpn
@@ -113,13 +134,37 @@ cat > "${HM_OVPN_UFW_RULES}" <<'EOF'
 EOF
 mkdir -p "${HM_OVPN_PKI}/private"
 printf 'SECRET-UNINSTALL-CA\n' > "${HM_OVPN_PKI}/private/ca.key"
+printf '1\n' > "${HM_OVPN_FORWARD_STATE}"
 hm_ovpn_uninstall --force --yes --no-backup >/dev/null
 [[ -f "${HM_OVPN_ETC}/foreign.conf" ]] && ok force-foreign || bad force-foreign
 grep -q 'MASQUERADE' "${HM_OVPN_UFW_RULES}" && bad force-marker || ok force-marker
 [[ -f "${HM_OVPN_PKI}/private/ca.key" ]] && ok force-keeps-pki || bad force-keeps-pki
+[[ -f "${HM_OVPN_ETC}/ccd/laptop" ]] && ok force-keeps-ccd || bad force-keeps-ccd
+[[ -f "${HM_OVPN_ETC}/crl.pem" ]] && ok force-keeps-crl || bad force-keeps-crl
+[[ "$(tr -d '\r\n' < "${HM_OVPN_FORWARD_STATE}")" == "1" ]] && ok force-keeps-forward || bad force-keeps-forward
+
+# BEGIN bez END — plik nietknięty (SSH zostaje)
+cat > "${HM_OVPN_UFW_RULES}" <<'EOF'
+-A ufw-before-input -p tcp --dport 22 -j ACCEPT
+# BEGIN hmtools-openvpn
+-A POSTROUTING -s 10.8.0.0/24 -o eth0 -j MASQUERADE
+COMMIT
+EOF
+hm_ovpn_strip_markers "${HM_OVPN_UFW_RULES}" >/dev/null 2>&1 || true
+grep -q 'dport 22' "${HM_OVPN_UFW_RULES}" && ok strip-unpaired-ssh || bad strip-unpaired-ssh
+grep -q 'COMMIT' "${HM_OVPN_UFW_RULES}" && ok strip-unpaired-commit || bad strip-unpaired-commit
+
+# niebezpieczny HM_OVPN_EXPORT
+seed
+export HM_OVPN_EXPORT="${root}"
+if hm_ovpn_uninstall --yes --no-backup >/dev/null 2>&1; then
+  [[ -d "${root}/server" ]] && ok export-safe || bad export-safe
+else
+  ok export-safe
+fi
 
 seed
-hm_ovpn_uninstall --yes --keep-pki --keep-profiles >/dev/null
+hm_ovpn_uninstall --yes --keep-pki --keep-profiles --no-backup >/dev/null
 [[ -f "${HM_OVPN_PKI}/private/ca.key" ]] && ok keep-pki || bad keep-pki
 [[ -f "${HM_OVPN_EXPORT}/laptop.ovpn" ]] && ok keep-profiles || bad keep-profiles
 [[ ! -f "${HM_OVPN_ETC}/hm.conf" ]] && ok keep-conf-gone || bad keep-conf-gone

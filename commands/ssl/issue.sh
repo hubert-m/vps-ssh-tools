@@ -304,7 +304,7 @@ hm_ssl_le_root() {
 
 # Przed issueSSL / acme: usuń ścieżki LE, gdy obecny cert jest self-signed.
 hm_ssl_purge_le_dirs() {
-  local domain="${1:-}" le_root=""
+  local domain="${1:-}" le_root="" p
   [[ -n "${domain}" ]] || return 1
   if declare -F hm_is_valid_domain >/dev/null 2>&1; then
     hm_is_valid_domain "${domain}" || return 1
@@ -312,11 +312,17 @@ hm_ssl_purge_le_dirs() {
     [[ "${domain}" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
   fi
   case "${domain}" in
-    *..*|*/*|*\\*) return 1 ;;
+    *..*|*/*|*\\*|.*" "*|*" ".*) return 1 ;;
   esac
   le_root="$(hm_ssl_le_root)"
-  rm -rf -- "${le_root}/live/${domain}"
-  rm -rf -- "${le_root}/archive/${domain}"
+  # Tylko dokładna nazwa domeny (nie prefiks a.pl → a.pl.bak); symlink katalogu = rm linku.
+  for p in "live/${domain}" "archive/${domain}"; do
+    if [[ -L "${le_root}/${p}" ]]; then
+      rm -f -- "${le_root}/${p}"
+    elif [[ -e "${le_root}/${p}" ]]; then
+      rm -rf -- "${le_root}/${p}"
+    fi
+  done
   rm -f -- "${le_root}/renewal/${domain}"
   rm -f -- "${le_root}/renewal/${domain}.conf"
   return 0

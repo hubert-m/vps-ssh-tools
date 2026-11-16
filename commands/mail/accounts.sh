@@ -25,8 +25,7 @@ hm_mail_cp_db_ok() {
 hm_mail_passfile_write() {
   local pass="$1" f
   f="$(hm_mktemp .mailpass)"
-  umask 077
-  printf '%s' "${pass}" > "${f}"
+  ( umask 077; printf '%s' "${pass}" > "${f}"; )
   chmod 600 "${f}" 2>/dev/null || true
   printf '%s' "${f}"
 }

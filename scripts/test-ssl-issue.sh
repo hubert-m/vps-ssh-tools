@@ -181,6 +181,24 @@ hm_ssl_clear_self_signed_before_issue "self.test" >/dev/null
   echo "FAIL purge-other-kept"
   fail=1
 }
+# Prefiks domeny: purge a.pl nie rusza a.pl.bak
+mkdir -p "${le}/live/a.pl" "${le}/live/a.pl.bak" "${le}/archive/a.pl.bak" "${le}/renewal"
+printf 'ss\n' >"${le}/live/a.pl/fullchain.pem"
+printf 'keep\n' >"${le}/live/a.pl.bak/fullchain.pem"
+printf 'keep\n' >"${le}/archive/a.pl.bak/x.pem"
+printf 'keep\n' >"${le}/renewal/a.pl.bak.conf"
+hm_ssl_is_self_signed() { return 0; }
+hm_ssl_paths_for_domain() { printf '%s' "${le}/live/a.pl/fullchain.pem"; }
+hm_ssl_clear_self_signed_before_issue "a.pl" >/dev/null
+[[ ! -e "${le}/live/a.pl" ]] && echo "OK   purge-exact-domain" || {
+  echo "FAIL purge-exact-domain"
+  fail=1
+}
+[[ -f "${le}/live/a.pl.bak/fullchain.pem" && -f "${le}/archive/a.pl.bak/x.pem" && -f "${le}/renewal/a.pl.bak.conf" ]] \
+  && echo "OK   purge-prefix-sibling-kept" || {
+  echo "FAIL purge-prefix-sibling-kept"
+  fail=1
+}
 # LE cert (issuer ≠ subject) → bez purge
 openssl req -x509 -nodes -newkey rsa:2048 -days 90 \
   -keyout "${ssdir}/cakey.pem" -out "${ssdir}/cacert.pem" \

@@ -98,32 +98,49 @@ hm_os_firewall_backend() {
   fi
 }
 
-_hm_os_csf_tcp_in_get() {
-  local conf="${CSF_CONF:-/etc/csf/csf.conf}"
-  [[ -f "${conf}" ]] || return 1
-  awk -F= '/^TCP_IN[[:space:]]*=/{
-    v=$2; gsub(/"/,"",v); gsub(/^[[:space:]]+|[[:space:]]+$/,"",v); print v; exit
-  }' "${conf}"
+# Klucz CSF dla protokołu: tcp→TCP_IN/TCP6_IN, udp→UDP_IN/UDP6_IN.
+_hm_os_csf_keys_for_proto() {
+  local proto="${1:-tcp}"
+  proto="$(printf '%s' "${proto}" | tr '[:upper:]' '[:lower:]')"
+  case "${proto}" in
+    udp) printf '%s\n' "UDP_IN" "UDP6_IN" ;;
+    tcp|*) printf '%s\n' "TCP_IN" "TCP6_IN" ;;
+  esac
 }
 
-_hm_os_csf_tcp_in_set() {
-  local ports="$1"
+_hm_os_csf_in_get() {
+  local key="${1:-TCP_IN}"
+  local conf="${CSF_CONF:-/etc/csf/csf.conf}"
+  [[ -f "${conf}" ]] || return 1
+  awk -F= -v k="${key}" '
+    $0 ~ ("^" k "[[:space:]]*=") {
+      v=$2; gsub(/"/,"",v); gsub(/^[[:space:]]+|[[:space:]]+$/,"",v); print v; exit
+    }
+  ' "${conf}"
+}
+
+_hm_os_csf_in_set() {
+  local key="${1:-TCP_IN}" ports="${2:-}"
   local conf="${CSF_CONF:-/etc/csf/csf.conf}"
   [[ -f "${conf}" ]] || return 1
   local tmp
   tmp="$(mktemp)"
-  awk -v p="${ports}" '
+  awk -v k="${key}" -v p="${ports}" '
     BEGIN{done=0}
-    /^TCP_IN[[:space:]]*=/ {
-      print "TCP_IN = \"" p "\""
+    $0 ~ ("^" k "[[:space:]]*=") {
+      print k " = \"" p "\""
       done=1; next
     }
     { print }
-    END { if (!done) print "TCP_IN = \"" p "\"" }
+    END { if (!done) print k " = \"" p "\"" }
   ' "${conf}" > "${tmp}"
   cat "${tmp}" > "${conf}"
   rm -f "${tmp}"
 }
+
+# Kompatybilność wsteczna (testy / security SSH).
+_hm_os_csf_tcp_in_get() { _hm_os_csf_in_get "TCP_IN"; }
+_hm_os_csf_tcp_in_set() { _hm_os_csf_in_set "TCP_IN" "$1"; }
 
 _hm_os_csf_port_in_list() {
   local port="$1" list="$2"
@@ -135,33 +152,61 @@ _hm_os_csf_port_in_list() {
 }
 
 _hm_os_csf_allow_port() {
-  local port="$1"
-  local list new
-  list="$(_hm_os_csf_tcp_in_get)" || return 1
-  if _hm_os_csf_port_in_list "${port}" "${list}"; then
-    return 0
+  local port="$1" proto="${2:-tcp}" key list new
+  [[ -n "${port}" ]] || return 1
+  while IFS= read -r key; do
+    [[ -n "${key}" ]] || continue
+    list="$(_hm_os_csf_in_get "${key}" 2>/dev/null || true)"
+    if _hm_os_csf_port_in_list "${port}" "${list}"; then
+      continue
+    fi
+    if [[ -n "${list}" ]]; then
+      new="${list},${port}"
+    else
+      new="${port}"
+    fi
+    _hm_os_csf_in_set "${key}" "${new}" || return 1
+  done < <(_hm_os_csf_keys_for_proto "${proto}")
+  if [[ "${HMTOOLS_TEST:-}" != "1" ]]; then
+    csf -r >/dev/null 2>&1 || true
   fi
-  if [[ -n "${list}" ]]; then
-    new="${list},${port}"
-  else
-    new="${port}"
-  fi
-  _hm_os_csf_tcp_in_set "${new}" || return 1
-  csf -r >/dev/null 2>&1 || true
   return 0
 }
 
 _hm_os_csf_deny_port() {
-  local port="$1"
-  local list new
-  list="$(_hm_os_csf_tcp_in_get)" || return 1
-  if ! _hm_os_csf_port_in_list "${port}" "${list}"; then
-    return 0
+  local port="$1" proto="${2:-tcp}" key list new
+  [[ -n "${port}" ]] || return 1
+  while IFS= read -r key; do
+    [[ -n "${key}" ]] || continue
+    list="$(_hm_os_csf_in_get "${key}" 2>/dev/null || true)"
+    if ! _hm_os_csf_port_in_list "${port}" "${list}"; then
+      continue
+    fi
+    new="$(printf '%s' "${list}" | tr ',' '\n' | awk -v p="${port}" '$0!="" && $0!=p' | paste -sd',' -)"
+    _hm_os_csf_in_set "${key}" "${new}" || return 1
+  done < <(_hm_os_csf_keys_for_proto "${proto}")
+  if [[ "${HMTOOLS_TEST:-}" != "1" ]]; then
+    csf -r >/dev/null 2>&1 || true
   fi
-  new="$(printf '%s' "${list}" | tr ',' '\n' | awk -v p="${port}" '$0!="" && $0!=p' | paste -sd',' -)"
-  _hm_os_csf_tcp_in_set "${new}" || return 1
-  csf -r >/dev/null 2>&1 || true
   return 0
+}
+
+# Komentarz ufw/firewalld — znacznik własności hmtools (nie kasuj cudzych reguł).
+_hm_os_fw_comment() {
+  local c="${1:-}"
+  [[ -z "${c}" ]] && { printf 'hmtools'; return 0; }
+  case "${c}" in
+    hmtools|hmtools:*|hm:*) printf '%s' "${c}" ;;
+    *) printf 'hmtools:%s' "${c}" ;;
+  esac
+}
+
+_hm_os_fw_comment_ours() {
+  local c="${1:-}"
+  case "${c}" in
+    *hmtools*|*hm:*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 _hm_os_csf_whitelist_ip() {
@@ -227,9 +272,11 @@ hm_os_firewall_status() {
   # CSF / uniwersalne warstwy — przed adapterem rodziny
   if hm_have_cmd csf; then
     echo "backend: csf"
-    local tin
-    tin="$(_hm_os_csf_tcp_in_get 2>/dev/null || true)"
+    local tin uin
+    tin="$(_hm_os_csf_in_get TCP_IN 2>/dev/null || true)"
+    uin="$(_hm_os_csf_in_get UDP_IN 2>/dev/null || true)"
     [[ -n "${tin}" ]] && echo "TCP_IN: ${tin}"
+    [[ -n "${uin}" ]] && echo "UDP_IN: ${uin}"
     csf -l 2>/dev/null | head -40 || true
     return 0
   fi
@@ -249,12 +296,13 @@ hm_os_firewall_list() {
 hm_os_firewall_allow() {
   # $1=port $2=proto $3=from $4=comment
   local port="${1:-}" proto="${2:-tcp}" from="${3:-}" comment="${4:-}"
+  comment="$(_hm_os_fw_comment "${comment}")"
   hm_os_bind || return 1
   if hm_have_cmd csf; then
     if [[ -n "${from}" ]]; then
       _hm_os_csf_whitelist_ip "${from}" || true
     fi
-    _hm_os_csf_allow_port "${port}"
+    _hm_os_csf_allow_port "${port}" "${proto}"
     return $?
   fi
   _hm_os_do_firewall_allow "${port}" "${proto}" "${from}" "${comment}"
@@ -262,6 +310,7 @@ hm_os_firewall_allow() {
 
 hm_os_firewall_deny() {
   local port="${1:-}" proto="${2:-tcp}" from="${3:-}" comment="${4:-}"
+  comment="$(_hm_os_fw_comment "${comment}")"
   hm_os_bind || return 1
   if hm_have_cmd csf; then
     if [[ -n "${from}" ]]; then
@@ -269,28 +318,33 @@ hm_os_firewall_deny() {
       csf -r >/dev/null 2>&1 || true
       return 0
     fi
-    _hm_os_csf_deny_port "${port}"
+    _hm_os_csf_deny_port "${port}" "${proto}"
     return $?
   fi
   _hm_os_do_firewall_deny "${port}" "${proto}" "${from}" "${comment}"
 }
 
 hm_os_firewall_remove() {
-  local spec="${1:-}"
+  local spec="${1:-}" port proto="tcp"
   hm_os_bind || return 1
   if hm_have_cmd csf; then
-    # numer nieobsługiwany — expect port or IP
+    # numer nieobsługiwany — expect port[/proto] or IP
     if [[ "${spec}" =~ ^[0-9]+$ ]]; then
-      _hm_os_csf_deny_port "${spec}"
+      _hm_os_csf_deny_port "${spec}" "tcp"
       return $?
     fi
-    if [[ "${spec}" == *.* || "${spec}" == *:* ]]; then
+    if [[ "${spec}" == *.* || ( "${spec}" == *:* && "${spec}" != */* ) ]]; then
       csf -ar "${spec}" >/dev/null 2>&1 || csf -dr "${spec}" >/dev/null 2>&1 || return 1
       csf -r >/dev/null 2>&1 || true
       return 0
     fi
-    local port="${spec%%/*}"
-    _hm_os_csf_deny_port "${port}"
+    if [[ "${spec}" == */* ]]; then
+      port="${spec%%/*}"
+      proto="${spec##*/}"
+    else
+      port="${spec}"
+    fi
+    _hm_os_csf_deny_port "${port}" "${proto}"
     return $?
   fi
   _hm_os_do_firewall_remove "${spec}"

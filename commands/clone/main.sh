@@ -225,8 +225,8 @@ hm_clone_mysql_create_quiet() {
   fi
   rm -f "${sqlf}"
   hm_mysql_exec -e "GRANT ALL PRIVILEGES ON \`${dbname}\`.* TO ${uq}@'localhost'; FLUSH PRIVILEGES;" || return 1
-  umask 077
-  printf '%s' "${pass}" > "${passfile}"
+  # umask tylko w podpowłoce — nie przecieka na proces hmtools / REPL
+  ( umask 077; printf '%s' "${pass}" > "${passfile}"; )
   chmod 600 "${passfile}"
   pass=""
 }

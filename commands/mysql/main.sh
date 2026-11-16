@@ -14,10 +14,232 @@ Użycie:
   mysql top | processlist     Threads / Slow_queries / PROCESSLIST
   mysql optimize [db]         mysqlcheck --optimize + Data_free
   mysql create <db> [user]    Nowa baza + user@localhost + hasło
+  mysql users                 Konta, hosty, puste hasła, host %
+  mysql grant|revoke <user> <db> [--ro] [--host H]
+  mysql passwd <user> [--host H] [--secret-file f]
+  mysql slow [--since 24h] [--top 10] [--enable|--disable]
+  mysql tune                  Porady (bez zapisu my.cnf)
 
 W kontekście bez [db] — pierwsza wykryta baza strony.
 --min-size: 1G, 1GB, 500M, 1024K lub bajty.
 EOF
+
+hm_mysql_user_protected() {
+  case "${1:-}" in
+    root|mysql.sys|mysql.session|mysql.infoschema|debian-sys-maint|cyberpanel|mariadb.sys)
+      return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+cmd_mysql_users() {
+  echo "${C_BOLD}mysql users${C_RESET}"
+  if [[ "${HMTOOLS_TEST:-}" == "1" && -n "${HM_MYSQL_USERS_FIXTURE:-}" ]]; then
+    cat "${HM_MYSQL_USERS_FIXTURE}"
+    return 0
+  fi
+  hm_mysql_exec -N -e "
+SELECT user, host,
+  IF(authentication_string='' OR authentication_string IS NULL,'EMPTY','set') AS pwd,
+  IF(host='%','WILDCARD','ok') AS host_flag
+FROM mysql.user
+ORDER BY user, host;" 2>/dev/null || {
+    hm_err "Nie odczytano mysql.user"
+    return 1
+  }
+  echo
+  echo "${C_DIM}Granty (skrót):${C_RESET}"
+  hm_mysql_exec -N -e "
+SELECT GRANTEE, TABLE_SCHEMA, PRIVILEGE_TYPE
+FROM information_schema.SCHEMA_PRIVILEGES
+WHERE TABLE_SCHEMA NOT IN ('information_schema','performance_schema','mysql','sys')
+ORDER BY GRANTEE, TABLE_SCHEMA
+LIMIT 200;" 2>/dev/null || true
+}
+
+cmd_mysql_grant() {
+  local user="${1:-}" db="${2:-}" host="localhost" ro=0 a
+  shift 2 || true
+  while [[ $# -gt 0 ]]; do
+    a="$1"; shift || true
+    case "${a}" in
+      --ro|--readonly) ro=1 ;;
+      --host) host="${1:-localhost}"; shift || true ;;
+      --host=*) host="${a#--host=}" ;;
+      *) hm_err "Nieznane: ${a}"; return 1 ;;
+    esac
+  done
+  [[ -n "${user}" && -n "${db}" ]] || { hm_err "Użycie: mysql grant <user> <db> [--ro] [--host H]"; return 1; }
+  hm_mysql_user_protected "${user}" && { hm_err "Konto chronione: ${user}"; return 1; }
+  local uq dq priv
+  uq="$(hm_sql_quote "${user}")"
+  dq="$(hm_sql_quote "${db}")"
+  if [[ "${ro}" -eq 1 ]]; then
+    priv="SELECT, SHOW VIEW"
+  else
+    priv="ALL PRIVILEGES"
+  fi
+  hm_mysql_exec -e "GRANT ${priv} ON \`${db//\`/}\`.* TO ${uq}@$(hm_sql_quote "${host}"); FLUSH PRIVILEGES;" \
+    && hm_ok "GRANT ${user}@${host} → ${db} (${priv})"
+}
+
+cmd_mysql_revoke() {
+  local user="${1:-}" db="${2:-}" host="localhost" a
+  shift 2 || true
+  while [[ $# -gt 0 ]]; do
+    a="$1"; shift || true
+    case "${a}" in
+      --host) host="${1:-localhost}"; shift || true ;;
+      --host=*) host="${a#--host=}" ;;
+      *) hm_err "Nieznane: ${a}"; return 1 ;;
+    esac
+  done
+  [[ -n "${user}" && -n "${db}" ]] || { hm_err "Użycie: mysql revoke <user> <db> [--host H]"; return 1; }
+  hm_mysql_user_protected "${user}" && { hm_err "Konto chronione: ${user}"; return 1; }
+  local uq
+  uq="$(hm_sql_quote "${user}")"
+  hm_confirm_plan "mysql revoke" "Odbiera uprawnienia ${user}@${host} do ${db}." \
+    "REVOKE ALL ON \`${db}\`.* FROM ${user}@${host}" || return 0
+  hm_mysql_exec -e "REVOKE ALL PRIVILEGES, GRANT OPTION ON \`${db//\`/}\`.* FROM ${uq}@$(hm_sql_quote "${host}"); FLUSH PRIVILEGES;" \
+    && hm_ok "REVOKE ${user}@${host} ← ${db}"
+}
+
+cmd_mysql_passwd() {
+  local user="${1:-}" host="localhost" secret_file="" a pass
+  shift || true
+  while [[ $# -gt 0 ]]; do
+    a="$1"; shift || true
+    case "${a}" in
+      --host) host="${1:-localhost}"; shift || true ;;
+      --host=*) host="${a#--host=}" ;;
+      --secret-file) secret_file="${1:-}"; shift || true ;;
+      --secret-file=*) secret_file="${a#--secret-file=}" ;;
+      *) hm_err "Nieznane: ${a}"; return 1 ;;
+    esac
+  done
+  [[ -n "${user}" ]] || { hm_err "Użycie: mysql passwd <user> [--host H] [--secret-file f]"; return 1; }
+  hm_mysql_user_protected "${user}" && { hm_err "Konto chronione: ${user}"; return 1; }
+  if [[ -n "${secret_file}" ]]; then
+    [[ -f "${secret_file}" && ! -L "${secret_file}" ]] || { hm_err "Brak pliku sekretu."; return 1; }
+    pass="$(tr -d '\r\n' < "${secret_file}")"
+  else
+    pass="$(openssl rand -base64 24 2>/dev/null | tr -d '/+=' | head -c 24)"
+    [[ -n "${pass}" ]] || pass="$(head -c 24 /dev/urandom | base64 | tr -d '/+=\n' | head -c 24)"
+  fi
+  local sqlf uq hq
+  uq="$(hm_sql_quote "${user}")"
+  hq="$(hm_sql_quote "${host}")"
+  sqlf="$(mktemp)"
+  chmod 0600 "${sqlf}"
+  printf "ALTER USER %s@%s IDENTIFIED BY %s; FLUSH PRIVILEGES;\n" \
+    "${uq}" "${hq}" "$(hm_sql_quote "${pass}")" > "${sqlf}"
+  if hm_mysql_exec < "${sqlf}"; then
+    hm_ok "Hasło zmienione dla ${user}@${host}"
+    hm_print_secret "${pass}"
+  else
+    hm_err "ALTER USER nieudany"
+    rm -f "${sqlf}"
+    return 1
+  fi
+  rm -f "${sqlf}"
+}
+
+hm_mysql_slow_log_path() {
+  if [[ -n "${HM_MYSQL_SLOW_LOG:-}" ]]; then
+    printf '%s' "${HM_MYSQL_SLOW_LOG}"
+    return 0
+  fi
+  hm_mysql_exec -N -e "SHOW VARIABLES LIKE 'slow_query_log_file';" 2>/dev/null \
+    | awk '{print $2; exit}'
+}
+
+cmd_mysql_slow() {
+  local since="24h" top=10 enable="" a
+  while [[ $# -gt 0 ]]; do
+    a="$1"; shift || true
+    case "${a}" in
+      --since) since="${1:-24h}"; shift || true ;;
+      --since=*) since="${a#--since=}" ;;
+      --top) top="${1:-10}"; shift || true ;;
+      --top=*) top="${a#--top=}" ;;
+      --enable) enable=1 ;;
+      --disable) enable=0 ;;
+      help|-h|--help)
+        echo "Użycie: mysql slow [--since 24h] [--top 10] [--enable|--disable]"
+        return 0
+        ;;
+      *) hm_err "Nieznane: ${a}"; return 1 ;;
+    esac
+  done
+  if [[ -n "${enable}" ]]; then
+    if [[ "${enable}" -eq 1 ]]; then
+      hm_confirm_plan "mysql slow --enable" "Włącza slow_query_log." "SET GLOBAL slow_query_log=ON" || return 0
+      hm_mysql_exec -e "SET GLOBAL slow_query_log=ON; SET GLOBAL long_query_time=1;" && hm_ok "slow_query_log ON"
+    else
+      hm_confirm_plan "mysql slow --disable" "Wyłącza slow_query_log." "SET GLOBAL slow_query_log=OFF" || return 0
+      hm_mysql_exec -e "SET GLOBAL slow_query_log=OFF;" && hm_ok "slow_query_log OFF"
+    fi
+    return 0
+  fi
+  local path
+  path="$(hm_mysql_slow_log_path)"
+  [[ -n "${path}" && -f "${path}" ]] || { hm_err "Brak slow logu (${path:-pusto}). Użyj --enable."; return 1; }
+  echo "${C_BOLD}mysql slow — top ${top}${C_RESET} (${path})"
+  # Normalizacja: usuń liczby, zlicz fingerprinty (uprośczenie pt-query-digest)
+  awk '
+    /^# Query_time:/{
+      qt=$3; getline
+      while ($0 ~ /^#/ || $0 ~ /^SET / || $0=="") { if (!getline) exit }
+      q=$0
+      gsub(/[0-9]+/,"N",q)
+      gsub(/[ \t]+/," ",q)
+      t[q]+=qt; c[q]++
+    }
+    END{
+      for (q in t) printf "%10.3f  %5d  %s\n", t[q], c[q], q
+    }
+  ' "${path}" 2>/dev/null | sort -nr | head -n "${top}"
+}
+
+cmd_mysql_tune() {
+  echo "${C_BOLD}mysql tune — porady (bez zapisu my.cnf)${C_RESET}"
+  if [[ "${HMTOOLS_TEST:-}" == "1" && -n "${HM_MYSQL_TUNE_FIXTURE:-}" ]]; then
+    cat "${HM_MYSQL_TUNE_FIXTURE}"
+    return 0
+  fi
+  local ram_kb pool maxc data_mb hit tmp_disk frag
+  ram_kb="$(awk '/MemTotal/{print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)"
+  pool="$(hm_mysql_exec -N -e "SHOW VARIABLES LIKE 'innodb_buffer_pool_size';" 2>/dev/null | awk '{print $2; exit}')"
+  maxc="$(hm_mysql_exec -N -e "SHOW VARIABLES LIKE 'max_connections';" 2>/dev/null | awk '{print $2; exit}')"
+  data_mb="$(hm_mysql_exec -N -e "SELECT ROUND(SUM(data_length+index_length)/1024/1024) FROM information_schema.tables WHERE engine='InnoDB';" 2>/dev/null | tr -d '[:space:]')"
+  hit="$(hm_mysql_exec -N -e "SHOW GLOBAL STATUS LIKE 'Innodb_buffer_pool_read_requests'; SHOW GLOBAL STATUS LIKE 'Innodb_buffer_pool_reads';" 2>/dev/null | awk 'NR==1{r=$2} NR==2{b=$2} END{ if(r+0>0) printf "%.1f", 100*(1-b/r); else print "?" }')"
+  tmp_disk="$(hm_mysql_exec -N -e "SHOW GLOBAL STATUS LIKE 'Created_tmp_disk_tables';" 2>/dev/null | awk '{print $2; exit}')"
+  frag="$(hm_mysql_exec -N -e "SELECT ROUND(SUM(data_free)/1024/1024) FROM information_schema.tables WHERE engine='InnoDB';" 2>/dev/null | tr -d '[:space:]')"
+  local ram_mb=$((ram_kb / 1024))
+  local pool_mb=0
+  [[ "${pool}" =~ ^[0-9]+$ ]] && pool_mb=$((pool / 1024 / 1024))
+  echo "  RAM ≈ ${ram_mb}M · innodb_buffer_pool_size ≈ ${pool_mb}M · dane InnoDB ≈ ${data_mb:-?}M"
+  if [[ "${ram_mb}" -gt 0 && "${pool_mb}" -gt 0 ]]; then
+    local sug=$((ram_mb * 50 / 100))
+    [[ "${sug}" -gt 256 ]] || sug=256
+    if [[ -n "${data_mb}" && "${data_mb}" =~ ^[0-9]+$ && "${data_mb}" -lt "${sug}" ]]; then
+      sug=$((data_mb + 64))
+    fi
+    if [[ "${pool_mb}" -lt $((sug * 8 / 10)) ]]; then
+      echo "  → Rozważ innodb_buffer_pool_size ≈ ${sug}M (obecnie ${pool_mb}M)."
+    else
+      echo "  → Buffer pool wygląda sensownie względem RAM."
+    fi
+  fi
+  echo "  max_connections=${maxc:-?} · InnoDB buffer hit≈${hit}% · tmp_disk_tables=${tmp_disk:-?} · data_free≈${frag:-?}M"
+  if [[ "${tmp_disk}" =~ ^[0-9]+$ && "${tmp_disk}" -gt 1000 ]]; then
+    echo "  → Dużo Created_tmp_disk_tables — sprawdź tmp_table_size / zapytania."
+  fi
+  if [[ "${frag}" =~ ^[0-9]+$ && "${frag}" -gt 500 ]]; then
+    echo "  → Duża fragmentacja (data_free) — rozważ OPTIMIZE TABLE dla największych tabel."
+  fi
+  echo "  ${C_DIM}(tylko doradztwo — bez zmian w my.cnf)${C_RESET}"
+}
 
 cmd_mysql_heavy() {
   local min_raw="1G" a
@@ -157,6 +379,24 @@ cmd_mysql() {
       else
         hm_mysql_create "${db}" "${user}"
       fi
+      ;;
+    users|user)
+      cmd_mysql_users "$@"
+      ;;
+    grant)
+      cmd_mysql_grant "$@"
+      ;;
+    revoke)
+      cmd_mysql_revoke "$@"
+      ;;
+    passwd|password)
+      cmd_mysql_passwd "$@"
+      ;;
+    slow)
+      cmd_mysql_slow "$@"
+      ;;
+    tune|tuner)
+      cmd_mysql_tune "$@"
       ;;
     help|-h|--help)
       hm_help_topic mysql

@@ -326,11 +326,10 @@ hm_dashboard_publish() {
     hm_err "Nie mogę utworzyć hasła basic auth."
     return 1
   }
-  umask 077
-  printf 'hmtools:%s\n' "${pass}" >"${auth}" || {
+  if ! ( umask 077; printf 'hmtools:%s\n' "${pass}" >"${auth}"; ); then
     hm_err "Zapis ${auth} nie powiódł się."
     return 1
-  }
+  fi
   chmod 0600 "${auth}" 2>/dev/null || true
   cat >"${vhost}" <<EOF
 docRoot $(hm_dashboard_out_dir)

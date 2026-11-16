@@ -420,8 +420,7 @@ hm_wp_admin_reset() {
   user="$(hm_access_require_site_user "${HM_SITE_DOMAIN}")" || return 1
   passf="$(hm_mktemp .wppass)"
   php_f="$(hm_mktemp .wpreset.php)"
-  umask 077
-  printf '%s' "${pass}" > "${passf}"
+  ( umask 077; printf '%s' "${pass}" > "${passf}"; )
   chmod 0600 "${passf}"
   # hasło i login tylko w plikach 0600 — nie w argv wp
   local passf_e="${passf//\\/\\\\}"

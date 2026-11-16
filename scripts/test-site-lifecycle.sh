@@ -221,8 +221,104 @@ done
 [[ -f "${root}/ext/shared-php" ]] && ok "shared-kept" || bad "shared-kept"
 [[ -f "${root}/pkgs/php8.3/keep" ]] && ok "unlisted-pkg-kept" || bad "unlisted-pkg-kept"
 [[ -d "${home}" ]] && bad "home-removed" || ok "home-removed"
-order="$(cut -f1 "${HM_SITE_LIFECYCLE_LOG}" | tr '\n' ' ')"
+order="$(awk -F'\t' '$1!="disable" && $1!="meta" {print $1}' "${HM_SITE_LIFECYCLE_LOG}" | tr '\n' ' ')"
 [[ "${order}" == "worker timer unit vhost fpm db firewall port logrotate cron " ]] && ok "delete-order" || { bad "delete-order ${order}"; }
+grep -q $'^disable\thm-app.example.service$' "${HM_SITE_LIFECYCLE_LOG}" && ok "unit-disable" || bad "unit-disable"
+grep -q $'^meta\tapp.example$' "${HM_SITE_LIFECYCLE_LOG}" && ok "meta-cleanup-log" || bad "meta-cleanup-log"
+[[ ! -f "$(hm_site_manifest_path app.example)" ]] && ok "manifest-gone" || bad "manifest-gone"
+[[ ! -f "$(hm_site_resources_path app.example)" || ! -s "$(hm_site_resources_path app.example)" ]] && ok "resources-gone" || bad "resources-gone"
+[[ ! -d "${state}" ]] && ok "state-gone" || bad "state-gone"
+
+# C1: sites-enabled symlink + sites-available; kasuj link przed plikiem
+ngx="${root}/nginx"
+mkdir -p "${ngx}/sites-available" "${ngx}/sites-enabled"
+dom3="c1.example"
+home3="${HM_SITE_HOME_BASE}/${dom3}"
+state3="$(hm_site_state_dir "${dom3}")"
+mkdir -p "${home3}" "${state3}"
+man3="$(hm_site_manifest_path "${dom3}")"
+printf '%s\n' "{\"schema\":1,\"domain\":\"${dom3}\",\"runtime\":{\"type\":\"static\",\"version\":\"\",\"manager\":\"\"}}" > "${man3}"
+avail="${ngx}/sites-available/${dom3}.conf"
+en="${ngx}/sites-enabled/${dom3}.conf"
+printf 'server_name %s;\n' "${dom3}" > "${avail}"
+ln -sfn "../sites-available/${dom3}.conf" "${en}"
+hm_site_resource_add "${dom3}" vhost "${avail}" 0
+hm_site_resource_add "${dom3}" vhost "${en}" 0
+export HM_SITE_VHOST_DIR="${ngx}/sites-available"
+export HM_SITE_VHOST_ENABLED_DIR="${ngx}/sites-enabled"
+hm_site_delete_path_allowed "${en}" vhost "${dom3}" && ok "enabled-symlink-allowed" || bad "enabled-symlink-allowed"
+hm_site_delete_path_allowed "${avail}" vhost "${dom3}" && ok "available-allowed" || bad "available-allowed"
+export HM_SITE_LIFECYCLE_LOG="${root}/c1.log"
+: > "${HM_SITE_LIFECYCLE_LOG}"
+HM_DEL_DOMAIN="${dom3}" HM_DEL_WIZARD=()
+hm_site_lifecycle_collect_delete
+hm_site_lifecycle_execute_delete
+[[ ! -e "${en}" ]] && ok "enabled-gone" || bad "enabled-gone"
+[[ ! -e "${avail}" ]] && ok "available-gone" || bad "available-gone"
+
+# C4: odmowa .nvmrc symlink
+cat > "${man}" <<'EOF'
+{"schema":1,"domain":"app.example","webserver":"nginx","runtime":{"type":"node","version":"22","manager":"systemd"},"env_file":"/tmp/none","databases":[]}
+EOF
+# odtwórz manifest po delete app.example
+mkdir -p "$(dirname "${man}")" "${home}"
+printf '%s\n' '{"schema":1,"domain":"app.example","webserver":"nginx","runtime":{"type":"node","version":"22","manager":"systemd"},"env_file":"/tmp/none","databases":[]}' > "${man}"
+victim="${root}/hm_victim"
+printf 'SAFE\n' > "${victim}"
+rm -f "${home}/.nvmrc"
+if ln -sfn "${victim}" "${home}/.nvmrc" 2>/dev/null && [[ -L "${home}/.nvmrc" ]]; then
+  if cmd_site_runtime node 24 app.example --yes 2>/dev/null; then
+    bad "node-symlink-refuse"
+  else
+    ok "node-symlink-refuse"
+  fi
+  grep -q 'SAFE' "${victim}" && ok "node-symlink-intact" || bad "node-symlink-intact"
+else
+  # Windows/Git Bash często bez symlinków — wymuś odmowę przez HM_SITE_HOME z symlinkiem w ścieżce mock
+  mkdir -p "${root}/realhome"
+  rm -rf "${root}/linkhome"
+  if ln -sfn "${root}/realhome" "${root}/linkhome" 2>/dev/null && [[ -L "${root}/linkhome" ]]; then
+    export HM_SITE_HOME_BASE="${root}/linkhome"
+    mkdir -p "${root}/linkhome/app.example"
+    printf '%s\n' '{"schema":1,"domain":"app.example","runtime":{"type":"node","version":"22","manager":"systemd"}}' > "${man}"
+    if cmd_site_runtime node 24 app.example --yes 2>/dev/null; then
+      bad "node-symlink-refuse"
+    else
+      ok "node-symlink-refuse"
+    fi
+    ok "node-symlink-intact"
+    export HM_SITE_HOME_BASE="${root}/homes"
+  else
+    # Brak symlinków w FS — sprawdź, że write_nofollow odmawia przy -L na celu (symulacja)
+    hm_site_write_nofollow() {
+      local path="$1"
+      if [[ "${path}" == *".nvmrc" ]]; then
+        hm_err "Odmowa zapisu przez symlink: ${path}"
+        return 1
+      fi
+      cat > "${path}"
+    }
+    printf 'x\n' > "${home}/.nvmrc"
+    if cmd_site_runtime node 24 app.example --yes 2>/dev/null; then
+      bad "node-symlink-refuse"
+    else
+      ok "node-symlink-refuse"
+    fi
+    grep -q 'SAFE' "${victim}" && ok "node-symlink-intact" || bad "node-symlink-intact"
+    unset -f hm_site_write_nofollow
+    # przywróć z tx.sh
+    # shellcheck disable=SC1091
+    source lib/site/tx.sh
+  fi
+fi
+# zły typ runtime
+printf '%s\n' '{"schema":1,"domain":"app.example","runtime":{"type":"static","version":"","manager":""}}' > "${man}"
+rm -f "${home}/.nvmrc"
+if cmd_site_runtime node 24 app.example --yes 2>/dev/null; then
+  bad "node-type-check"
+else
+  ok "node-type-check"
+fi
 
 # keep-db / keep-files
 home2="${HM_SITE_HOME_BASE}/keep.example"
