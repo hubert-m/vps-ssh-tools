@@ -1,0 +1,72 @@
+# hmtools v0.1.13
+
+- Fix: `ssl issue` przed issueSSL czyści live/archive/renewal, gdy cert jest self-signed
+- Fix: `ssl` oznacza SELF-SIGNED; `ssl acme-update` odświeża acme.sh (CA Let's Encrypt); bez self-signed
+- Feat: `dashboard build` — statyczny HTML z `--json`, nasłuch tylko na loopback
+- Feat: `--json` list i statusów oraz `metrics export` (atomowy plik Prometheus)
+- Fix: `chrome clean` kasuje zweryfikowaną ścieżkę; `chrome ps` obcina znaki sterujące i hasło proxy
+- Fix: `hm_visible_len` liczy znaki w C.UTF-8, a testy tabel ładują `ui.sh`
+- Feat: `config track` — lokalne repo, rollback pliku i pominięcie sekretów
+- Feat: `cron-run` i `cron monitor` — lock, timeout, redakcja stderr i alert braku
+- Feat: `dns expiry`/`drift`/`dnssec` — cache RDAP, diff rekordów i alert health
+- Feat: `cf` — token w pliku, real IP OLS, purge, DNS i Under Attack
+- Feat: `docker compose update` — zapis digestów, rollback i audyt restart/health
+- Feat: `traffic sites`/`spikes` — log strumieniowo, adres cf= i sekcja w report weekly
+- Feat: `memory oom`/`swap`/`sysctl` — mapa strony, fstab i rollback profilu
+- Feat: `mail spam`, `senders`, `quota` i `dmarc` — próg wysyłki, dedup, odrzut XXE
+- Docs: układ modułu `openvpn` — pliki, stan jako źródło prawdy, kolejność prac
+- Feat: `openvpn status`/`who`/`log` — tabela klientów, błędy journala i alert health
+- Feat: `openvpn config set` — render ze stanu, kopia, rollback i stałe IP w ccd
+- Feat: `openvpn backup` — archiwum z manifestem, fail-closed na cel zdalny, rollback restore
+- Feat: `openvpn audit`, `fail2ban` i `ca rotate` — odczyt, jail i bundle CA
+- Feat: `openvpn uninstall` — kopia PKI, zwrot ip_forward, bloki spoza markera zostają
+- Feat: `openvpn` w REPL — status, doctor, Tab klientów, docs i testy mock
+- Feat: vhost OLS dla Node — nagłówki proxy i pytanie o wolny port
+- Docs: `site new` — kolejność prac, MVP i flagi Python oraz .NET
+- Feat: `site new` runtime Python — uv, gunicorn, statyki Django i Celery
+- Feat: `site new` runtime .NET — kanał LTS, unit Kestrel, blokada mieszanych feedów
+- Feat: `deploy release` — atomowe current, healthcheck bez przełączenia, webhook 403
+- Fix: testy monitor, backup verify, openvpn i chrome na Linuksie; runner `scripts/run-tests.sh`
+- Fix: `site new` operacje — systemctl enable, binarka z manifestu, logi i firewall
+- Fix: `site doctor` — odczyt zasobu tylko z allowlisty, lista zasobów odrzuca symlink
+- Fix: `openvpn install` — easy-rsa z EASYRSA_PKI, losowy tls-crypt, pełny hm.conf i realny systemctl
+- Fix: `report weekly` — sekcje z komend stats, audit, monitor, vuln i backup; HTML escapuje `& < > "`
+- Fix: `openvpn client export` — klucz tls-crypt i endpoint z pliku stanu install, odmowa pustego profilu
+- Fix: `openvpn client renew` — pełny profil 0600, socket management i restart `openvpn-server@hm`
+- Fix: `monitor http` — dni TLS z certyfikatu, kody curl 35/51/60 jako błąd TLS
+- Fix: `site new` — błąd PHP/vhost cofa journal; undo bazy i vhosta bez powłoki
+- Fix: `site new` — katalogi serwisu należą do usera, dysk z df, port 80/443 nginx nie jest ostrzeżeniem
+- Fix: `site new --webserver nginx` — vhost w sites-enabled; `--runtime static` bez proxy i bez portu
+- Fix: `site new --php` — listen.owner to user WWW, lista wersji z repo OS, brak gpg doinstalowuje gnupg
+- Fix: `site new --runtime node` — instalator nvm jest w HOME usera (0500) po sprawdzeniu SHA-256; błąd cofa journal
+- Fix: `site new` / `webs delete` — manifest i lista zasobów poza HOME; kasowanie tylko ze allowlisty, bez symlinków
+- Fix: `chrome test` — timeout ogranicza headless właściciela binarki i nie trafia do argv Chrome
+- Feat: `site new` — cron/timery, workery kolejek, logrotate, health i firewall bez publicznych portów aplikacji
+- Feat: `site runtime` / `site doctor` / `webs delete` — zmiana wersji z cofnięciem, dryf manifestu i usuwanie zasobów kreatora (współdzielone zostają)
+- Feat: `site new` — `--json` dla `--dry-run` i `site show`, alias `new-site`, testy mock i `docs/site-wizard.md`
+- Feat: `chrome tabs` / `open` / `tab close|activate` — karty CDP tylko na loopback (127.0.0.1, localhost, ::1); bez `webSocketDebuggerUrl` w wyjściu
+- Feat: `chrome disk` / `clean` — stare buildy Puppeteer (zostaje działająca binarka), cache profilu i śmieci w /tmp; domyślnie dry-run, `--execute` kasuje po potwierdzeniu
+- Feat: `chrome ps` / `restart` / `log` / `cdp` — proces, nasłuch portu, restart znanych unitów headless, journal i metadane protokołu
+- Feat: listy wielokolumnowe (`wp sites`, `webs`, `node`, `ssl`, `mail`, `dns`, `docker`, `pm2`, `php`, `health`, `security`, `backup`, `chrome tabs`) — szerokość kolumn z treści, długa domena nie spycha kolejnych pól
+- Feat: `site new` — MySQL/MariaDB, PostgreSQL, Redis, SQLite oraz sekrety w `shared/.env` (0600); `site env` maskuje wartości
+- Fix: `mysql create` — hasło przez `hm_print_secret` (tryb quiet zwraca je do zmiennej i nic nie wypisuje)
+- Feat: `site new` — runtime Node.js (nvm z tagu i sumą SHA-256, corepack, PM2 albo systemd, nasłuch 127.0.0.1)
+- Feat: `site new` — runtime PHP (lista wersji, repo sury/ondrej/remi po zgodzie, pula FPM per serwis, Composer SHA-384)
+- Feat: `site new` — vhost OLS/nginx/apache z szablonu, rejestr portów i reload dopiero po walidacji
+- Feat: `site new` — preflight OS, domena i aliasy, user systemowy, układ katalogów (umask tylko w kroku)
+- Feat: `site new` — manifest serwisu bez haseł, journal z `--resume`/`--rollback`, profile JSON/YAML
+- Feat: `lib/wizard.sh` — kroki kreatora (wstecz, anuluj, podsumowanie, `--dry-run`, tryb bez TTY)
+- Feat: `openvpn client revoke` / `renew`, `crl update`, `check --notify`, cron ważności certyfikatów
+- Feat: `openvpn client add` / `export` / `list` / `show` — profil `.ovpn` bez klucza w logu
+- Feat: `openvpn install` — PKI, `hm.conf` (tls-crypt, AES-256-GCM), NAT; brak tun albo obca konfiguracja zatrzymuje start
+- Feat: `report weekly` — raport stanu mailem i JSON na webhook, bez sekretów
+- Fix: `chrome` / `detect` — binarka z katalogu użytkownika (Puppeteer, unit) nie jest uruchamiana jako root; wersja z nazwy katalogu, pliku VERSION/abi albo CDP
+- Feat: `vuln os` / `wp` / `eol` — poprawki security, wtyczki i motywy WP oraz EOL; `--json` bez tokenu API w argv
+- Feat: `integrity wp` / `baseline` / `check` — checksumy WP jako user strony, baseline sha256 i raport zmian; `update` może odświeżyć baseline po potwierdzeniu
+- Feat: `security events` — alerty SSH, sudo/su, UID 0 i authorized_keys; każde zdarzenie raz, bez sekretów w treści
+- Feat: `security audit` — wynik 0–100 i komenda naprawy; `--fix` nie zapisuje sshd
+- Feat: `backup verify` — próbny restore do katalogu tymczasowego i bazy `hmtools_verify_*`; uszkodzony tar, pusty dump i zły klucz dają alert
+- Feat: `stats` — historia metryk hosta i stron (wykres, min/avg/max/p95); surowe 48 h, potem 15 min, retencja 90 dni
+- Feat: `monitor http` — kod, czas, keyword i pętla przekierowań; jeden alert i komunikat „wróciło”; hasło basic-auth nie wchodzi do logu
+- Fix: `mysql create` i `clone --basic-auth` — hasło przez `hm_print_secret`; bez TTY operacja staje przed zmianą albo idzie do `--secret-file`
+
