@@ -16,6 +16,8 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [vX.Y.Z]
 
+## [v0.1.15]
+
 - Fix: chrome clean — `SingletonLock` przez `-L` (wiszący symlink); test lock bez cmdline
 - Fix: site new W09 — walidacja `--image`/`--container-port`/`--out`; compose bez privileged/network_mode; build przez `runuser`
 - Fix: `run-tests.sh` → `exec bash run-all-tests.sh` (+x w indeksie) — bez Permission denied na świeżym klonie
@@ -543,7 +545,8 @@ HMTOOLS_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/hubert-m/vps
 
 ---
 
-[Unreleased]: https://github.com/hubert-m/vps-ssh-tools/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/hubert-m/vps-ssh-tools/compare/v0.1.15...HEAD
+[v0.1.15]: https://github.com/hubert-m/vps-ssh-tools/compare/v0.1.14...v0.1.15
 [v0.1.2]: https://github.com/hubert-m/vps-ssh-tools/releases/tag/v0.1.2
 [v0.1.1]: https://github.com/hubert-m/vps-ssh-tools/releases/tag/v0.1.1
 [v0.1.0]: https://github.com/hubert-m/vps-ssh-tools/releases/tag/v0.1.0

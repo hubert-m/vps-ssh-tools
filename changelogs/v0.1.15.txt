@@ -1,0 +1,44 @@
+# hmtools v0.1.15
+
+- Fix: chrome clean — `SingletonLock` przez `-L` (wiszący symlink); test lock bez cmdline
+- Fix: site new W09 — walidacja `--image`/`--container-port`/`--out`; compose bez privileged/network_mode; build przez `runuser`
+- Fix: `run-tests.sh` → `exec bash run-all-tests.sh` (+x w indeksie) — bez Permission denied na świeżym klonie
+- Fix: maintenance — ExecStart bez `\`; timer `*:0/5`; `run-scheduled` wykonuje `reboot.at`; `REQUIRE_BACKUP` w env + check przy run
+- Fix: ratelimit — whitelist CSF/ufw (komentarz hmtools); `geoip allow` bez DB odmawia + guard `!^$`; `geoip off`; f2b `port=http,https`
+- Fix: system locale fix (RHEL) — glibc-langpack + localedef, bez `localectl set-locale`; rc≠0 przy fail; hostname set aktualizuje 127.0.1.1 w `/etc/hosts`
+- Fix: fleet — remote `printf %q` + reject metaznaków; destrukcyjne na całej linii; report `issues` (+fallback `issue`); bez SC2259 (python <<<body)
+- Fix: webs delete — reload wg webserver z manifestu (nginx/apache ≠ ols); bez fałszywego „OLS przeładowany”
+- Fix: metrics/security ports — `ss` adres z `$5`; disk `--json` z `df -PT` (fstype≠device)
+- Fix: dashboard OLS — vhost `hmtools-dashboard-*` + listener 127.0.0.1; detach bez zmiany ownera; htpasswd stdin
+- Fix: vuln wp — feed/API z `\x1f` / `cut -f` (puste CVE nie znika z raportu)
+- Fix: openvpn Tab — klienci z `hm_ovpn_pki` (`…/server/hm/pki`); pomija CN server/ca
+- Fix: openvpn audit — fail2ban `<ADDR>`; ca rotate: cert/key dopiero w finish; CRL merge obu CA
+- Fix: openvpn restore — merge revoke po serialu (nie CN); pełna linia R z datą; tar z umask 077
+- Fix: openvpn config — `full`+IPv6: `redirect-gateway ipv6` / `block-ipv6`; keepalive raz z state
+- Fix: openvpn client show/list — sesja z `hm_ovpn_status_file`; kick `grep -F` + rc≠0 bez management
+- Fix: ufw remove — dokładny token To (80 ≠ 8080); whitelist z comment hmtools; remove from:IP rc≠0 gdy brak reguły
+- Fix: site ops — rollback firewalla woła `hm_os_firewall_remove`; port 1–65535
+- Fix: deploy release — build przez `runuser` (nie root); rollback failed stamp tylko z `--force`
+- Fix: openvpn install — domyślnie `MODE=full` + `redirect-gateway` (split tylko przez config set)
+- Fix: testy site-* — `scripts/lib-test-site.sh` (kolejność jak hmtools); memory OOM hermetyczny; node runuser bez fikcyjnego usera
+- Fix: dns expiry — data z `eventAction=expiration` (nie registration); `--all` z manifestów/webs + apex
+- Fix: traffic — day≠month (logi 24h/30d + vnstat/proc); domena nie z IP CF; `--since` CLF; spikes + „brak skoków”; numfmt
+- Fix: mail senders — raz na queue ID; tylko SASL/pickup; `--since` filtruje syslog; bez zewnętrznych from=
+- Fix: vhost nginx — `server_name` z `www.<domena>` (jak OLS vhAliases); Node bez podwójnego zapisu vhosta (W06)
+- Fix: memory oom — `journalctl -k --since` bez `-b`; filtr `-- No entries --`; fallback kern.log/dmesg; test bez fixture
+- Fix: site new W07 — domyślny wsgi per framework (flask/fastapi/django); placeholder w `current/`; snippet static bez vhosta
+- Fix: cf — `hm_cf_zone_id` szuka strefy po sufiksie (subdomena → parent); test mock dla `shop.example.com`
+- Fix: config history — szersza denylista sekretów (cyberpanel/postfix/pdns/ssl/private) + skan `password=` → `.meta` + `.gitignore`
+- Fix: logs search — `--since`/`--until` po czasie linii CLF (awk); filtr IP/URL/status w jednym awk (także `.gz`)
+- Fix: mysql revoke/passwd/users — REVOKE bez „ALL, GRANT OPTION”; passwd wymaga TTY/`--secret-file`; EMPTY WARN; granty z `mysql.db`
+- Fix: users — klucz przed useradd + rollback; tylko https; filtr ssh-keygen; chage bez `|| true`; prompt „użytkownika”
+- Fix: clone/umask — `hm_dotnet_write_secret` zapisuje w `( umask 077; … )` (bez przecieku na REPL)
+- Fix: report weekly — humanize Certyfikaty/Dysk; issue bez false positive (high=0/FAIL=0/fail2ban); pełny escape JSON; Ruch przez numfmt
+- Fix: site new W06 — `--runtime node` bez `--node`; `lts`/`current`; bez vhosta z Node; `.nvmrc` bez chmod HOME; placeholder=`node server.js`
+- Fix: site new W05 — Composer: pobranie+SHA-256+`--version` w tmp roota, potem `install -o user` (bez TOCTOU w HOME)
+- Fix: site new W04 — po `--ssl` blok `listen 443` + redirect; Node/Python nie piszą vhosta (tylko snippety dla W04)
+- Fix: webs delete — user z `site new` znika tylko przy `user_created=true` i braku innego serwisu; istniejące `--user` zostaje
+- Fix: openvpn client renew — `--days` jako `EASYRSA_CERT_EXPIRE`; Easy-RSA 3.0 też robi `gen-crl` i kopię `hm/crl.pem`
+- Fix: openvpn install — NAT `enable --now` + sprawdzenie MASQUERADE; CSF `csf -r`; `--yes` bez `--endpoint` wykrywa IP albo odmawia (bez `vpn.example`)
+- Fix: site new --redis — `REDIS_PREFIX`/`CACHE_PREFIX`/`KEY_PREFIX` w `.env` (ACL prefiks); ACL bez SCAN/RANDOMKEY/DBSIZE; release rejestru pod flock
+
