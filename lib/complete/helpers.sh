@@ -105,16 +105,29 @@ hm_complete_filter_names() {
   done
 }
 
-# Tab: ważni klienci OpenVPN (CN z index.txt, wiersze V).
+# Tab: ważni klienci OpenVPN (CN z index.txt, wiersze V; bez server/ca).
 hm_complete_openvpn_clients() {
-  local partial="${1:-}" file line cn
-  file="${HM_OVPN_INDEX:-${HM_OVPN_PKI:-/etc/openvpn/pki}/index.txt}"
+  local partial="${1:-}" file line cn pki
+  if [[ -n "${HM_OVPN_INDEX:-}" ]]; then
+    file="${HM_OVPN_INDEX}"
+  else
+    if declare -F hm_ovpn_pki >/dev/null 2>&1; then
+      pki="$(hm_ovpn_pki 2>/dev/null || true)"
+    elif [[ -n "${HM_OVPN_PKI:-}" ]]; then
+      pki="${HM_OVPN_PKI}"
+    else
+      # jak install: …/server/hm/pki (nie /etc/openvpn/pki)
+      pki="/etc/openvpn/server/hm/pki"
+    fi
+    file="${pki}/index.txt"
+  fi
   [[ -f "${file}" ]] || return 0
   while IFS= read -r line || [[ -n "${line}" ]]; do
     [[ "${line}" == V* ]] || continue
     cn="${line##*/CN=}"
     cn="${cn%%/*}"
-    [[ -n "${cn}" && "${cn}" == "${partial}"* ]] && printf '%s\n' "${cn}"
+    case "${cn}" in ""|server|ca) continue ;; esac
+    [[ "${cn}" == "${partial}"* ]] && printf '%s\n' "${cn}"
   done < "${file}"
 }
 

@@ -233,8 +233,8 @@ cmd_security_ports() {
   local line addr port pub=0
   while IFS= read -r line; do
     [[ -n "${line}" ]] || continue
-    # Local Address:Port zwykle kolumna 4
-    addr="$(echo "${line}" | awk '{print $4}')"
+    # ss -lntup: Local Address:Port w kolumnie 5 (Netid State Recv-Q Send-Q Local…)
+    addr="$(echo "${line}" | awk '{print $5}')"
     case "${addr}" in
       0.0.0.0:*|\[::\]:*|\*:*)
         pub=1

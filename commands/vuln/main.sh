@@ -207,7 +207,8 @@ hm_vuln_parse_api_text() {
     cve="$(printf '%s' "${obj}" | sed -n 's/.*"cve":"\([^"]*\)".*/\1/p')"
     sev="$(printf '%s' "${obj}" | sed -n 's/.*"severity":"\([^"]*\)".*/\1/p')"
     [[ -n "${kind}" && -n "${name}" && -n "${fixed}" ]] || continue
-    printf '%s\t%s\t%s\t%s\t%s\n' "${kind}" "${name}" "${fixed}" "${cve}" "$(hm_vuln_norm_sev "${sev:-high}")"
+    # \x1f — puste CVE nie zwija kolumn (tab jest w IFS)
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "${kind}" "${name}" "${fixed}" "${cve}" "$(hm_vuln_norm_sev "${sev:-high}")"
   done < <(printf '%s\n' "${text}" | grep -oE '\{"kind":"[^"]*","name":"[^"]*","fixed":"[^"]*","cve":"[^"]*","severity":"[^"]*"\}' || true)
 }
 
@@ -216,9 +217,16 @@ hm_vuln_load_feed() {
   : > "${dest}"
   file="$(hm_vuln_wp_feed_file)"
   if [[ -f "${file}" ]]; then
-    while IFS=$'\t' read -r kind name fixed cve sev _; do
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+      [[ -n "${line}" && "${line}" != \#* ]] || continue
+      # cut -f zachowuje puste pola między tabami (IFS=tab by je zwinął)
+      kind="$(printf '%s\n' "${line}" | cut -f1)"
+      name="$(printf '%s\n' "${line}" | cut -f2)"
+      fixed="$(printf '%s\n' "${line}" | cut -f3)"
+      cve="$(printf '%s\n' "${line}" | cut -f4)"
+      sev="$(printf '%s\n' "${line}" | cut -f5)"
       [[ -n "${kind}" && "${kind}" != \#* ]] || continue
-      printf '%s\t%s\t%s\t%s\t%s\n' "${kind}" "${name}" "${fixed}" "${cve}" "$(hm_vuln_norm_sev "${sev:-high}")" >> "${dest}"
+      printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "${kind}" "${name}" "${fixed}" "${cve}" "$(hm_vuln_norm_sev "${sev:-high}")" >> "${dest}"
     done < "${file}"
   fi
   local raw=""
@@ -244,7 +252,7 @@ hm_vuln_wp_fix() {
 hm_vuln_wp_match() {
   local domain="$1" kind="$2" name="$3" ver="$4" feed="$5"
   local fkind fname fixed cve sev
-  while IFS=$'\t' read -r fkind fname fixed cve sev; do
+  while IFS="${HM_VULN_FS}" read -r fkind fname fixed cve sev; do
     [[ "${fkind}" == "${kind}" && "${fname}" == "${name}" ]] || continue
     if hm_vuln_ver_lt "${ver}" "${fixed}"; then
       hm_vuln_add "${sev}" wp "${cve}" "${kind} ${name}" "${ver}" "$(hm_vuln_wp_fix "${kind}" "${name}")"

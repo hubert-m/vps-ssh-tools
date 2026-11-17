@@ -237,7 +237,9 @@ hm_metrics_timer() {
     esac
   done
   local bin="hmtools"
-  if [[ -n "${HMTOOLS_ROOT:-}" && -x "${HMTOOLS_ROOT}/hmtools" ]]; then
+  if [[ -n "${HMTOOLS_ROOT:-}" && -x "${HMTOOLS_ROOT}/bin/hmtools" ]]; then
+    bin="${HMTOOLS_ROOT}/bin/hmtools"
+  elif [[ -n "${HMTOOLS_ROOT:-}" && -x "${HMTOOLS_ROOT}/hmtools" ]]; then
     bin="${HMTOOLS_ROOT}/hmtools"
   fi
   local line="*/15 * * * * root ${bin} metrics export --textfile ${dest}"

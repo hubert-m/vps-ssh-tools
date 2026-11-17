@@ -89,7 +89,37 @@ ssl="$(hm_fleet_ssl 2>/dev/null || true)"
 printf '%s\n' "${ssl}" | grep -q 'WKRÓTCE\|1' && ok agg-ssl || bad agg-ssl
 
 report="$(hm_fleet_report 2>/dev/null || true)"
-printf '%s\n' "${report}" | grep -q 'Usługi' && ok agg-report || bad agg-report
+printf '%s\n' "${report}" | grep -q 'Usługi' && printf '%s\n' "${report}" | grep -q 'Sekcje z problemami: 1' && ok agg-report || bad agg-report
+
+# report JSON: klucz issues (i fallback issue) — nie zawsze 0
+body_issue='{"report":"weekly","sections":[{"title":"X","issue":2},{"title":"Y","issue":0}]}'
+iss_cnt="$(python3 -c 'import json,sys
+d=json.load(sys.stdin)
+sec=d.get("sections") or []
+def n(s):
+ v=s.get("issues")
+ if v is None: v=s.get("issue")
+ return 1 if v else 0
+print(sum(n(s) for s in sec if isinstance(s,dict)))' <<<"${body_issue}")"
+[[ "${iss_cnt}" == "1" ]] && ok report-issue-key || bad report-issue-key
+
+# wstrzyknięcie: metaznaki odrzucone; remote_one = jedna linia z printf %q
+if hm_fleet_run 'version; touch /tmp/pwned' 2>/dev/null; then
+  bad inject-semicolon
+else
+  ok inject-semicolon
+fi
+if hm_fleet_validate_cmd 'health --check --json'; then
+  ok validate-ok
+else
+  bad validate-ok
+fi
+qdemo="$(printf '%q' 'ssl --json')"
+[[ "${qdemo}" == *ssl* ]] && ok printf-q || bad printf-q
+
+# destrukcyjne na całej linii (także po ;|&)
+hm_fleet_is_destructive 'version;reboot' && ok destructive-full-line || bad destructive-full-line
+hm_fleet_is_destructive 'version' && bad destructive-false-pos || ok destructive-false-pos
 
 hm_fleet_remove web2 >/dev/null || bad remove
 ! hm_fleet_host_line web2 >/dev/null 2>&1 && ok remove-gone || bad remove-gone

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Mock SSH dla testów fleet — bez sieci, odpowiedzi wg zdalnej komendy hmtools -c.
+# Po -- przychodzi JEDEN argv (jak u sshd): „hmtools -c <printf %q cmd>”.
 set -euo pipefail
 
 REMOTE=""
@@ -7,7 +8,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --)
       shift
-      REMOTE="$*"
+      REMOTE="${1:-}"
       break
       ;;
     -p|-o) shift 2 ;;
@@ -21,19 +22,31 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Rozwiń printf %q z remote_one → argv: bin -c <cmd>
+CMD=""
+if [[ -n "${REMOTE}" ]]; then
+  # shellcheck disable=SC2086
+  eval "set -- ${REMOTE}"
+  if [[ "${2:-}" == "-c" ]]; then
+    CMD="${3:-}"
+  else
+    CMD="${REMOTE}"
+  fi
+fi
+
 # Test połączenia / prosty echo
-if [[ "${REMOTE}" == *"doctor --json"* ]]; then
+if [[ "${CMD}" == *"doctor --json"* || "${REMOTE}" == *"doctor --json"* ]]; then
   printf '{"version":"v0.1.13","tools":{"ssh":"ok"}}\n'
   exit 0
 fi
 
-case "${REMOTE}" in
+case "${CMD}" in
   *"health --check --json"*)
     if [[ "${HM_FLEET_MOCK_FAIL_HEALTH:-}" == "1" ]]; then
       echo "ssh fail" >&2
       exit 1
     fi
-  echo '{"ok":false,"alerts":["disk:used=95%>=90%"],"disk_used":95}'
+    echo '{"ok":false,"alerts":["disk:used=95%>=90%"],"disk_used":95}'
     exit 0
     ;;
   *"update check --json"*)
@@ -49,10 +62,11 @@ case "${REMOTE}" in
     exit 0
     ;;
   *"report weekly --json"*)
+    # Klucz „issues” jak report --json; mock z „issue” też obsługiwany w fleet report.
     echo '{"report":"weekly","sections":[{"title":"Usługi","issues":1},{"title":"Kopie","issues":0}]}'
     exit 0
     ;;
-  *"echo fleet-ok"*|*"version"*)
+  "echo fleet-ok"|"version"|*"echo fleet-ok"*|*"version"*)
     echo fleet-ok
     exit 0
     ;;
@@ -62,5 +76,5 @@ case "${REMOTE}" in
     ;;
 esac
 
-echo "mock-ssh: nieobsługiwane: ${REMOTE}" >&2
+echo "mock-ssh: nieobsługiwane: REMOTE=${REMOTE} CMD=${CMD}" >&2
 exit 127

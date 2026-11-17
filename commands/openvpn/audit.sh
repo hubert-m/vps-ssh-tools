@@ -219,6 +219,12 @@ hm_ovpn_f2b_phrases() {
     'AUTH_FAILED'
 }
 
+# Fail2Ban wymaga grupy <HOST>/<ADDR> — inaczej „No failure-id group”.
+hm_ovpn_f2b_failregex() {
+  printf '%s\n' \
+    '^.*(?:[\w.@-]+/)?<ADDR>:\d+ (?:TLS Error: TLS handshake failed|tls-crypt unwrap error|VERIFY ERROR|AUTH_FAILED)'
+}
+
 hm_ovpn_fail2ban() {
   local action="${1:-status}" jail filter ip sample n phrase f2b_port f2b_proto
   jail="$(hm_ovpn_f2b_jail)"
@@ -240,9 +246,7 @@ hm_ovpn_fail2ban() {
       mkdir -p "$(dirname "${jail}")" "$(dirname "${filter}")"
       {
         printf '%s\n' '[Definition]'
-        while IFS= read -r phrase; do
-          printf 'failregex = %s\n' "${phrase}"
-        done < <(hm_ovpn_f2b_phrases)
+        printf 'failregex = %s\n' "$(hm_ovpn_f2b_failregex)"
       } > "${filter}"
       cat > "${jail}" <<EOF
 [hmtools-openvpn]
@@ -259,6 +263,10 @@ ignoreip = 127.0.0.1/8 ::1 ${ip}
 EOF
       if [[ "${HMTOOLS_TEST:-}" != "1" ]] && declare -F hm_firewall_fail2ban_ignore >/dev/null 2>&1; then
         hm_firewall_fail2ban_ignore "${ip}" || true
+      fi
+      if [[ "${HMTOOLS_TEST:-}" != "1" ]] && hm_have_cmd fail2ban-regex; then
+        fail2ban-regex /dev/null "${filter}" >/dev/null 2>&1 \
+          || hm_warn "fail2ban-regex: filtr hmtools-openvpn może być niepoprawny."
       fi
       hm_ok "Fail2Ban: jail hmtools-openvpn, ignoreip ${ip}"
       ;;
@@ -414,7 +422,7 @@ hm_ovpn_ca_rotate() {
   [[ -d "${pki}" ]] || { hm_err "Brak PKI."; return 1; }
   conf="$(hm_ovpn_conf_file)"
   [[ -f "${conf}" ]] || { hm_err "Brak konfiguracji OpenVPN."; return 1; }
-  local -a steps=("kopia PKI" "nowa CA obok starej" "bundle obu CA" "nowe certyfikaty klientów" "podmiana hm.conf")
+  local -a steps=("kopia PKI" "nowa CA obok starej" "bundle obu CA" "CRL obu CA" "nowe certyfikaty klientów" "ca=bundle (cert serwera bez zmian do finish)")
   if [[ "${yes}" -eq 1 ]]; then
     hm_confirm_plan "openvpn ca rotate" "Okres przejściowy: stara i nowa CA." --yes "${steps[@]}" || return 1
   else
@@ -432,7 +440,8 @@ hm_ovpn_ca_rotate() {
     export EASYRSA_PKI="${new}" EASYRSA_BATCH=1
     hm_ovpn_easyrsa init-pki \
       && hm_ovpn_easyrsa build-ca nopass \
-      && hm_ovpn_easyrsa build-server-full server nopass
+      && hm_ovpn_easyrsa build-server-full server nopass \
+      && hm_ovpn_easyrsa gen-crl
   ) || {
     rm -rf "${new}"
     hm_err "Nie udało się zbudować nowej CA/serwera. hm.conf bez zmian."
@@ -455,24 +464,32 @@ hm_ovpn_ca_rotate() {
       fi
     done < "${index}"
   fi
-  # dopiero po sukcesie PKI — kopia hm.conf i podmiana
-  conf_bak="${conf}.hmtools-ca-rotate.bak"
-  cp -a "${conf}" "${conf_bak}" || return 1
-  bundle="$(hm_ovpn_etc)/ca-bundle.crt"
-  hm_ovpn_ca_bundle_write "${bundle}" "${new}/ca.crt" "${old}/ca.crt"
-  hm_ovpn_ca_set_line "${conf}" ca "${bundle}"
   if [[ "${HM_OVPN_MOCK:-}" == "1" ]]; then
     mkdir -p "${new}/issued" "${new}/private"
     [[ -f "${new}/ca.crt" ]] || printf 'NEW-CA\n' > "${new}/ca.crt"
     [[ -f "${new}/issued/server.crt" ]] || printf 'NEW-SERVER\n' > "${new}/issued/server.crt"
     [[ -f "${new}/private/server.key" ]] || printf 'NEW-KEY\n' > "${new}/private/server.key"
+    [[ -f "${new}/crl.pem" ]] || printf 'NEW-CRL\n' > "${new}/crl.pem"
   fi
-  if [[ -f "${new}/issued/server.crt" ]]; then
-    hm_ovpn_ca_set_line "${conf}" cert "${new}/issued/server.crt"
+  # CRL starego CA: z pki.old albo z hm/crl.pem
+  if [[ ! -f "${old}/crl.pem" && -f "$(hm_ovpn_etc)/hm/crl.pem" ]]; then
+    cp -f "$(hm_ovpn_etc)/hm/crl.pem" "${old}/crl.pem"
   fi
-  if [[ -f "${new}/private/server.key" ]]; then
-    hm_ovpn_ca_set_line "${conf}" key "${new}/private/server.key"
+  if [[ "${HM_OVPN_MOCK:-}" == "1" && ! -f "${old}/crl.pem" ]]; then
+    printf 'OLD-CRL\n' > "${old}/crl.pem"
   fi
+  # CRL przejściowe = stare + nowe (crl-verify wymaga CRL dla każdej CA w bundlu)
+  if ! hm_ovpn_ca_crl_merge "$(hm_ovpn_etc)/hm/crl.pem" "${old}/crl.pem" "${new}/crl.pem"; then
+    rm -rf "${new}"
+    hm_err "Nie udało się złożyć CRL. hm.conf bez zmian."
+    return 1
+  fi
+  # dopiero po sukcesie PKI — kopia hm.conf; ca=bundle, cert/key serwera ZOSTAJĄ stare do finish
+  conf_bak="${conf}.hmtools-ca-rotate.bak"
+  cp -a "${conf}" "${conf_bak}" || return 1
+  bundle="$(hm_ovpn_etc)/ca-bundle.crt"
+  hm_ovpn_ca_bundle_write "${bundle}" "${new}/ca.crt" "${old}/ca.crt"
+  hm_ovpn_ca_set_line "${conf}" ca "${bundle}"
   cat > "${pending}" <<EOF
 DAYS=${days}
 BUNDLE=${bundle}
@@ -481,7 +498,24 @@ OLD=${old}
 PKI=${pki}
 CONF_BAK=${conf_bak}
 EOF
-  hm_ok "Rotacja CA: okres przejściowy. Bundle: ${bundle}"
+  hm_ok "Rotacja CA: okres przejściowy. Bundle: ${bundle} (cert serwera bez zmian do finish)."
+}
+
+# Konkatenacja CRL (okres przejściowy: obie CA).
+hm_ovpn_ca_crl_merge() {
+  local dest="$1" a="${2:-}" b="${3:-}" tmp
+  [[ -n "${dest}" ]] || return 1
+  mkdir -p "$(dirname "${dest}")"
+  tmp="$(mktemp)"
+  : > "${tmp}"
+  [[ -n "${a}" && -f "${a}" ]] && cat "${a}" >> "${tmp}"
+  [[ -n "${b}" && -f "${b}" ]] && cat "${b}" >> "${tmp}"
+  if [[ ! -s "${tmp}" ]]; then
+    rm -f "${tmp}"
+    return 1
+  fi
+  mv -f "${tmp}" "${dest}"
+  chmod 0644 "${dest}" || true
 }
 
 hm_ovpn_ca_finish() {
@@ -525,8 +559,19 @@ hm_ovpn_ca_finish() {
     hm_ovpn_ca_state_set_pki "${state_pki}"
     if [[ -f "${conf}" ]]; then
       hm_ovpn_ca_set_line "${conf}" ca "${state_pki}/ca.crt"
+      # dopiero finish: cert/key serwera z nowego CA
       [[ -f "${state_pki}/issued/server.crt" ]] && hm_ovpn_ca_set_line "${conf}" cert "${state_pki}/issued/server.crt"
       [[ -f "${state_pki}/private/server.key" ]] && hm_ovpn_ca_set_line "${conf}" key "${state_pki}/private/server.key"
+    fi
+    # CRL tylko nowego CA
+    EASYRSA_PKI="${state_pki}" EASYRSA_BATCH=1 hm_ovpn_easyrsa gen-crl >/dev/null 2>&1 || true
+    if [[ "${HM_OVPN_MOCK:-}" == "1" && ! -f "${state_pki}/crl.pem" ]]; then
+      printf 'NEW-CRL-FINISH\n' > "${state_pki}/crl.pem"
+    fi
+    if [[ -f "${state_pki}/crl.pem" ]]; then
+      mkdir -p "$(hm_ovpn_etc)/hm"
+      cp -f "${state_pki}/crl.pem" "$(hm_ovpn_etc)/hm/crl.pem"
+      chmod 0644 "$(hm_ovpn_etc)/hm/crl.pem" || true
     fi
   elif [[ -n "${new}" && -f "${new}/ca.crt" && -f "${conf}" ]]; then
     hm_ovpn_ca_set_line "${conf}" ca "${new}/ca.crt"

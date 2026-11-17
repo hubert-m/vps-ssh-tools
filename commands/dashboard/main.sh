@@ -33,25 +33,49 @@ HM_DASH_SESSION_AUTH=""
 HM_DASH_SESSION_CREATED_VHOST=0
 
 hm_dashboard_htpasswd_line() {
-  local user="$1" pass="$2" hash=""
+  local user="$1" pass="$2" hash="" line=""
+  # Hasło wyłącznie przez stdin — nigdy w argv (ps).
   if declare -F hm_have_cmd >/dev/null 2>&1 && hm_have_cmd htpasswd; then
-    htpasswd -nbB "${user}" "${pass}" 2>/dev/null \
-      || htpasswd -nb "${user}" "${pass}" 2>/dev/null \
+    line="$(printf '%s\n' "${pass}" | htpasswd -niB "${user}" 2>/dev/null)" \
+      || line="$(printf '%s\n' "${pass}" | htpasswd -ni "${user}" 2>/dev/null)" \
       || true
-    return 0
+    if [[ -n "${line}" ]]; then
+      printf '%s\n' "${line}"
+      return 0
+    fi
   fi
   if declare -F hm_have_cmd >/dev/null 2>&1 && hm_have_cmd openssl; then
-    hash="$(openssl passwd -apr1 "${pass}" 2>/dev/null || openssl passwd -1 "${pass}" 2>/dev/null || true)"
+    hash="$(printf '%s\n' "${pass}" | openssl passwd -apr1 -stdin 2>/dev/null \
+      || printf '%s\n' "${pass}" | openssl passwd -1 -stdin 2>/dev/null \
+      || true)"
   fi
   if [[ -z "${hash}" ]] && declare -F hm_have_cmd >/dev/null 2>&1 && hm_have_cmd python3; then
+    # crypt usunięty w Python 3.13+ → fallback {SHA} (htpasswd)
     hash="$(PASS="${pass}" python3 - <<'PY' 2>/dev/null || true
-import crypt, os
-print(crypt.crypt(os.environ["PASS"], crypt.METHOD_MD5))
+import os, base64, hashlib
+try:
+    import crypt
+    print(crypt.crypt(os.environ["PASS"], crypt.METHOD_MD5))
+except Exception:
+    dig = hashlib.sha1(os.environ["PASS"].encode("utf-8")).digest()
+    print("{SHA}" + base64.b64encode(dig).decode("ascii"))
 PY
 )"
   fi
   [[ -n "${hash}" ]] || return 1
   printf '%s:%s\n' "${user}" "${hash}"
+}
+
+# Uprawnienia htpasswd: 0640 + grupa lsadm (OLS czyta docRoot/auth).
+hm_dashboard_auth_perms() {
+  local auth="$1"
+  [[ -f "${auth}" ]] || return 0
+  if getent group lsadm >/dev/null 2>&1; then
+    chgrp lsadm "${auth}" 2>/dev/null || true
+    chmod 0640 "${auth}" 2>/dev/null || true
+  else
+    chmod 0600 "${auth}" 2>/dev/null || true
+  fi
 }
 
 hm_dashboard_parse_allow() {
@@ -121,10 +145,19 @@ hm_dashboard_ols_map_file() {
   printf '%s' "${HM_DASHBOARD_OLS_MAP:-${OLS_CONF:-/usr/local/lsws/conf/httpd_config.conf}}"
 }
 
+# Osobny ID vhosta — nigdy nazwa produkcyjnej domeny.
+hm_dashboard_ols_vh_id() {
+  local domain="${1:-}" safe
+  safe="$(printf '%s' "${domain}" | tr '[:upper:]' '[:lower:]' | tr '.' '-' | tr -cd 'a-z0-9-')"
+  [[ -n "${safe}" ]] || safe="panel"
+  printf 'hmtools-dashboard-%s' "${safe}"
+}
+
 hm_dashboard_ols_attach() {
-  local domain="$1" vhost_dir="$2" mapf marker
+  local domain="$1" vhost_dir="$2" port="${HM_DASHBOARD_PORT:-8765}" mapf marker vhid
   mapf="$(hm_dashboard_ols_map_file)"
   marker="# hmtools-dashboard:${domain}"
+  vhid="$(hm_dashboard_ols_vh_id "${domain}")"
   [[ -f "${mapf}" ]] || {
     if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
       mkdir -p "$(dirname "${mapf}")"
@@ -138,11 +171,15 @@ hm_dashboard_ols_attach() {
     {
       printf '\n%s BEGIN\n' "${marker}"
       printf 'virtualhost %s {\n  vhRoot %s\n  configFile %s/vhconf.conf\n  allowSymbolLink 1\n  enableScript 1\n  restrained 1\n}\n' \
-        "${domain}" "${vhost_dir}" "${vhost_dir}"
+        "${vhid}" "${vhost_dir}" "${vhost_dir}"
+      # Listener tylko na loopback — dostęp przez tunel SSH (nie koliduje z produkcją).
+      printf 'listener %s {\n  address                 127.0.0.1:%s\n  secure                  0\n  map                     %s *\n}\n' \
+        "${vhid}" "${port}" "${vhid}"
       printf '%s END\n' "${marker}"
     } >>"${mapf}"
   fi
   HM_DASH_SESSION_MAP="${mapf}"
+  HM_DASH_SESSION_VHID="${vhid}"
 }
 
 hm_dashboard_ols_detach() {
@@ -157,7 +194,10 @@ hm_dashboard_ols_detach() {
       index($0,b){skip=1; next}
       index($0,e){skip=0; next}
       !skip{print}
-    ' "${mapf}" >"${tmp}" && mv -f "${tmp}" "${mapf}"
+    ' "${mapf}" >"${tmp}" || { rm -f "${tmp}"; return 1; }
+    # Zachowaj inode/owner/mode (lsadm) — nie mv na nowy plik.
+    cat "${tmp}" >"${mapf}"
+    rm -f "${tmp}"
   fi
 }
 
@@ -512,12 +552,13 @@ hm_dashboard_publish() {
     hm_err "Zapis ${auth} nie powiódł się."
     return 1
   fi
-  chmod 0600 "${auth}" 2>/dev/null || true
+  hm_dashboard_auth_perms "${auth}"
   hm_dashboard_write_vhconf "${vhost}" "$(hm_dashboard_out_dir)" "${auth}" "${allow}"
   hm_dashboard_ols_attach "${domain}" "$(dirname "${vhost}")"
   hm_dashboard_ols_reload
   if declare -F hm_print_secret >/dev/null 2>&1; then
-    hm_print_secret "login: ${user}" "hasło: ${pass}"
+    hm_print_secret "login: ${user}" "hasło: ${pass}" \
+      "tunel: ssh -L ${HM_DASHBOARD_PORT:-8765}:127.0.0.1:${HM_DASHBOARD_PORT:-8765} user@host"
   else
     hm_info "login=${user} (hasło tylko na TTY / HM_SECRET_FILE)"
   fi
@@ -570,7 +611,7 @@ hm_dashboard_session() {
     return 1
   }
   ( umask 077; printf '%s\n' "${line}" >"${auth}"; )
-  chmod 0600 "${auth}" 2>/dev/null || true
+  hm_dashboard_auth_perms "${auth}"
   # Zbuduj HTML jeśli brak
   if [[ ! -f "$(hm_dashboard_out_dir)/index.html" ]]; then
     hm_dashboard_build >/dev/null || true
@@ -585,9 +626,11 @@ hm_dashboard_session() {
   hm_dashboard_ols_attach "${domain}" "${vhdir}"
   hm_dashboard_ols_reload
   if declare -F hm_print_secret >/dev/null 2>&1; then
-    hm_print_secret "login: ${user}" "hasło: ${pass}" "URL: https://${domain}/"
+    hm_print_secret "login: ${user}" "hasło: ${pass}" \
+      "URL: http://127.0.0.1:${HM_DASHBOARD_PORT:-8765}/ (ssh -L ${HM_DASHBOARD_PORT:-8765}:127.0.0.1:${HM_DASHBOARD_PORT:-8765})" \
+      "domena-ref: ${domain}"
   else
-    hm_info "Panel: https://${domain}/  login=${user}"
+    hm_info "Panel: 127.0.0.1:${HM_DASHBOARD_PORT:-8765} login=${user} (ref ${domain})"
   fi
   hm_info "Panel żyje do Ctrl+C / końca sesji SSH (HUP)."
   if [[ "${HMTOOLS_TEST:-}" == "1" || "${HM_DASHBOARD_DRY:-}" == "1" ]]; then

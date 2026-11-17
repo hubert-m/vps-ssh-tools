@@ -19,6 +19,7 @@ HM_DEL_USER_PROTECTED=0
 HM_DEL_CHILD_OF_SHARED=0
 HM_DEL_FORCE_NESTED=0
 HM_DEL_CRON_COUNT=0
+HM_DEL_WEB=""
 declare -a HM_DEL_DBS=()
 declare -a HM_DEL_DB_USERS=()
 declare -a HM_DEL_PM2=()
@@ -51,6 +52,7 @@ hm_del_reset_inventory() {
   HM_DEL_CHILD_OF_SHARED=0
   # HM_DEL_FORCE_NESTED zachowujemy z CLI (nie kasujemy tu)
   HM_DEL_CRON_COUNT=0
+  HM_DEL_WEB=""
   HM_DEL_DBS=()
   HM_DEL_DB_USERS=()
   HM_DEL_PM2=()
@@ -380,6 +382,13 @@ hm_site_collect_delete_inventory() {
   HM_DEL_KEEP_USER="${keep_user}"
   HM_DEL_FORCE_NESTED="${force_nested}"
   HM_DEL_DOMAIN="${domain}"
+  # webserver z manifestu (nginx/apache/ols) — reload na końcu
+  local mfile
+  mfile="$(hm_del_manifest_file "${domain}")"
+  if [[ -f "${mfile}" ]]; then
+    HM_DEL_WEB="$(sed -n 's/.*"webserver"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${mfile}" | head -1)"
+  fi
+  [[ -n "${HM_DEL_WEB}" ]] || HM_DEL_WEB="${HM_SITE_WEBSERVER:-${WEBSERVER:-}}"
 
   hm_detect_all
   hm_discover_sites
@@ -794,7 +803,14 @@ hm_site_build_delete_plan() {
     HM_DEL_PLAN_KEYS+=("user")
   fi
 
-  HM_DEL_PLAN_STEPS+=("Przeładowanie OpenLiteSpeed (ols reload) i odświeżenie cache domen hmtools")
+  case "${HM_DEL_WEB}" in
+    nginx|apache|httpd)
+      HM_DEL_PLAN_STEPS+=("Przeładowanie ${HM_DEL_WEB} i odświeżenie cache domen hmtools")
+      ;;
+    *)
+      HM_DEL_PLAN_STEPS+=("Przeładowanie OpenLiteSpeed (ols reload) i odświeżenie cache domen hmtools")
+      ;;
+  esac
   HM_DEL_PLAN_KEYS+=("reload")
 }
 
@@ -1059,15 +1075,40 @@ DELETE FROM websites_website WHERE domainName = ${dq};
         fi
         ;;
       reload)
-        hm_progress_bar "${i}" "${total}" "ols reload…"
-        hm_ols_reload_soft || hm_warn "ols reload nieudany"
+        local web="${HM_DEL_WEB:-}" reloaded=0
+        [[ -n "${web}" ]] || web="${HM_SITE_WEBSERVER:-${WEBSERVER:-ols}}"
+        case "${web}" in
+          nginx|apache|httpd)
+            hm_progress_bar "${i}" "${total}" "${web} reload…"
+            if declare -F hm_site_web_reload >/dev/null 2>&1; then
+              if hm_site_web_reload "${web}"; then
+                reloaded=1
+                hm_ok "${web} przeładowany, lista domen odświeżona."
+              else
+                hm_warn "${web} reload nieudany"
+              fi
+            else
+              hm_warn "Brak hm_site_web_reload — pomijam reload ${web}."
+            fi
+            ;;
+          *)
+            hm_progress_bar "${i}" "${total}" "ols reload…"
+            if declare -F hm_ols_reload_soft >/dev/null 2>&1 && hm_ols_reload_soft; then
+              reloaded=1
+              hm_ok "OLS przeładowany, lista domen odświeżona."
+            else
+              hm_warn "ols reload nieudany"
+            fi
+            ;;
+        esac
         HM_SITES_LIST=()
         hm_discover_sites 2>/dev/null || true
         if [[ "${HM_SITE_DOMAIN:-}" == "${domain}" ]]; then
           hm_clear_site_context
           hm_info "Wyczyszczono kontekst strony — wracasz do hmtools>"
         fi
-        hm_ok "OLS przeładowany, lista domen odświeżona."
+        # bez hm_ok przy porażce (wcześniej: warn + fałszywe „przeładowany”)
+        [[ "${reloaded}" -eq 1 ]] || true
         ;;
     esac
   done

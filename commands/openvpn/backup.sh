@@ -180,7 +180,8 @@ hm_ovpn_backup_cmd() {
   stage="$(mktemp -d)"
   archive="${dir}/openvpn-$(date -u +%Y%m%d-%H%M%S).tar.gz"
   hm_ovpn_backup_stage "${stage}" || { rm -rf "${stage}"; return 1; }
-  tar -czf "${archive}" -C "${stage}" server clients manifest.txt || { rm -rf "${stage}"; rm -f "${archive}"; return 1; }
+  ( umask 077; tar -czf "${archive}" -C "${stage}" server clients manifest.txt ) \
+    || { rm -rf "${stage}"; rm -f "${archive}"; return 1; }
   rm -rf "${stage}"
   chmod 0600 "${archive}" 2>/dev/null || true
   if [[ -n "${target}" ]]; then
@@ -368,29 +369,31 @@ hm_ovpn_restore_render() {
   hm_ovpn_render_conf "$(hm_ovpn_etc)" "${port}" "${proto}" "${cidr}" "${group}" "${ver}" "$(hm_ovpn_dns_ips "${dns}")" > "${conf}"
 }
 
-# Scal revoke: R z żywej kopii zostaje R po restore starszego archiwum.
+# Scal revoke po numerze seryjnym (kolumna 4): pełna linia R z datą z żywej kopii.
+# Nie po CN (lap ≠ laptop; nowy serial V po reissue zostaje V).
 hm_ovpn_merge_revokes() {
-  local live_index="$1" dest_index="$2" line cn serial status
+  local live_index="$1" dest_index="$2" line serial cn
   [[ -f "${live_index}" && -f "${dest_index}" ]] || return 0
   local tmp changed=0
   tmp="$(mktemp)"
   cp -f "${dest_index}" "${tmp}"
   while IFS= read -r line || [[ -n "${line}" ]]; do
     [[ "${line}" == R* ]] || continue
+    # Easy-RSA: status TAB expiry TAB revdate TAB serial TAB …
+    serial="$(printf '%s\n' "${line}" | awk -F'\t' '{print $4}')"
+    [[ -n "${serial}" ]] || continue
     cn="${line#*/CN=}"
     cn="${cn%%/*}"
-    [[ -n "${cn}" ]] || continue
-    if grep -qE "^V[[:space:]].*/CN=${cn}(/|[[:space:]]|$)" "${tmp}"; then
-      awk -v cn="${cn}" '
-        $1=="V" && $0 ~ ("/CN=" cn) {
-          sub(/^V/, "R")
-          print
-          next
-        }
+    # Podmień linię o tym serialu na pełną linię R z live (z datą unieważnienia).
+    if awk -F'\t' -v s="${serial}" '$4 == s { found=1 } END { exit !found }' "${tmp}"; then
+      export HM_OVPN_MERGE_RLINE="${line}"
+      awk -F'\t' -v s="${serial}" '
+        $4 == s { print ENVIRON["HM_OVPN_MERGE_RLINE"]; next }
         { print }
       ' "${tmp}" > "${tmp}.2" && mv -f "${tmp}.2" "${tmp}"
+      unset HM_OVPN_MERGE_RLINE
       changed=1
-      hm_warn "Restore: zachowuję revoke klienta ${cn} (R z bieżącego stanu)."
+      hm_warn "Restore: zachowuję revoke serial=${serial}${cn:+ CN=${cn}} (R z bieżącego stanu)."
     fi
   done < "${live_index}"
   if [[ "${changed}" -eq 1 ]]; then

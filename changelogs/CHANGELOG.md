@@ -16,6 +16,14 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [vX.Y.Z]
 
+- Fix: fleet — remote `printf %q` + reject metaznaków; destrukcyjne na całej linii; report `issues` (+fallback `issue`); bez SC2259 (python <<<body)
+- Fix: webs delete — reload wg webserver z manifestu (nginx/apache ≠ ols); bez fałszywego „OLS przeładowany”
+- Fix: metrics/security ports — `ss` adres z `$5`; disk `--json` z `df -PT` (fstype≠device)
+- Fix: dashboard OLS — vhost `hmtools-dashboard-*` + listener 127.0.0.1; detach bez zmiany ownera; htpasswd stdin
+- Fix: vuln wp — feed/API z `\x1f` / `cut -f` (puste CVE nie znika z raportu)
+- Fix: openvpn Tab — klienci z `hm_ovpn_pki` (`…/server/hm/pki`); pomija CN server/ca
+- Fix: openvpn audit — fail2ban `<ADDR>`; ca rotate: cert/key dopiero w finish; CRL merge obu CA
+- Fix: openvpn restore — merge revoke po serialu (nie CN); pełna linia R z datą; tar z umask 077
 - Fix: openvpn config — `full`+IPv6: `redirect-gateway ipv6` / `block-ipv6`; keepalive raz z state
 - Fix: openvpn client show/list — sesja z `hm_ovpn_status_file`; kick `grep -F` + rc≠0 bez management
 - Fix: ufw remove — dokładny token To (80 ≠ 8080); whitelist z comment hmtools; remove from:IP rc≠0 gdy brak reguły

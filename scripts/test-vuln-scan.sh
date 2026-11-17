@@ -174,6 +174,19 @@ else
   ok "sekret z pliku poza wyjściem"
 fi
 
+# WP bez CVE: puste pole między tabami nie może zniknąć z raportu
+printf 'plugin\tcontact-form-7\t5.9\t\thigh\n' > "${TMP}/wp-empty-cve.feed"
+export HM_VULN_WP_FEED="${TMP}/wp-empty-cve.feed"
+unset HM_VULN_WP_ROOT HM_VULN_WP_API_FILE HM_VULN_WP_API_URL HM_VULN_WPSCAN_TOKEN HM_VULN_WP_FILE
+feed_loaded="$(mktemp "${TMP}/feed.XXXXXX")"
+hm_vuln_load_feed "${feed_loaded}"
+hm_vuln_reset
+hm_vuln_wp_match ex.pl plugin contact-form-7 5.1 "${feed_loaded}"
+js="$(hm_vuln_print_json 2>/dev/null || true)"
+printf '%s\n' "${js}" | grep -q 'contact-form-7' && ok "wp-empty-cve-item" || bad "wp-empty-cve-item"
+printf '%s\n' "${js}" | grep -qE '"id"[[:space:]]*:[[:space:]]*""' && ok "wp-empty-cve-id" || bad "wp-empty-cve-id"
+printf '%s\n' "${js}" | grep -qi 'high' && ok "wp-empty-cve-sev" || bad "wp-empty-cve-sev"
+
 rm -rf "${TMP}"
 unset HM_VULN_OS_FILE HM_VULN_CVE_MAP HM_VULN_WP_FEED HM_VULN_WP_FILE HM_VULN_WP_ROOT
 unset HM_VULN_PHP_VERSIONS HM_VULN_NODE_VERSIONS HM_VULN_OLS_VERSION HM_VULN_MARIADB_VERSION

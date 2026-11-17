@@ -72,7 +72,7 @@ printf '%s\n' $'22\ttcp\t0.0.0.0:22\tsshd' >"${fix}/ports.tsv"
 printf '%s\n' $'a.test\t0.40.1\t10.2.0' >"${fix}/node.tsv"
 printf '%s\n' $'web\tnginx\trunning\t8080' >"${fix}/docker.tsv"
 printf '%s\n' $'a.test\twww\t100\t50%\t1G\t' >"${fix}/limits.tsv"
-printf '%s\n' $'/\t40\t600\text4' >"${fix}/disk.tsv"
+printf '%s\n' $'/\t40\t600\text4\t/dev/sda1' >"${fix}/disk.tsv"
 printf '%s\n' $'app\t100' >"${fix}/mysql.tsv"
 printf '%s\n' $'a.test\ttrue\t200' >"${fix}/http.tsv"
 
@@ -194,14 +194,32 @@ set -e
 out="$(
   unset HM_JSON_DIR
   df() {
-    printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on' '/dev/sda1 1000 400 600 40% /data'
+    # jak df -PT
+    printf '%s\n' 'Filesystem     Type 1024-blocks Used Available Capacity Mounted on' \
+      '/dev/sda1      ext4       1000  400       600      40% /data'
   }
   hm_json_emit disk
 )"
 printf '%s\n' "${out}" >"${base}/df.json"
 python3 -m json.tool "${base}/df.json" >/dev/null && ok df-json || bad df-json
-python3 -c 'import json,sys; d=json.load(open(sys.argv[1],encoding="utf-8")); assert d["filesystems"][0]["mount"]=="/data" and d["filesystems"][0]["used_percent"]==40' "${base}/df.json" \
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1],encoding="utf-8")); f=d["filesystems"][0]; assert f["mount"]=="/data" and f["used_percent"]==40 and f["fstype"]=="ext4" and f["device"]=="/dev/sda1"' "${base}/df.json" \
   && ok df-parse || bad df-parse
+
+# ss -lntup: adres w $5 (nie $4)
+out="$(
+  unset HM_JSON_DIR
+  ss() {
+    printf '%s\n' \
+      'Netid State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process' \
+      'tcp   LISTEN 0      128          0.0.0.0:8099      0.0.0.0:*    users:(("nc",pid=9,fd=3))' \
+      'tcp   LISTEN 0      128        127.0.0.1:3306      0.0.0.0:*    users:(("mysqld",pid=1,fd=1))'
+  }
+  hm_json_emit ports
+)"
+printf '%s\n' "${out}" >"${base}/ss.json"
+python3 -m json.tool "${base}/ss.json" >/dev/null && ok ss-json || bad ss-json
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1],encoding="utf-8")); ports={p["port"] for p in d["ports"]}; assert 8099 in ports and 3306 not in ports' "${base}/ss.json" \
+  && ok ss-parse || bad ss-parse
 
 set +e
 (

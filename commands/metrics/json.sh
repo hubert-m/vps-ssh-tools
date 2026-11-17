@@ -298,10 +298,12 @@ hm_rows_ports() {
   fi
   local line proto addr port proc re
   re='users:\(\("([^"]+)"'
+  # ss -lntup: Netid State Recv-Q Send-Q LocalAddress:Port … → adres w $5
   while IFS= read -r line; do
     [[ -n "${line}" ]] || continue
-    proto="${line%% *}"
-    addr="$(printf '%s\n' "${line}" | awk '{ print $4 }')"
+    [[ "${line}" == Netid* || "${line}" == State* ]] && continue
+    proto="$(printf '%s\n' "${line}" | awk '{ print $1 }')"
+    addr="$(printf '%s\n' "${line}" | awk '{ print $5 }')"
     case "${addr}" in
       0.0.0.0:*|\[::\]:*|\*:*) ;;
       *) continue ;;
@@ -409,14 +411,16 @@ hm_rows_disk() {
     hm_err "Brak df."
     return 1
   fi
-  df -P 2>/dev/null | awk 'NR>1 && NF>=6 {
-    cap=$5
+  # df -PT: Filesystem Type 1024-blocks Used Available Capacity Mounted on
+  df -PT 2>/dev/null | awk 'NR>1 && NF>=7 {
+    device=$1
+    fstype=$2
+    avail=$5
+    cap=$6
     gsub(/%/,"",cap)
-    avail=$4
-    fs=$1
-    mount=$6
-    for (i=7; i<=NF; i++) mount=mount " " $i
-    printf "%s\t%s\t%s\t%s\n", mount, cap, avail, fs
+    mount=$7
+    for (i=8; i<=NF; i++) mount=mount " " $i
+    printf "%s\t%s\t%s\t%s\t%s\n", mount, cap, avail, fstype, device
   }' || {
     hm_err "df nie zwrócił listy systemów plików."
     return 1
@@ -514,7 +518,7 @@ hm_json_emit() {
       hm_json_table sites "domain:s,user:s,disk_bytes:n,cpu:s,mem:s,io:s" hm_rows_limits "$@"
       ;;
     disk)
-      hm_json_table filesystems "mount:s,used_percent:n,avail_kb:n,fstype:s" hm_rows_disk "$@"
+      hm_json_table filesystems "mount:s,used_percent:n,avail_kb:n,fstype:s,device:s" hm_rows_disk "$@"
       ;;
     mysql)
       hm_json_table databases "name:s,size_bytes:n" hm_rows_mysql "$@"

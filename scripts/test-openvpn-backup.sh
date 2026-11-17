@@ -162,13 +162,25 @@ printf 'client-to-client\npush "dhcp-option DNS 9.9.9.9"\nport 1194\n' > "${root
   # odśwież manifest nie wymagany dla tego testu merge — użyjemy snapshot ścieżek
   true
 )
-# przygotuj live R i snap merge bezpośrednio
+# merge po serialu: pełna linia R z datą; lap ≠ laptop; reissue (stary R, nowy V)
 live_idx="${root}/live-index.txt"
-printf 'R\t270101000000Z\t270102000000Z\t01\tunknown\t/CN=laptop\n' > "${live_idx}"
 dest_idx="${root}/dest-index.txt"
+printf 'R\t270101000000Z\t270102000000Z\t01\tunknown\t/CN=laptop\n' > "${live_idx}"
 printf 'V\t270101000000Z\t\t01\tunknown\t/CN=laptop\n' > "${dest_idx}"
 hm_ovpn_merge_revokes "${live_idx}" "${dest_idx}"
-grep -qE '^R[[:space:]].*/CN=laptop' "${dest_idx}" && ok revoke-merge || bad revoke-merge
+grep -qE '^R[[:space:]].*270102000000Z[[:space:]].*01.*/CN=laptop' "${dest_idx}" && ok revoke-merge || bad revoke-merge
+# prefix CN: revoke lap nie rusza laptop
+printf 'R\t270101000000Z\t270103000000Z\t0A\tunknown\t/CN=lap\n' > "${live_idx}"
+printf 'V\t270101000000Z\t\t0A\tunknown\t/CN=lap\nV\t270101000000Z\t\t0B\tunknown\t/CN=laptop\n' > "${dest_idx}"
+hm_ovpn_merge_revokes "${live_idx}" "${dest_idx}"
+grep -qE '^R[[:space:]].*0A.*/CN=lap' "${dest_idx}" || { bad revoke-prefix-lap; }
+grep -qE '^V[[:space:]].*0B.*/CN=laptop' "${dest_idx}" && ok revoke-prefix-laptop || bad revoke-prefix-laptop
+# reissue: serial 01=R, serial 02=V tego samego CN — tylko 01 → R
+printf 'R\t270101000000Z\t270104000000Z\t01\tunknown\t/CN=jan\nV\t280101000000Z\t\t02\tunknown\t/CN=jan\n' > "${live_idx}"
+printf 'V\t270101000000Z\t\t01\tunknown\t/CN=jan\nV\t280101000000Z\t\t02\tunknown\t/CN=jan\n' > "${dest_idx}"
+hm_ovpn_merge_revokes "${live_idx}" "${dest_idx}"
+grep -qE '^R[[:space:]].*270104000000Z[[:space:]].*01.*/CN=jan' "${dest_idx}" \
+  && grep -qE '^V[[:space:]].*02.*/CN=jan' "${dest_idx}" && ok revoke-reissue || bad revoke-reissue
 
 # legacy dir bez ca.crt → odmowa
 mkdir -p "${root}/junk"

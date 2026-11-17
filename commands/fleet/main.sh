@@ -173,16 +173,31 @@ hm_fleet_ssh_keyscan() {
   return 0
 }
 
+# Komenda hmtools bez metaznaków powłoki (zdalny ssh skleja argv w shell).
+hm_fleet_validate_cmd() {
+  local cmd="${1:-}"
+  [[ -n "${cmd}" ]] || { hm_err "Pusta komenda fleet."; return 1; }
+  if [[ "${cmd}" =~ [\;\|\&\$\`\<\>\(\)\{\}] ]]; then
+    hm_err "Niedozwolone metaznaki w komendzie fleet (;|&\$\`<>(){})."
+    return 1
+  fi
+  return 0
+}
+
 hm_fleet_remote() {
   local name="$1" remote_cmd="$2"
-  local line user host port tags
+  local line user host port tags qcmd remote_one
+  hm_fleet_validate_cmd "${remote_cmd}" || return 1
   line="$(hm_fleet_host_line "${name}")" || {
     hm_err "Brak hosta w inwentarzu: ${name}"
     return 1
   }
   IFS=$'\t' read -r _ user host port tags _ <<<"${line}"
   hm_fleet_ssh_target "${user}" "${host}" "${port}"
-  local -a ssh_cmd=("${HM_FLEET_SSH_CMD[@]}" -- "${HM_FLEET_REMOTE_BIN}" -c "${remote_cmd}")
+  # Jedna zdalna komenda z printf %q — bez interpretacji ; $() przez shell sshd.
+  qcmd="$(printf '%q' "${remote_cmd}")"
+  remote_one="${HM_FLEET_REMOTE_BIN} -c ${qcmd}"
+  local -a ssh_cmd=("${HM_FLEET_SSH_CMD[@]}" -- "${remote_one}")
   local rc=0 out
   if declare -F hm_run_timeout >/dev/null 2>&1; then
     out="$(hm_run_timeout "${HM_FLEET_TIMEOUT}" "${ssh_cmd[@]}" 2>&1)" || rc=$?
@@ -199,7 +214,8 @@ hm_fleet_remote() {
 hm_fleet_is_destructive() {
   local cmd="${1:-}"
   [[ -z "${cmd}" ]] && return 1
-  if printf '%s\n' "${cmd}" | grep -Eqi '(^|[[:space:]/])(uninstall|delete|purge|drop|revoke|destroy|wipe|erase|format|truncate|poweroff|reboot|shutdown|halt)([[:space:]]|$)'; then
+  # Cała linia (także po ;|&) — nie tylko pierwsze słowo.
+  if printf '%s\n' "${cmd}" | grep -Eqi '(^|[[:space:]/;|&])(uninstall|delete|purge|drop|revoke|destroy|wipe|erase|format|truncate|poweroff|reboot|shutdown|halt)([[:space:]/;|&]|$)'; then
     return 0
   fi
   if printf '%s\n' "${cmd}" | grep -Eqi '(webs[[:space:]]+(delete|remove|destroy)|users[[:space:]]+del|backup[[:space:]]+prune|openvpn[[:space:]]+(revoke|uninstall)|uninstall-hmtools)'; then
@@ -497,6 +513,7 @@ hm_fleet_run() {
     hm_err "Użycie: fleet run [opcje] -- \"<komenda hmtools>\""
     return 1
   }
+  hm_fleet_validate_cmd "${remote_cmd}" || return 1
   local -a hosts=()
   mapfile -t hosts < <(hm_fleet_select_hosts "" "${HM_FLEET_OPT_TAGS}")
   if hm_fleet_is_destructive "${remote_cmd}"; then
@@ -611,13 +628,13 @@ hm_fleet_backup_status() {
       hm_table_row "${name}" "?" "?" "ssh"
       continue
     fi
-    n="$(printf '%s' "${body}" | python3 -c 'import json,sys
+    n="$(python3 -c 'import json,sys
 try:
  d=json.load(sys.stdin)
  print(len(d.get("snapshots") or []))
 except Exception:
- print("?")' 2>/dev/null <<<"${body}")"
-    stamp="$(printf '%s' "${body}" | python3 -c 'import json,sys
+ print("?")' <<<"${body}" 2>/dev/null)"
+    stamp="$(python3 -c 'import json,sys
 try:
  d=json.load(sys.stdin)
  s=d.get("snapshots") or []
@@ -625,8 +642,8 @@ try:
  s=sorted(s,key=lambda x:x.get("stamp",""),reverse=True)
  print(s[0].get("stamp","?"))
 except Exception:
- print("?")' 2>/dev/null <<<"${body}")"
-    ok="$(printf '%s' "${body}" | python3 -c 'import json,sys
+ print("?")' <<<"${body}" 2>/dev/null)"
+    ok="$(python3 -c 'import json,sys
 try:
  d=json.load(sys.stdin)
  s=d.get("snapshots") or []
@@ -634,7 +651,7 @@ try:
  s=sorted(s,key=lambda x:x.get("stamp",""),reverse=True)
  print("ok" if s[0].get("ok") else "fail")
 except Exception:
- print("?")' 2>/dev/null <<<"${body}")"
+ print("?")' <<<"${body}" 2>/dev/null)"
     hm_table_row "${name}" "${n:-?}" "${stamp:-?}" "${ok:-?}"
   done
   hm_table_print
@@ -656,7 +673,7 @@ hm_fleet_ssl() {
       hm_table_row "${name}" "?" "?" "?"
       continue
     fi
-    read -r total soon exp <<<"$(printf '%s' "${body}" | python3 -c 'import json,sys
+    read -r total soon exp <<<"$(python3 -c 'import json,sys
 try:
  d=json.load(sys.stdin)
  rows=d.get("certs") or []
@@ -665,7 +682,7 @@ try:
  ex=sum(1 for r in rows if str(r.get("status","")).upper() in ("WYGASŁ","WYGAS","EXPIRED"))
  print(t,so,ex)
 except Exception:
- print("? ? ?")' 2>/dev/null <<<"${body}")"
+ print("? ? ?")' <<<"${body}" 2>/dev/null)"
     hm_table_row "${name}" "${total}" "${soon}" "${exp}"
   done
   hm_table_print
@@ -688,23 +705,28 @@ hm_fleet_report() {
       hm_err "Brak raportu (SSH/timeout)"
       continue
     fi
-    issues="$(printf '%s' "${body}" | python3 -c 'import json,sys
+    issues="$(python3 -c 'import json,sys
 try:
  d=json.load(sys.stdin)
  sec=d.get("sections") or []
- print(sum(1 for s in sec if isinstance(s,dict) and s.get("issues")))
+ def n(s):
+  v=s.get("issues")
+  if v is None: v=s.get("issue")
+  return 1 if v else 0
+ print(sum(n(s) for s in sec if isinstance(s,dict)))
 except Exception:
- print("?")' 2>/dev/null <<<"${body}")"
-    sections="$(printf '%s' "${body}" | python3 -c 'import json,sys
+ print("?")' <<<"${body}" 2>/dev/null)"
+    sections="$(python3 -c 'import json,sys
 try:
  d=json.load(sys.stdin)
  for s in d.get("sections") or []:
   if not isinstance(s,dict): continue
   t=s.get("title") or "?"
-  iss=s.get("issues") or 0
+  iss=s.get("issues")
+  if iss is None: iss=s.get("issue") or 0
   print(f"  - {t}: issues={iss}")
 except Exception:
- print("  (parse error)")' 2>/dev/null <<<"${body}")"
+ print("  (parse error)")' <<<"${body}" 2>/dev/null)"
     echo "  Sekcje z problemami: ${issues}"
     printf '%s\n' "${sections}"
   done

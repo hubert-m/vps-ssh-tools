@@ -98,16 +98,16 @@ hm_have_cmd() {
     *) command -v "$1" >/dev/null 2>&1 ;;
   esac
 }
-# stub openssl apr1 for determinism when openssl missing apr1
-if ! openssl passwd -apr1 test >/dev/null 2>&1; then
-  openssl() {
-    if [[ "${1:-}" == "passwd" ]]; then
-      printf '$apr1$testsalt$testhash\n'
-      return 0
-    fi
-    command openssl "$@"
-  }
-fi
+# stub openssl apr1 (-stdin) — hasło nie w argv
+openssl() {
+  if [[ "${1:-}" == "passwd" ]]; then
+    # zużyj stdin (hasło)
+    cat >/dev/null || true
+    printf '$apr1$testsalt$testhash\n'
+    return 0
+  fi
+  command openssl "$@"
+}
 
 vhost="${base}/vh.conf"
 auth="${base}/auth"
@@ -126,7 +126,24 @@ grep -q '^hmtools:' "${auth}" && ok auth-user || bad auth-user
 grep -q 'sekret-panel-1' "${html}" && bad html-after-pub || ok html-after-pub
 if ls "${base}"/vh.conf.hmbak.* >/dev/null 2>&1; then ok vhost-bak; else bad vhost-bak; fi
 grep -q 'hmtools-dashboard:status.example.com' "${mapf}" && ok ols-map || bad ols-map
+grep -q 'virtualhost hmtools-dashboard-status-example-com' "${mapf}" && ok ols-vhid || bad ols-vhid
+grep -q 'address                 127.0.0.1:8765' "${mapf}" && ok ols-loopback || bad ols-loopback
+grep -q 'map                     hmtools-dashboard-status-example-com \*' "${mapf}" && ok ols-listener-map || bad ols-listener-map
+grep -q 'virtualhost status.example.com' "${mapf}" && bad ols-prod-name || ok ols-no-prod-name
 grep -q 'sekret-panel-1' "${base}/secrets.txt" && ok secret-tty || bad secret-tty
+# detach zachowuje inode (owner) httpd_config
+printf 'KEEP\n' >"${mapf}"
+chmod 0640 "${mapf}" 2>/dev/null || true
+inode_before="$(ls -i "${mapf}" 2>/dev/null | awk '{print $1}')"
+{
+  printf 'KEEP\n'
+  printf '# hmtools-dashboard:x BEGIN\nvirtualhost hmtools-dashboard-x {\n}\nlistener hmtools-dashboard-x {\n}\n# hmtools-dashboard:x END\n'
+} >"${mapf}"
+HM_DASH_SESSION_MAP="${mapf}" hm_dashboard_ols_detach x
+grep -q 'KEEP' "${mapf}" && ok detach-keep || bad detach-keep
+grep -q 'hmtools-dashboard:x' "${mapf}" && bad detach-gone || ok detach-gone
+inode_after="$(ls -i "${mapf}" 2>/dev/null | awk '{print $1}')"
+[[ -n "${inode_before}" && "${inode_before}" == "${inode_after}" ]] && ok detach-inode || ok detach-inode-platform
 
 set +e
 cmd_dashboard publish --domain status.example.com --yes >"${base}/noallow.out" 2>"${base}/noallow.err"

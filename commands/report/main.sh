@@ -525,7 +525,7 @@ hm_report_json() {
     local title body
     title="$(hm_json_escape "${HM_REPORT_TITLES[$i]}")"
     body="$(hm_json_escape "${HM_REPORT_BODIES[$i]}")"
-    printf '{"title":"%s","body":"%s","issue":%s}' "${title}" "${body}" "${HM_REPORT_ISSUES[$i]}"
+    printf '{"title":"%s","body":"%s","issues":%s}' "${title}" "${body}" "${HM_REPORT_ISSUES[$i]}"
   done
   printf ']}\n'
 }
