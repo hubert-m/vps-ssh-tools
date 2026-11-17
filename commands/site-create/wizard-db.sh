@@ -93,7 +93,7 @@ cmd_site_new() {
   local tx_resume=0 tx_rollback=0 profile_from="" save_profile=""
   local ops_cron="" ops_cmd="" ops_worker="" ops_n="1" ops_health="" ops_port="" ops_on=0
   local dotnet_ver="" dotnet_kind="aspnetcore-runtime" dotnet_source="microsoft-repo" app_dll="" dotnet_on=0
-  local python_ver="" python_source="uv" app_server="gunicorn" wsgi="config.wsgi" celery=0 python_on=0
+  local python_ver="" python_source="uv" app_server="gunicorn" wsgi="" celery=0 python_on=0
   local docker_on=0 docker_image="" docker_cport="80" spa_on=0 build_cmd="" build_out="dist"
   local -a redis_roles=()
   local a

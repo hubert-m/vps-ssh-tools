@@ -89,4 +89,17 @@ grep -q 'SECRET-PYTHON-KEY' "${HM_SITE_MANIFEST_DIR}/api.example.pl.json" && bad
 red="$(hm_python_redact "boot SECRET-PYTHON-KEY" "${HM_PYTHON_SECRET}")"
 printf '%s\n' "${red}" | grep -q 'SECRET-PYTHON-KEY' && bad secret-log || ok secret-log
 
+# Domyślny wsgi per framework
+[[ "$(hm_python_default_wsgi flask)" == "app:app" ]] && ok default-flask || bad default-flask
+[[ "$(hm_python_default_wsgi fastapi)" == "main:app" ]] && ok default-fastapi || bad default-fastapi
+[[ "$(hm_python_default_wsgi django)" == "config.wsgi" ]] && ok default-django || bad default-django
+
+# Flask: ExecStart z app:app + placeholder
+: > "${HM_PYTHON_SYSTEMCTL_LOG}"
+hm_site_python_provision flask.example.pl 3.13 uv flask gunicorn "" 0 8010 >/dev/null || bad flask-prov
+funit="${HM_SYSTEMD_UNIT_DIR}/hm-app-flask.example.pl.service"
+grep -q 'app:app' "${funit}" && ok flask-wsgi || bad flask-wsgi
+[[ -f "${HM_SITE_HOME_BASE}/flask.example.pl/current/app.py" ]] && ok flask-placeholder || bad flask-placeholder
+[[ ! -f "${HM_SITE_VHOST_DIR}/flask.example.pl.conf" ]] && ok flask-no-vhost || bad flask-no-vhost
+
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

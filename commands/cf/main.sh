@@ -107,13 +107,34 @@ hm_cf_request() {
   return 1
 }
 
-# Zone ID z cache albo GET /zones?name=
+# Wyciągnij zone id z JSON odpowiedzi /zones.
+hm_cf_parse_zone_id() {
+  local body="$1" id
+  id="$(printf '%s\n' "${body}" | grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')"
+  if [[ -z "${id}" ]] && printf '%s\n' "${body}" | grep -q 'zone_id='; then
+    id="$(printf '%s\n' "${body}" | sed -n 's/.*zone_id=\([^[:space:]]*\).*/\1/p' | head -1)"
+  fi
+  # pusta lista stref
+  if [[ -z "${id}" ]] && printf '%s\n' "${body}" | grep -qE '"result"[[:space:]]*:[[:space:]]*\[\]'; then
+    printf ''
+    return 1
+  fi
+  printf '%s' "${id}"
+  [[ -n "${id}" ]]
+}
+
+# Zone ID z cache albo GET /zones?name= (subdomena → parent, aż znajdzie strefę).
 hm_cf_zone_id() {
-  local domain="$1" cache line id body
+  local domain="$1" cache id body cand
   mkdir -p "$(hm_cf_state_dir)"
   cache="$(hm_cf_zone_cache)"
   if [[ -f "${cache}" ]]; then
-    id="$(awk -F '\t' -v d="${domain}" '$1==d { print $2; exit }' "${cache}")"
+    # najdłuższy sufiks z cache (shop.example.com → example.com)
+    id="$(awk -F '\t' -v d="${domain}" '
+      $1 == d { print $2; found=1; exit }
+      d ~ ("\\." $1 "$") { if (length($1) > bestlen) { best=$2; bestlen=length($1) } }
+      END { if (!found && best != "") print best }
+    ' "${cache}")"
     if [[ -n "${id}" ]]; then
       printf '%s\n' "${id}"
       return 0
@@ -123,18 +144,30 @@ hm_cf_zone_id() {
     printf '%s\n' "${HM_CF_ZONE_ID}"
     return 0
   fi
-  body="$(hm_cf_request GET "https://api.cloudflare.com/client/v4/zones?name=${domain}" 2>/dev/null)" || return 1
-  # prosty wyciąg id z JSON (mock: "id":"ZONEID")
-  id="$(printf '%s\n' "${body}" | grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')"
-  if [[ -z "${id}" ]]; then
-    # mock uproszczony: id=ZONE-<domena>
-    if printf '%s\n' "${body}" | grep -q 'zone_id='; then
-      id="$(printf '%s\n' "${body}" | sed -n 's/.*zone_id=\([^[:space:]]*\).*/\1/p' | head -1)"
+  cand="${domain}"
+  while [[ -n "${cand}" && "${cand}" == *.* ]]; do
+    body="$(hm_cf_request GET "https://api.cloudflare.com/client/v4/zones?name=${cand}" 2>/dev/null)" || {
+      # przy błędzie sieci/403 nie idź w górę w nieskończoność na tym samym błędzie
+      if [[ "${cand}" == "${domain}" ]]; then
+        return 1
+      fi
+      body=""
+    }
+    id=""
+    if [[ -n "${body}" ]]; then
+      id="$(hm_cf_parse_zone_id "${body}" 2>/dev/null || true)"
     fi
-  fi
-  [[ -n "${id}" ]] || { hm_err "Nie znaleziono zone id dla ${domain}."; return 1; }
-  printf '%s\t%s\n' "${domain}" "${id}" >> "${cache}"
-  printf '%s\n' "${id}"
+    if [[ -n "${id}" ]]; then
+      printf '%s\t%s\n' "${domain}" "${id}" >> "${cache}"
+      [[ "${cand}" != "${domain}" ]] && printf '%s\t%s\n' "${cand}" "${id}" >> "${cache}"
+      printf '%s\n' "${id}"
+      return 0
+    fi
+    cand="${cand#*.}"
+    [[ "${cand}" == *.* ]] || break
+  done
+  hm_err "Nie znaleziono zone id dla ${domain}."
+  return 1
 }
 
 hm_cf_fetch_url() {

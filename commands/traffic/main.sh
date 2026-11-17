@@ -6,11 +6,11 @@ Użycie:
   traffic [day|month]
   traffic sites [--since 24h]
   traffic now
-  traffic spikes
+  traffic spikes [--since 24h]
 
 Źródła (gdy brak HM_TRAFFIC_*): vnstat lub /proc/net/dev, logi /home/*/logs i OLS,
 połączenia z `ss`. Format: „IP domena bajty [cf=…]” albo combined (CLF/OLS).
-Adres cf= / CF-Connecting-IP wygrywa z brzegowym.
+Adres cf= / CF-Connecting-IP wygrywa z brzegowym. Domena z nazwy pliku / $host, nie z IP.
 EOF
 
 hm_traffic_tmp() {
@@ -23,6 +23,57 @@ hm_traffic_tmp() {
 
 hm_traffic_state_dir() {
   printf '%s\n' "${HM_TRAFFIC_DIR:-/var/lib/hmtools/traffic}"
+}
+
+hm_traffic_since_epoch() {
+  local since="${1:-}" now n u sec=0
+  now="$(date +%s)"
+  [[ -n "${since}" ]] || { printf '%s' 0; return 0; }
+  if [[ "${since}" =~ ^([0-9]+)([smhd])$ ]]; then
+    n="${BASH_REMATCH[1]}"
+    u="${BASH_REMATCH[2]}"
+    case "${u}" in
+      s) sec="${n}" ;;
+      m) sec=$((n * 60)) ;;
+      h) sec=$((n * 3600)) ;;
+      d) sec=$((n * 86400)) ;;
+    esac
+    printf '%s' "$((now - sec))"
+    return 0
+  fi
+  if date -d "${since}" +%s >/dev/null 2>&1; then
+    date -d "${since}" +%s
+    return 0
+  fi
+  printf '%s' 0
+}
+
+hm_traffic_epoch_cmp() {
+  local ep="${1:-0}"
+  [[ "${ep}" =~ ^[0-9]+$ && "${ep}" -gt 0 ]] || { printf '%s' 0; return 0; }
+  if date -d "@${ep}" +%Y%m%d%H%M%S >/dev/null 2>&1; then
+    date -d "@${ep}" +%Y%m%d%H%M%S
+    return 0
+  fi
+  if date -r "${ep}" +%Y%m%d%H%M%S >/dev/null 2>&1; then
+    date -r "${ep}" +%Y%m%d%H%M%S
+    return 0
+  fi
+  printf '%s' 0
+}
+
+hm_traffic_fmt_bytes() {
+  local n="${1:-0}"
+  [[ "${n}" =~ ^-?[0-9]+$ ]] || n=0
+  if command -v numfmt >/dev/null 2>&1; then
+    numfmt --to=iec --suffix=B "${n}" 2>/dev/null && return 0
+  fi
+  printf '%sB\n' "${n}"
+}
+
+hm_traffic_print_rx_tx() {
+  local rx="${1:-0}" tx="${2:-0}"
+  printf 'rx: %s\ntx: %s\n' "$(hm_traffic_fmt_bytes "${rx}")" "$(hm_traffic_fmt_bytes "${tx}")"
 }
 
 # vnstat --json → rx/tx dla dnia lub miesiąca (pierwszy interfejs, najnowszy wpis).
@@ -43,7 +94,7 @@ hm_traffic_vnstat() {
       if (mode == "in" && $0 ~ /"rx"/) rx = dig($0)
       if (mode == "in" && $0 ~ /"tx"/) tx = dig($0)
       if (mode == "in" && $0 ~ /\}/) {
-        if (rx >= 0 && tx >= 0) { printf "rx: %s\ntx: %s\n", rx, tx; found=1; exit }
+        if (rx >= 0 && tx >= 0) { printf "%s %s\n", rx, tx; found=1; exit }
         mode="want"
       }
     }
@@ -85,26 +136,72 @@ hm_traffic_proc_delta() {
     "${month_key}" "${month_rx0}" "${month_tx0}" \
     "${rx}" "${tx}" > "${snap}" 2>/dev/null || true
   if [[ "${which}" == "month" ]]; then
-    printf 'rx: %s\ntx: %s\n' "$((rx - month_rx0))" "$((tx - month_tx0))"
+    printf '%s %s\n' "$((rx - month_rx0))" "$((tx - month_tx0))"
   else
-    printf 'rx: %s\ntx: %s\n' "$((rx - day_rx0))" "$((tx - day_tx0))"
+    printf '%s %s\n' "$((rx - day_rx0))" "$((tx - day_tx0))"
   fi
 }
 
+# Suma body_bytes z access logów w oknie (TX przybliżony; RX=0).
+hm_traffic_logs_bytes() {
+  local since_cmp="$1" file total=0 list=0 tmp
+  tmp="$(hm_traffic_tmp)" || return 1
+  : > "${tmp}"
+  while IFS= read -r file; do
+    [[ -n "${file}" && -f "${file}" ]] || continue
+    list=1
+    export HM_TRAFFIC_DOM
+    HM_TRAFFIC_DOM="$(hm_traffic_domain_from_path "${file}")"
+    if [[ "${file}" == *.gz ]]; then
+      gzip -dc -- "${file}" | awk -v since_cmp="${since_cmp}" "${hm_traffic_awk}"' END { t=0; for (d in sum) t+=sum[d]; print t+0 }'
+    else
+      awk -v since_cmp="${since_cmp}" "${hm_traffic_awk}"' END { t=0; for (d in sum) t+=sum[d]; print t+0 }' "${file}"
+    fi
+  done < <(hm_traffic_iter_logs) >> "${tmp}"
+  if [[ "${list}" -eq 0 ]]; then
+    rm -f "${tmp}"
+    return 1
+  fi
+  total="$(awk '{ s+=$1 } END { print s+0 }' "${tmp}")"
+  rm -f "${tmp}"
+  printf '0 %s\n' "${total}"
+}
+
 hm_traffic_day() {
-  local which="${1:-day}"
+  local which="${1:-day}" pair rx tx since_cmp
   if [[ -n "${HM_TRAFFIC_COUNTERS:-}" && -f "${HM_TRAFFIC_COUNTERS}" ]]; then
-    awk -F= -v which="${which}" '
+    pair="$(awk -F= -v which="${which}" '
       $1 == "rx_" which { rx=$2 }
       $1 == "tx_" which { tx=$2 }
-      END { printf "rx: %s\ntx: %s\n", rx+0, tx+0 }
-    ' "${HM_TRAFFIC_COUNTERS}"
+      END { printf "%s %s\n", rx+0, tx+0 }
+    ' "${HM_TRAFFIC_COUNTERS}")"
+    rx="${pair%% *}"
+    tx="${pair##* }"
+    hm_traffic_print_rx_tx "${rx}" "${tx}"
     return 0
   fi
-  if hm_traffic_vnstat "${which}"; then
+  if pair="$(hm_traffic_vnstat "${which}")"; then
+    rx="${pair%% *}"
+    tx="${pair##* }"
+    hm_traffic_print_rx_tx "${rx}" "${tx}"
     return 0
   fi
-  if hm_traffic_proc_delta "${which}"; then
+  # Logi: day=24h, month=30d — różne okna (w odróżnieniu od surowego /proc).
+  if [[ "${which}" == "month" ]]; then
+    since_cmp="$(hm_traffic_epoch_cmp "$(hm_traffic_since_epoch 30d)")"
+  else
+    since_cmp="$(hm_traffic_epoch_cmp "$(hm_traffic_since_epoch 24h)")"
+  fi
+  if pair="$(hm_traffic_logs_bytes "${since_cmp}")"; then
+    rx="${pair%% *}"
+    tx="${pair##* }"
+    hm_traffic_print_rx_tx "${rx}" "${tx}"
+    return 0
+  fi
+  if pair="$(hm_traffic_proc_delta "${which}")"; then
+    rx="${pair%% *}"
+    tx="${pair##* }"
+    hm_traffic_print_rx_tx "${rx}" "${tx}"
     return 0
   fi
   hm_err "Brak liczników transferu."
@@ -164,7 +261,12 @@ hm_traffic_domain_from_path() {
 
 # Prosty „IP domena bajty [cf=]” oraz combined/CLF OLS.
 # ENV: HM_TRAFFIC_DOM — fallback domeny z ścieżki pliku.
+# -v since_cmp=YYYYMMDDHHMMSS|0 — filtr czasu linii CLF.
 hm_traffic_awk='
+  BEGIN {
+    split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec", _m, " ")
+    for (i = 1; i <= 12; i++) mon[_m[i]] = sprintf("%02d", i)
+  }
   function real_ip(line,   m) {
     if (match(line, /cf=[0-9A-Fa-f:.]+/)) return substr(line, RSTART+3, RLENGTH-3)
     if (match(line, /CF-Connecting-IP[:[:space:]"]*[0-9A-Fa-f:.]+/)) {
@@ -174,17 +276,35 @@ hm_traffic_awk='
     }
     return ""
   }
+  function is_ip(s) {
+    return (s ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ || s ~ /^[0-9A-Fa-f:]+$/)
+  }
   function is_host(s) {
+    if (s == "" || is_ip(s)) return 0
     return (s ~ /^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/ && s ~ /[.]/)
+  }
+  function clf_cmp(s,   m, dd, mo, yy, hh, mi, ss) {
+    if (!match(s, /\[[0-9]{2}\/[A-Za-z]{3}\/[0-9]{4}:[0-9]{2}:[0-9]{2}:[0-9]{2}/)) return ""
+    m = substr(s, RSTART + 1, RLENGTH - 1)
+    dd = substr(m, 1, 2); mo = substr(m, 4, 3); yy = substr(m, 8, 4)
+    hh = substr(m, 13, 2); mi = substr(m, 16, 2); ss = substr(m, 19, 2)
+    if (!(mo in mon)) return ""
+    return yy mon[mo] dd hh mi ss
+  }
+  function within_since(s,   ts) {
+    if (since_cmp == "" || since_cmp == "0") return 1
+    ts = clf_cmp(s)
+    if (ts == "") return 1
+    return (ts >= since_cmp)
   }
   {
     line = $0
+    if (!within_since(line)) next
     rip = real_ip(line)
     if (line ~ /\[[0-9]{2}\/[A-Za-z]{3}\/[0-9]{4}:/ || (NF >= 7 && $2 == "-" && $3 == "-")) {
       ip = $1
       if (rip != "") ip = rip
       bytes = 0
-      # "METHOD …" STATUS BYTES — cudzysłów jako \042
       if (match(line, /\042[A-Z]+[^\042]*\042[[:space:]]+[0-9]+[[:space:]]+([0-9]+|-)/)) {
         rest = substr(line, RSTART, RLENGTH)
         n = split(rest, a, /[[:space:]]+/)
@@ -198,14 +318,27 @@ hm_traffic_awk='
         s = substr(s, RSTART+RLENGTH)
         if (is_host(q)) dom = q
       }
-      if (dom == "" || ip == "") next
+      if (dom == "" || is_ip(dom) || ip == "") next
       req[dom]++; sum[dom]+=bytes
       ipn[ip]++
       next
     }
     ip = $1; dom = $2; bytes = $3 + 0
     if (rip != "") ip = rip
-    if (dom == "" || ip == "") next
+    # CF IP w $2 / ostatnie pole — nie traktuj jako domeny
+    if (!is_host(dom)) {
+      dom = ENVIRON["HM_TRAFFIC_DOM"]
+      if (NF >= 4 && is_host($2)) dom = $2
+      else if (NF >= 3 && $3 ~ /^[0-9]+$/ && is_host($2)) { dom = $2; bytes = $3 + 0 }
+      else if (!is_host(dom)) {
+        # IP CF_IP bytes → domena ze ścieżki
+        if (NF >= 3 && is_ip($2) && $3 ~ /^[0-9]+$/) {
+          dom = ENVIRON["HM_TRAFFIC_DOM"]
+          bytes = $3 + 0
+        }
+      }
+    }
+    if (dom == "" || is_ip(dom) || ip == "") next
     if (dom ~ /^[0-9]+$/ ) next
     req[dom]++; sum[dom]+=bytes
     ipn[ip]++
@@ -213,13 +346,14 @@ hm_traffic_awk='
 '
 
 hm_traffic_sites() {
-  local since="" file tmp list=0
+  local since="" file tmp list=0 since_cmp=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --since) since="${2:-}"; shift 2 || true ;;
       *) shift ;;
     esac
   done
+  since_cmp="$(hm_traffic_epoch_cmp "$(hm_traffic_since_epoch "${since}")")"
   tmp="$(hm_traffic_tmp)" || { hm_err "Brak katalogu logów."; return 1; }
   : > "${tmp}"
   while IFS= read -r file; do
@@ -228,9 +362,9 @@ hm_traffic_sites() {
     export HM_TRAFFIC_DOM
     HM_TRAFFIC_DOM="$(hm_traffic_domain_from_path "${file}")"
     if [[ "${file}" == *.gz ]]; then
-      gzip -dc -- "${file}" | awk "${hm_traffic_awk}"' END { for (d in req) printf "%s\t%s\t%s\n", d, req[d], sum[d] }'
+      gzip -dc -- "${file}" | awk -v since_cmp="${since_cmp}" "${hm_traffic_awk}"' END { for (d in req) printf "%s\t%s\t%s\n", d, req[d], sum[d] }'
     else
-      awk "${hm_traffic_awk}"' END { for (d in req) printf "%s\t%s\t%s\n", d, req[d], sum[d] }' "${file}"
+      awk -v since_cmp="${since_cmp}" "${hm_traffic_awk}"' END { for (d in req) printf "%s\t%s\t%s\n", d, req[d], sum[d] }' "${file}"
     fi
   done < <(hm_traffic_iter_logs) >> "${tmp}"
   if [[ "${list}" -eq 0 ]]; then
@@ -241,7 +375,7 @@ hm_traffic_sites() {
   awk -F '\t' '{ r[$1]+=$2; b[$1]+=$3 } END { for (d in r) printf "%s\t%s\t%s\n", d, r[d], b[d] }' "${tmp}"
   rm -f "${tmp}"
   if [[ -n "${since}" ]]; then
-    hm_info "Okno: ${since} (logi bez odcinania dat)."
+    hm_info "Okno: ${since}"
   fi
 }
 
@@ -288,7 +422,18 @@ hm_traffic_now() {
 }
 
 hm_traffic_spikes() {
-  local file tmp list=0
+  local file tmp list=0 since="" since_cmp=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --since) since="${2:-}"; shift 2 || true ;;
+      *) shift ;;
+    esac
+  done
+  # Filtr czasu tylko przy jawnym --since (inaczej cały dostępny log)
+  since_cmp=0
+  if [[ -n "${since}" ]]; then
+    since_cmp="$(hm_traffic_epoch_cmp "$(hm_traffic_since_epoch "${since}")")"
+  fi
   tmp="$(hm_traffic_tmp)" || { hm_err "Brak katalogu logów."; return 1; }
   : > "${tmp}"
   while IFS= read -r file; do
@@ -297,9 +442,9 @@ hm_traffic_spikes() {
     export HM_TRAFFIC_DOM
     HM_TRAFFIC_DOM="$(hm_traffic_domain_from_path "${file}")"
     if [[ "${file}" == *.gz ]]; then
-      gzip -dc -- "${file}" | awk "${hm_traffic_awk}"' END { for (i in ipn) printf "%s\t%s\n", i, ipn[i] }'
+      gzip -dc -- "${file}" | awk -v since_cmp="${since_cmp}" "${hm_traffic_awk}"' END { for (i in ipn) printf "%s\t%s\n", i, ipn[i] }'
     else
-      awk "${hm_traffic_awk}"' END { for (i in ipn) printf "%s\t%s\n", i, ipn[i] }' "${file}"
+      awk -v since_cmp="${since_cmp}" "${hm_traffic_awk}"' END { for (i in ipn) printf "%s\t%s\n", i, ipn[i] }' "${file}"
     fi
   done < <(hm_traffic_iter_logs) >> "${tmp}"
   if [[ "${list}" -eq 0 ]]; then
@@ -311,15 +456,22 @@ hm_traffic_spikes() {
     { n[$1]+=$2; total+=$2; u[$1]=1 }
     END {
       c=0; for (i in u) c++
-      if (c == 0) exit
+      if (c == 0) { print "brak skoków"; exit }
       avg=total/c
-      for (i in n) if (n[i] >= 4 && n[i] > avg * 3) {
-        printf "spike\t%s\t%d\n", i, n[i]
-        printf "hint\tsecurity ban %s\n", i
+      for (i in n) {
+        if ((n[i] >= 4 && n[i] > avg * 3) || (n[i] >= 10 && n[i] > avg * 2)) {
+          printf "spike\t%s\t%d\n", i, n[i]
+          printf "hint\tsecurity ban %s\n", i
+          hits++
+        }
       }
+      if (!hits) print "brak skoków"
     }
   ' "${tmp}"
   rm -f "${tmp}"
+  if [[ -n "${since}" ]]; then
+    hm_info "Okno: ${since}"
+  fi
 }
 
 hm_traffic_summary() {

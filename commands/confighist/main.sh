@@ -14,24 +14,67 @@ EOF
 
 hm_config_repo() { printf '%s\n' "${HM_CONFIG_GIT:-/var/lib/hmtools/confgit}"; }
 
-hm_config_is_secret() {
-  local path="$1" base
+# Ścieżka/nazwa wygląda na sekret (denylista).
+hm_config_is_secret_path() {
+  local path="$1" base low
   base="$(basename "${path}")"
+  low="$(printf '%s' "${path}" | tr '[:upper:]' '[:lower:]')"
   case "${base}" in
-    shadow|shadow-|gshadow|gshadow-|id_rsa|id_ed25519|rclone.conf|restic.pass|debian.cnf|sasl_passwd|hmtools.conf)
+    shadow|shadow-|gshadow|gshadow-|id_rsa|id_ed25519|rclone.conf|restic.pass|debian.cnf|sasl_passwd|hmtools.conf|pdns.conf)
       return 0
       ;;
+    *password*|*Password*|*PASSWORD*) return 0 ;;
   esac
   case "${base}" in
-    *.pass|*.key|*.pem) return 0 ;;
+    *.pass|*.key|*.pem|mysql-*.cf|*mysql*.cf) return 0 ;;
   esac
   case "${path}" in
     *token*|*Token*|*TOKEN*|*.pass|*.key|*.pem) return 0 ;;
+    */ssl/private/*|*/private/*) return 0 ;;
+    */cyberpanel/*|*/CyberPanel/*) return 0 ;;
+    */postfix/mysql*|*/dovecot/mysql*|*/powerdns/*) return 0 ;;
   esac
-  if [[ -f "${path}" ]] && grep -q 'BEGIN .*PRIVATE KEY' "${path}" 2>/dev/null; then
+  case "${low}" in
+    *password*|*secret*|*credential*) return 0 ;;
+  esac
+  return 1
+}
+
+# Treść wygląda na sekret (hasło/token w pliku konfiguracyjnym).
+hm_config_is_secret_content() {
+  local path="$1"
+  [[ -f "${path}" ]] || return 1
+  if grep -qE 'BEGIN [[:alnum:] ]*PRIVATE KEY' "${path}" 2>/dev/null; then
+    return 0
+  fi
+  # Typowe wpisy: password =, gmysql-password=, secret=, api_token=
+  if grep -qiE '(^|[^[:alnum:]_])(password|passwd|pass|secret|token|api[_-]?key|gmysql-password)[[:space:]]*[=:]' "${path}" 2>/dev/null; then
     return 0
   fi
   return 1
+}
+
+hm_config_is_secret() {
+  local path="$1"
+  hm_config_is_secret_path "${path}" && return 0
+  hm_config_is_secret_content "${path}" && return 0
+  return 1
+}
+
+# Dopisz ścieżkę do .gitignore repo (adnotacja, bez treści sekretu).
+hm_config_gitignore_secret() {
+  local repo="$1" rel="$2" gi note
+  gi="${repo}/.gitignore"
+  note="# secret-redacted: ${rel}"
+  mkdir -p "${repo}"
+  touch "${gi}"
+  if ! grep -qxF "${rel}" "${gi}" 2>/dev/null; then
+    printf '%s\n%s\n' "${note}" "${rel}" >> "${gi}"
+  fi
+  # .meta jest OK do trackowania
+  if ! grep -qxF '!**/*.meta' "${gi}" 2>/dev/null && ! grep -qxF '!.meta' "${gi}" 2>/dev/null; then
+    :
+  fi
 }
 
 hm_config_rel() {
@@ -104,14 +147,15 @@ hm_config_sync() {
     [[ -n "${rel}" ]] || continue
     dest="${repo}/${rel}"
     mkdir -p "$(dirname "${dest}")"
-    printf '%s\n' "${rel}" >> "${keep}"
     if hm_config_is_secret "${path}"; then
       hash="$(sha256sum "${path}" | awk '{ print $1 }')"
       printf 'sha256 %s\n' "${hash}" > "${dest}.meta"
       rm -f "${dest}"
+      hm_config_gitignore_secret "${repo}" "${rel}"
       printf '%s\n' "${rel}.meta" >> "${keep}"
       continue
     fi
+    printf '%s\n' "${rel}" >> "${keep}"
     cp -f "${path}" "${dest}"
     rm -f "${dest}.meta"
     mode="$(stat -c '%a' "${path}" 2>/dev/null || echo 644)"
@@ -124,7 +168,7 @@ hm_config_sync() {
     while IFS= read -r -d '' path; do
       rel="${path#"${repo}/"}"
       case "${rel}" in
-        .git|/*|.git/*|paths.txt|modes.tsv) continue ;;
+        .git|/*|.git/*|paths.txt|modes.tsv|.gitignore) continue ;;
       esac
       if ! grep -qxF "${rel}" "${keep}" 2>/dev/null; then
         rm -f "${path}"

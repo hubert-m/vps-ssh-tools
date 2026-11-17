@@ -72,6 +72,33 @@ cmd_mail senders >/dev/null
 [[ "$(grep -c notify "${root}/notify" 2>/dev/null || true)" -ge 1 ]] && ok senders-dedup-fx || bad senders-dedup-fx
 export HM_MAIL_DEDUP="${root}/dedup"
 
+# Jedna wiadomość: sasl + qmgr from= tego samego queue ID → count 1 (nie 2)
+cat > "${root}/mail-qid.log" <<'EOF'
+Nov 16 12:00:01 vps postfix/smtpd[1]: ABCDE1: client=x, sasl_username=q@example.com
+Nov 16 12:00:01 vps postfix/qmgr[2]: ABCDE1: from=<q@example.com>, size=10
+Nov 16 12:00:02 vps postfix/qmgr[2]: FFFFFF: from=<ext@other.com>, size=20
+Nov 16 12:00:03 vps postfix/pickup[3]: LOCAL1: uid=1000 from=<local@example.com>
+EOF
+export HM_MAIL_LOG="${root}/mail-qid.log"
+export HM_MAIL_SENDER_MAX=999
+: > "${root}/notify"
+outq="$(cmd_mail senders)"
+printf '%s\n' "${outq}" | grep -q $'q@example.com\t1' && ok senders-qid-once || bad senders-qid-once
+printf '%s\n' "${outq}" | grep -q 'ext@other.com' && bad senders-no-external || ok senders-no-external
+printf '%s\n' "${outq}" | grep -q $'local@example.com\t1' && ok senders-pickup || bad senders-pickup
+
+# --since filtruje po dacie syslog (stara linia odpada)
+cat > "${root}/mail-since.log" <<EOF
+Jan  1 00:00:01 vps postfix/smtpd[1]: OLD001: client=x, sasl_username=old@example.com
+$(date '+%b %e %H:%M:%S') vps postfix/smtpd[1]: NEW001: client=x, sasl_username=new@example.com
+EOF
+export HM_MAIL_LOG="${root}/mail-since.log"
+outs="$(cmd_mail senders --since 24h)"
+printf '%s\n' "${outs}" | grep -q 'old@example.com' && bad senders-since-old || ok senders-since-old
+printf '%s\n' "${outs}" | grep -q $'new@example.com\t1' && ok senders-since-new || bad senders-since-new
+export HM_MAIL_LOG="${root}/mail.log"
+export HM_MAIL_SENDER_MAX=1
+
 printf 'a@example.com\t100\t1000\nb@example.com\t950\t1000\n' > "${root}/quota"
 export HM_MAIL_QUOTA="${root}/quota"
 q="$(cmd_mail quota example.com)"

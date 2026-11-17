@@ -55,12 +55,12 @@ export HM_SITE_WEB_UPSTREAM=127.0.0.1:3007
 export HM_SITE_WEB_SOCK=/run/php/app.example.pl.sock
 export HM_SITE_WEB_LOGDIR=/home/app.example.pl/logs
 export HM_SITE_WEB_USER=app
-unset HM_SITE_WEB_PROXY_NAME HM_SITE_WEB_ALIASES_LINE HM_SITE_WEB_FORWARDED_PROTO HM_SITE_SSL HM_SITE_WEB_SSL
+unset HM_SITE_WEB_PROXY_NAME HM_SITE_WEB_ALIASES_LINE HM_SITE_WEB_SERVER_NAMES HM_SITE_WEB_FORWARDED_PROTO HM_SITE_SSL HM_SITE_WEB_SSL
 export HM_SITE_ALIASES=www
 for s in nginx apache ols; do
   for t in php-fpm proxy static spa; do
     got="${root}/${s}-${t}.conf"
-    unset HM_SITE_WEB_PROXY_NAME HM_SITE_WEB_ALIASES_LINE HM_SITE_WEB_FORWARDED_PROTO
+    unset HM_SITE_WEB_PROXY_NAME HM_SITE_WEB_ALIASES_LINE HM_SITE_WEB_SERVER_NAMES HM_SITE_WEB_FORWARDED_PROTO
     hm_site_web_render "${s}" "${t}" > "${got}"
     if diff -u "scripts/fixtures/vhost/${s}-${t}.conf" "${got}" >/dev/null; then
       ok "snap-${s}-${t}"
@@ -104,12 +104,21 @@ else
   bad "ols-dotfile-re"
 fi
 grep -q 'module cache' "${root}/ols-proxy.conf" && grep -q 'maxReqBodySize' "${root}/ols-proxy.conf" && ok "ols-proxy-tuning" || bad "ols-proxy-tuning"
-# --no-www: brak vhAliases; SSL → https w X-Forwarded-Proto
-unset HM_SITE_WEB_PROXY_NAME HM_SITE_WEB_ALIASES_LINE HM_SITE_WEB_FORWARDED_PROTO
+# nginx proxy: www w server_name (spójnie z OLS vhAliases)
+unset HM_SITE_WEB_PROXY_NAME HM_SITE_WEB_ALIASES_LINE HM_SITE_WEB_SERVER_NAMES HM_SITE_WEB_FORWARDED_PROTO
+export HM_SITE_ALIASES=www
+hm_site_web_render nginx proxy > "${root}/ngx-proxy-www.conf"
+grep -q 'server_name app.example.pl www.app.example.pl;' "${root}/ngx-proxy-www.conf" && ok "nginx-www" || bad "nginx-www"
+
+# --no-www: brak vhAliases / bez www w nginx; SSL → https w X-Forwarded-Proto
+unset HM_SITE_WEB_PROXY_NAME HM_SITE_WEB_ALIASES_LINE HM_SITE_WEB_SERVER_NAMES HM_SITE_WEB_FORWARDED_PROTO
 export HM_SITE_ALIASES=none HM_SITE_SSL=1
 hm_site_web_render ols proxy > "${root}/ols-proxy-nowww.conf"
 grep -q 'vhAliases' "${root}/ols-proxy-nowww.conf" && bad "ols-no-www" || ok "ols-no-www"
 grep -q 'X-Forwarded-Proto "https"' "${root}/ols-proxy-nowww.conf" && ok "ols-proto-ssl" || bad "ols-proto-ssl"
+hm_site_web_render nginx proxy > "${root}/ngx-proxy-nowww.conf"
+grep -q 'server_name app.example.pl;' "${root}/ngx-proxy-nowww.conf" \
+  && ! grep -q 'www.app.example.pl' "${root}/ngx-proxy-nowww.conf" && ok "nginx-no-www" || bad "nginx-no-www"
 unset HM_SITE_ALIASES HM_SITE_SSL
 export HM_SITE_ALIASES=www
 
@@ -149,6 +158,19 @@ fi
 
 out="${root}/new.out"
 export HM_SITE_SSL_LIVE="${root}/le/live"
+# runtime domyślnie node — potrzebny mock (W06: provision także bez --node)
+export HM_SITE_NODE_MOCK=1 HM_NODE_FETCH_MOCK=1
+export HM_NODE_INDEX_FILE="${root}/node-index.json"
+export HM_NODE_FETCH_BODY="${root}/nvm-install.sh"
+export HM_NODE_FETCH_LOG="${root}/node-fetch.log"
+export HM_SITE_NODE_LOG="${root}/node.log"
+printf '%s\n' '[{"version":"v24.11.1","lts":"Krypton","security":false}]' > "${HM_NODE_INDEX_FILE}"
+printf '%s\n' '#!/bin/bash' 'mkdir -p "$NVM_DIR"' 'echo ok > "$NVM_DIR/nvm.sh"' > "${HM_NODE_FETCH_BODY}"
+export HM_NODE_NVM_PIN_SHA256="$(sha256sum "${HM_NODE_FETCH_BODY}" | awk '{print $1}')"
+: > "${HM_NODE_FETCH_LOG}"
+: > "${HM_SITE_NODE_LOG}"
+# shellcheck disable=SC1091
+source lib/site/node.sh
 cmd_site_new app.example.pl --db none --webserver nginx --vhost-type proxy --proxy-port auto --ssl --yes >"${out}" 2>&1 || {
   bad "site-new-web"
   cat "${out}" >&2

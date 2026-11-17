@@ -1,7 +1,7 @@
 server {
     listen 80;
     listen [::]:80;
-    server_name {{DOMAIN}};
+    server_name {{SERVER_NAMES}};
     server_tokens off;
     root {{ROOT}};
     index index.php index.html;

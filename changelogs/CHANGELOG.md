@@ -16,6 +16,13 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [vX.Y.Z]
 
+- Fix: traffic — day≠month (logi 24h/30d + vnstat/proc); domena nie z IP CF; `--since` CLF; spikes + „brak skoków”; numfmt
+- Fix: mail senders — raz na queue ID; tylko SASL/pickup; `--since` filtruje syslog; bez zewnętrznych from=
+- Fix: vhost nginx — `server_name` z `www.<domena>` (jak OLS vhAliases); Node bez podwójnego zapisu vhosta (W06)
+- Fix: memory oom — `journalctl -k --since` bez `-b`; filtr `-- No entries --`; fallback kern.log/dmesg; test bez fixture
+- Fix: site new W07 — domyślny wsgi per framework (flask/fastapi/django); placeholder w `current/`; snippet static bez vhosta
+- Fix: cf — `hm_cf_zone_id` szuka strefy po sufiksie (subdomena → parent); test mock dla `shop.example.com`
+- Fix: config history — szersza denylista sekretów (cyberpanel/postfix/pdns/ssl/private) + skan `password=` → `.meta` + `.gitignore`
 - Fix: logs search — `--since`/`--until` po czasie linii CLF (awk); filtr IP/URL/status w jednym awk (także `.gz`)
 - Fix: mysql revoke/passwd/users — REVOKE bez „ALL, GRANT OPTION”; passwd wymaga TTY/`--secret-file`; EMPTY WARN; granty z `mysql.db`
 - Fix: users — klucz przed useradd + rollback; tylko https; filtr ssh-keygen; chage bez `|| true`; prompt „użytkownika”

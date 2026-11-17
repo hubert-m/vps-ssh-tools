@@ -43,9 +43,11 @@ source commands/traffic/main.sh
 source commands/report/main.sh
 
 day="$(cmd_traffic day)"
-printf '%s\n' "${day}" | grep -qx 'rx: 10' && ok day-rx || bad day-rx
+printf '%s\n' "${day}" | grep -Eqx 'rx: 10B?' && ok day-rx || bad day-rx
 month="$(cmd_traffic month)"
-printf '%s\n' "${month}" | grep -qx 'tx: 40' && ok month-tx || bad month-tx
+printf '%s\n' "${month}" | grep -Eqx 'tx: 40B?' && ok month-tx || bad month-tx
+# day ≠ month (osobne liczniki)
+printf '%s\n' "${day}" | grep -q 'rx: 10' && printf '%s\n' "${month}" | grep -q 'rx: 100' && ok day-ne-month || bad day-ne-month
 
 sites="$(cmd_traffic sites --since 24h)"
 printf '%s\n' "${sites}" | grep -q $'example.com\t12\t1200' && ok sites-example || bad sites-example
@@ -73,7 +75,7 @@ leftover="$(find "${root}/tmp" -type f 2>/dev/null | wc -l | tr -d ' ')"
 
 text="$(cmd_report weekly)"
 printf '%s\n' "${text}" | grep -q '## Ruch' && ok report || bad report
-printf '%s\n' "${text}" | grep -q 'rx: 100' && ok report-rx || bad report-rx
+printf '%s\n' "${text}" | grep -Eq 'rx: 100B?' && ok report-rx || bad report-rx
 
 # Combined / OLS + domena ze ścieżki /home/<domena>/logs
 unset HM_TRAFFIC_COUNTERS HM_TRAFFIC_LOGS HM_TRAFFIC_NOW
@@ -86,16 +88,20 @@ printf '%s\n' 'Inter-|   Receive                                                
   '  eth0: 1000 1 0 0 0 0 0 0 400 1 0 0 0 0 0 0' \
   '    lo: 9 1 0 0 0 0 0 0 9 1 0 0 0 0 0 0' > "${root}/proc/net.dev"
 
+# bez logów: proc delta (HM_TRAFFIC_LOGS pusty katalog / brak)
+mkdir -p "${root}/empty-logs"
+export HM_TRAFFIC_LOGS="${root}/empty-logs"
 # pierwszy odczyt ustawia baseline → delta 0
 d1="$(hm_traffic_day day)"
-printf '%s\n' "${d1}" | grep -qx 'rx: 0' && ok proc-base || bad proc-base
+printf '%s\n' "${d1}" | grep -Eqx 'rx: 0B?' && ok proc-base || bad proc-base
 # drugi odczyt po wzroście
 printf '%s\n' 'Inter-|   Receive                                                |  Transmit' \
   ' face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed' \
   '  eth0: 1500 2 0 0 0 0 0 0 700 2 0 0 0 0 0 0' \
   '    lo: 9 1 0 0 0 0 0 0 9 1 0 0 0 0 0 0' > "${root}/proc/net.dev"
 d2="$(hm_traffic_day day)"
-printf '%s\n' "${d2}" | grep -qx 'rx: 500' && ok proc-delta || bad proc-delta
+printf '%s\n' "${d2}" | grep -Eqx 'rx: 500B?' && ok proc-delta || bad proc-delta
+unset HM_TRAFFIC_LOGS
 
 {
   i=0
@@ -135,5 +141,36 @@ if ls "${root}/home/app.example.pl/logs"/.hm-traffic-* >/dev/null 2>&1; then
 else
   ok combined-tmp
 fi
+
+# CF IP jako ostatnie pole / $2 — nie domena
+mkdir -p "${root}/logs-cfip"
+printf '%s\n' \
+  '172.16.0.1 203.0.113.50 100' \
+  '172.16.0.1 example.com 100 203.0.113.50' > "${root}/logs-cfip/access.log"
+# domena ze ścieżki przy samym IP IP bytes
+mkdir -p "${root}/home/cfip.example/logs"
+printf '%s\n' '172.16.0.1 203.0.113.50 100' > "${root}/home/cfip.example/logs/access.log"
+export HM_TRAFFIC_LOGS="${root}/home/cfip.example/logs"
+cfip="$(cmd_traffic sites)"
+printf '%s\n' "${cfip}" | grep -q '203.0.113.50' && bad sites-cfip-dom || ok sites-cfip-dom
+printf '%s\n' "${cfip}" | grep -q $'cfip.example\t1\t100' && ok sites-cfip-path || bad sites-cfip-path
+
+# --since filtruje CLF (domena ze ścieżki /home/<domena>/logs)
+mkdir -p "${root}/home/since.example/logs"
+{
+  printf '198.51.100.1 - - [01/Jan/2020:00:00:00 +0000] "GET / HTTP/1.1" 200 10 "-" "x"\n'
+  printf '198.51.100.2 - - [%s] "GET / HTTP/1.1" 200 20 "-" "x"\n' "$(date -u '+%d/%b/%Y:%H:%M:%S +0000')"
+} > "${root}/home/since.example/logs/access.log"
+export HM_TRAFFIC_LOGS="${root}/home/since.example/logs"
+sin="$(cmd_traffic sites --since 24h)"
+printf '%s\n' "${sin}" | grep -q $'since.example\t1\t20' && ok sites-since || bad sites-since
+
+# spikes: brak skoku → komunikat
+mkdir -p "${root}/logs-flat"
+printf '%s\n' '1.1.1.1 a.example 10' '2.2.2.2 a.example 10' '3.3.3.3 a.example 10' \
+  > "${root}/logs-flat/access.log"
+export HM_TRAFFIC_LOGS="${root}/logs-flat"
+flat="$(cmd_traffic spikes)"
+printf '%s\n' "${flat}" | grep -q 'brak skoków' && ok spikes-none || bad spikes-none
 
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

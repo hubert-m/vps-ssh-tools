@@ -55,22 +55,60 @@ hm_mem_virt_block() {
   return 0
 }
 
+# 7d / 24h / 30m → fraza dla journalctl --since
+hm_mem_since_journal() {
+  local since="${1:-7d}"
+  if [[ "${since}" =~ ^([0-9]+)([smhd])$ ]]; then
+    local n="${BASH_REMATCH[1]}" u="${BASH_REMATCH[2]}" unit=""
+    case "${u}" in
+      s) unit="seconds" ;;
+      m) unit="minutes" ;;
+      h) unit="hours" ;;
+      d) unit="days" ;;
+    esac
+    printf '%s %s ago' "${n}" "${unit}"
+    return 0
+  fi
+  printf '%s' "${since}"
+}
+
+# Czy treść journala to realne logi (nie „-- No entries --”).
+hm_mem_oom_body_usable() {
+  local f="$1"
+  [[ -f "${f}" ]] || return 1
+  grep -vE '^[[:space:]]*$|^-- ' "${f}" | grep -q . 
+}
+
 hm_mem_oom_source() {
-  local tmp
+  local since="${1:-}" tmp jc_since f
   if [[ -n "${HM_MEM_OOM:-}" && -f "${HM_MEM_OOM}" ]]; then
     printf '%s\n' "${HM_MEM_OOM}"
     return 0
   fi
+  # W testach bez fixture — nie wołaj prawdziwego journalctl (niestabilne środowisko).
+  if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+    return 1
+  fi
   tmp="$(mktemp "${TMP_DIR:-${TMPDIR:-/tmp}}/hm-oom.XXXXXX")"
-  {
-    if command -v journalctl >/dev/null 2>&1; then
-      journalctl -k -b --no-pager 2>/dev/null || true
-    fi
-    if command -v dmesg >/dev/null 2>&1; then
-      dmesg 2>/dev/null || true
-    fi
-  } > "${tmp}"
-  if [[ ! -s "${tmp}" ]]; then
+  : > "${tmp}"
+  jc_since="$(hm_mem_since_journal "${since:-7d}")"
+  if command -v journalctl >/dev/null 2>&1; then
+    # bez -b: też poprzednie boote w oknie --since
+    journalctl -k -q --no-pager --since "${jc_since}" 2>/dev/null | grep -vE '^-- ' >> "${tmp}" || true
+  fi
+  if ! hm_mem_oom_body_usable "${tmp}"; then
+    : > "${tmp}"
+    for f in /var/log/kern.log /var/log/kern.log.1 /var/log/messages; do
+      [[ -f "${f}" ]] || continue
+      # proste okno: ostatnie 5000 linii (daty filtruje awk poniżej przy potrzebie)
+      tail -n 5000 "${f}" 2>/dev/null >> "${tmp}" || true
+    done
+  fi
+  if ! hm_mem_oom_body_usable "${tmp}" && command -v dmesg >/dev/null 2>&1; then
+    : > "${tmp}"
+    dmesg 2>/dev/null | grep -vE '^-- ' >> "${tmp}" || true
+  fi
+  if ! hm_mem_oom_body_usable "${tmp}"; then
     rm -f "${tmp}"
     return 1
   fi
@@ -85,7 +123,7 @@ hm_mem_oom() {
       *) shift ;;
     esac
   done
-  file="$(hm_mem_oom_source)" || { hm_err "Brak journala OOM."; return 1; }
+  file="$(hm_mem_oom_source "${since}")" || { hm_err "Brak journala OOM."; return 1; }
   [[ "${file}" == "${HM_MEM_OOM:-}" ]] || tmp=1
   awk -v map="${map}" '
     function site_of(task, cg,   line, a, s) {
@@ -102,6 +140,7 @@ hm_mem_oom() {
       }
       return ""
     }
+    /^-- / { next }
     /oom-kill/ || /Killed process/ || /Out of memory/ {
       task=""; pid=""; rss=""; cg=""
       if (match($0, /task=[^, ]+/)) task=substr($0, RSTART+5, RLENGTH-5)
@@ -126,8 +165,10 @@ hm_mem_oom() {
     }
   ' "${file}"
   [[ "${tmp}" -eq 1 ]] && rm -f "${file}"
-  if [[ -n "${since}" ]]; then
-    hm_info "Okno: ${since} (bez odcinania dat w fixture)."
+  if [[ -n "${since}" && -n "${HM_MEM_OOM:-}" ]]; then
+    hm_info "Okno: ${since} (fixture — bez odcinania dat)."
+  elif [[ -n "${since}" ]]; then
+    hm_info "Okno journalctl: $(hm_mem_since_journal "${since}")"
   fi
 }
 

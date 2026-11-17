@@ -193,11 +193,20 @@ hm_site_web_render_prepare() {
     case "${aliases}" in
       ""|none|off|0|no|false)
         HM_SITE_WEB_ALIASES_LINE=""
+        HM_SITE_WEB_SERVER_NAMES="${domain}"
         ;;
       *)
         HM_SITE_WEB_ALIASES_LINE="vhAliases                 www.${domain}"
+        HM_SITE_WEB_SERVER_NAMES="${domain} www.${domain}"
         ;;
     esac
+  fi
+  if [[ -z "${HM_SITE_WEB_SERVER_NAMES:-}" ]]; then
+    if [[ -n "${HM_SITE_WEB_ALIASES_LINE}" ]]; then
+      HM_SITE_WEB_SERVER_NAMES="${domain} www.${domain}"
+    else
+      HM_SITE_WEB_SERVER_NAMES="${domain}"
+    fi
   fi
   if [[ -z "${HM_SITE_WEB_FORWARDED_PROTO:-}" ]]; then
     if [[ "${ssl}" == "1" || "${ssl}" == "true" || "${ssl}" == "yes" ]]; then
@@ -215,6 +224,7 @@ hm_site_web_render() {
   hm_site_web_render_prepare
   text="$(cat "${tpl}")"
   text="${text//\{\{DOMAIN\}\}/${HM_SITE_WEB_DOMAIN}}"
+  text="${text//\{\{SERVER_NAMES\}\}/${HM_SITE_WEB_SERVER_NAMES}}"
   text="${text//\{\{ROOT\}\}/${HM_SITE_WEB_ROOT}}"
   text="${text//\{\{UPSTREAM\}\}/${HM_SITE_WEB_UPSTREAM}}"
   text="${text//\{\{SOCK\}\}/${HM_SITE_WEB_SOCK}}"
@@ -278,7 +288,7 @@ hm_site_web_enable_https() {
           *'listen [::]:80;'*) line='    listen [::]:443 ssl;' ;;
         esac
         body+="${line}"$'\n'
-        if [[ "${line}" == *"server_name ${domain};"* ]]; then
+        if [[ "${line}" == *"server_name "* ]]; then
           body+="    ssl_certificate ${cert};"$'\n'
           body+="    ssl_certificate_key ${key};"$'\n'
         fi
@@ -287,7 +297,7 @@ hm_site_web_enable_https() {
 server {
     listen 80;
     listen [::]:80;
-    server_name ${domain};
+    server_name ${HM_SITE_WEB_SERVER_NAMES:-${domain}};
     server_tokens off;
     root ${HM_SITE_WEB_ROOT};
     location ^~ /.well-known/acme-challenge/ { root ${HM_SITE_WEB_ROOT}; }
@@ -514,7 +524,7 @@ hm_site_web_apply_proxy() {
   HM_SITE_WEB_LOGDIR="$(hm_site_home "${domain}")/logs"
   HM_SITE_WEB_USER="$(hm_site_unix_user "${domain}")"
   HM_SITE_WEB_SOCK="/run/php/${domain}.sock"
-  unset HM_SITE_WEB_PROXY_NAME HM_SITE_WEB_ALIASES_LINE HM_SITE_WEB_FORWARDED_PROTO
+  unset HM_SITE_WEB_PROXY_NAME HM_SITE_WEB_ALIASES_LINE HM_SITE_WEB_SERVER_NAMES HM_SITE_WEB_FORWARDED_PROTO
   local server="${HM_SITE_WEBSERVER:-nginx}"
   local body dest
   body="$(hm_site_web_render "${server}" "${kind}")" || return 1
@@ -613,7 +623,7 @@ hm_site_web_provision() {
   HM_SITE_WEB_SOCK="/run/php/${domain}.sock"
   HM_SITE_WEB_SSL="${ssl}"
   HM_SITE_SSL="${ssl}"
-  unset HM_SITE_WEB_PROXY_NAME HM_SITE_WEB_ALIASES_LINE HM_SITE_WEB_FORWARDED_PROTO
+  unset HM_SITE_WEB_PROXY_NAME HM_SITE_WEB_ALIASES_LINE HM_SITE_WEB_SERVER_NAMES HM_SITE_WEB_FORWARDED_PROTO
   if [[ "${server}" == "ols" && "${kind}" == "php-fpm" && -n "${php_ver}" && -n "${OLS_VHOSTS:-}" ]] \
     && declare -F hm_sc_write_vhconf >/dev/null 2>&1; then
     hm_sc_write_vhconf "${domain}" "${php_ver}" "${user}" "admin@${domain}" || return 1

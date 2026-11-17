@@ -34,6 +34,12 @@ printf '%s\n' '-----BEGIN PRIVATE KEY-----' > "${src}/etc/custom.pem"
 printf '%s\n' 'PASS=SECRET-HM' > "${src}/etc/hmtools.conf"
 printf '%s\n' 'SECRET-DEB' > "${src}/etc/debian.cnf"
 printf '%s\n' 'cf-token-value' > "${src}/etc/cloudflare.token"
+mkdir -p "${src}/etc/cyberpanel" "${src}/etc/postfix" "${src}/etc/powerdns" "${src}/etc/ssl/private"
+printf '%s\n' 'mysql-root-secret' > "${src}/etc/cyberpanel/mysqlPassword"
+printf '%s\n' 'user = mail\npassword = postfix-secret-XYZ' > "${src}/etc/postfix/mysql-virtual.cf"
+printf '%s\n' 'gmysql-password=pdns-secret-ABC' > "${src}/etc/powerdns/pdns.conf"
+printf '%s\n' 'host=db' 'password = inline-secret-123' > "${src}/etc/app-with-pass.conf"
+printf '%s\n' 'PRIVATE' > "${src}/etc/ssl/private/site.key"
 chmod 0640 "${src}/etc/a.conf" || true
 cat > "${HM_CONFIG_PATHS}" <<EOF
 ${src}/etc/a.conf
@@ -46,6 +52,11 @@ ${src}/etc/custom.pem
 ${src}/etc/hmtools.conf
 ${src}/etc/debian.cnf
 ${src}/etc/cloudflare.token
+${src}/etc/cyberpanel/mysqlPassword
+${src}/etc/postfix/mysql-virtual.cf
+${src}/etc/powerdns/pdns.conf
+${src}/etc/app-with-pass.conf
+${src}/etc/ssl/private/site.key
 ${src}/etc/gone.conf
 EOF
 printf '%s\n' 'will-delete' > "${src}/etc/gone.conf"
@@ -79,9 +90,17 @@ git -C "${repo}" grep -F 'BEGIN PRIVATE KEY' >/dev/null 2>&1 && bad pem || ok pe
 git -C "${repo}" grep -F SECRET-HM >/dev/null 2>&1 && bad hmtools-conf || ok hmtools-conf
 git -C "${repo}" grep -F SECRET-DEB >/dev/null 2>&1 && bad debian-cnf || ok debian-cnf
 git -C "${repo}" grep -F 'cf-token-value' >/dev/null 2>&1 && bad token-file || ok token-file
+git -C "${repo}" grep -F 'mysql-root-secret' >/dev/null 2>&1 && bad cyberpanel-pw || ok cyberpanel-pw
+git -C "${repo}" grep -F 'postfix-secret-XYZ' >/dev/null 2>&1 && bad postfix-mysql || ok postfix-mysql
+git -C "${repo}" grep -F 'pdns-secret-ABC' >/dev/null 2>&1 && bad pdns-conf || ok pdns-conf
+git -C "${repo}" grep -F 'inline-secret-123' >/dev/null 2>&1 && bad content-password || ok content-password
+git -C "${repo}" grep -F 'PRIVATE' >/dev/null 2>&1 && bad ssl-private || ok ssl-private
 [[ -f "${repo}/etc/rclone.conf.meta" ]] && ok meta || bad meta
+[[ -f "${repo}/etc/app-with-pass.conf.meta" ]] && ok content-meta || bad content-meta
+[[ ! -f "${repo}/etc/app-with-pass.conf" ]] && ok no-content-secret-file || bad no-content-secret-file
 [[ ! -f "${repo}/etc/shadow" ]] && ok no-shadow-file || bad no-shadow-file
 [[ ! -f "${repo}/etc/hmtools.conf" ]] && ok no-hmtools-file || bad no-hmtools-file
+grep -q 'secret-redacted' "${repo}/.gitignore" && ok gitignore-note || bad gitignore-note
 grep -q 'git push' commands/confighist/main.sh && bad no-push || ok no-push
 
 # usunięcie pliku ze źródła → znika z repo przy następnym snapshocie

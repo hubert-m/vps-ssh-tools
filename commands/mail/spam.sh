@@ -64,8 +64,47 @@ hm_mail_find_log() {
   return 1
 }
 
+# 24h / 7d / … → epoch; 0 = bez filtra.
+hm_mail_since_epoch() {
+  local since="${1:-}" now n u sec=0
+  now="$(date +%s)"
+  [[ -n "${since}" ]] || { printf '%s' 0; return 0; }
+  if [[ "${since}" =~ ^([0-9]+)([smhd])$ ]]; then
+    n="${BASH_REMATCH[1]}"
+    u="${BASH_REMATCH[2]}"
+    case "${u}" in
+      s) sec="${n}" ;;
+      m) sec=$((n * 60)) ;;
+      h) sec=$((n * 3600)) ;;
+      d) sec=$((n * 86400)) ;;
+    esac
+    printf '%s' "$((now - sec))"
+    return 0
+  fi
+  if date -d "${since}" +%s >/dev/null 2>&1; then
+    date -d "${since}" +%s
+    return 0
+  fi
+  printf '%s' 0
+}
+
+hm_mail_epoch_cmp() {
+  local ep="${1:-0}"
+  [[ "${ep}" =~ ^[0-9]+$ && "${ep}" -gt 0 ]] || { printf '%s' 0; return 0; }
+  if date -d "@${ep}" +%Y%m%d%H%M%S >/dev/null 2>&1; then
+    date -d "@${ep}" +%Y%m%d%H%M%S
+    return 0
+  fi
+  if date -r "${ep}" +%Y%m%d%H%M%S >/dev/null 2>&1; then
+    date -r "${ep}" +%Y%m%d%H%M%S
+    return 0
+  fi
+  printf '%s' 0
+}
+
 hm_mail_senders() {
   local since="" log="" max="${HM_MAIL_SENDER_MAX:-100}" dedup user count day key
+  local since_ep=0 since_cmp=0 year
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --since) since="${2:-}"; shift 2 || true ;;
@@ -78,6 +117,9 @@ hm_mail_senders() {
   [[ "${max}" =~ ^[0-9]+$ ]] || max=100
   dedup="${HM_MAIL_DEDUP}"
   day="$(date +%Y-%m-%d 2>/dev/null || echo unknown)"
+  year="$(date +%Y 2>/dev/null || echo 2026)"
+  since_ep="$(hm_mail_since_epoch "${since}")"
+  since_cmp="$(hm_mail_epoch_cmp "${since_ep}")"
   while IFS=$'\t' read -r user count; do
     [[ -n "${user}" ]] || continue
     printf '%s\t%s\n' "${user}" "${count}"
@@ -96,17 +138,73 @@ hm_mail_senders() {
         printf '%s\n' "${key}" >> "${dedup}"
       fi
     fi
-  done < <(awk '
-    {
-      user=""
-      if (match($0, /sasl_username=[^ ,]+/)) {
-        user=substr($0, RSTART+14, RLENGTH-14)
-      } else if (match($0, /from=<[^>]+>/)) {
-        user=substr($0, RSTART+6, RLENGTH-7)
-      }
-      if (user != "") n[user]++
+  done < <(awk -v since_cmp="${since_cmp}" -v year="${year}" '
+    BEGIN {
+      split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec", _m, " ")
+      for (i = 1; i <= 12; i++) mon[_m[i]] = sprintf("%02d", i)
     }
-    END { for (u in n) printf "%s\t%s\n", u, n[u] }
+    # Syslog: "Mon DD HH:MM:SS …" → YYYYMMDDHHMMSS; bez daty → "" (nie filtruj).
+    function syslog_cmp(s,   a, mo, dd, t, hh, mi, ss) {
+      if (!match(s, /^[A-Z][a-z][a-z][ \t]+[0-9]+[ \t]+[0-9]{2}:[0-9]{2}:[0-9]{2}/)) return ""
+      a = substr(s, RSTART, RLENGTH)
+      mo = substr(a, 1, 3)
+      if (!(mo in mon)) return ""
+      if (match(a, /[0-9]+[ \t]+[0-9]{2}:[0-9]{2}:[0-9]{2}/) == 0) return ""
+      dd = substr(a, RSTART, RLENGTH)
+      if (match(dd, /^[0-9]+/) == 0) return ""
+      dd = sprintf("%02d", substr(dd, RSTART, RLENGTH) + 0)
+      if (match(a, /[0-9]{2}:[0-9]{2}:[0-9]{2}/) == 0) return ""
+      t = substr(a, RSTART, 8)
+      hh = substr(t, 1, 2); mi = substr(t, 4, 2); ss = substr(t, 7, 2)
+      return year mon[mo] dd hh mi ss
+    }
+    function qid_of(s,   m) {
+      if (match(s, /: [0-9A-Fa-f]{5,}: /)) {
+        m = substr(s, RSTART + 2, RLENGTH - 4)
+        return m
+      }
+      return ""
+    }
+    function sasl_of(s,   u) {
+      if (match(s, /sasl_username=[^ ,]+/)) {
+        u = substr(s, RSTART + 14, RLENGTH - 14)
+        sub(/password=.*/, "", u)
+        return u
+      }
+      return ""
+    }
+    function from_of(s,   u) {
+      if (match(s, /from=<[^>]*>/)) {
+        u = substr(s, RSTART + 6, RLENGTH - 7)
+        if (u == "" || u == "<>") return ""
+        return u
+      }
+      return ""
+    }
+    {
+      if (since_cmp != "0") {
+        ts = syslog_cmp($0)
+        if (ts != "" && ts < since_cmp) next
+      }
+      qid = qid_of($0)
+      sasl = sasl_of($0)
+      if (sasl != "") {
+        if (qid != "") auth_user[qid] = sasl
+        else n[sasl]++
+        next
+      }
+      # Lokalne: postfix/pickup (nie qmgr/smtpd z zewnętrznym from=)
+      if ($0 ~ /postfix\/pickup/ && (u = from_of($0)) != "") {
+        if (qid != "") auth_user[qid] = u
+        else n[u]++
+        next
+      }
+      # z zewnętrznego from=/qmgr bez SASL — pomijamy (poczta przychodząca)
+    }
+    END {
+      for (q in auth_user) n[auth_user[q]]++
+      for (u in n) printf "%s\t%s\n", u, n[u]
+    }
   ' "${log}")
   if [[ -n "${since}" ]]; then
     hm_info "Okno: ${since}"

@@ -178,6 +178,52 @@ hm_python_env_upsert() {
   )
 }
 
+hm_python_default_wsgi() {
+  case "${1:-}" in
+    flask) printf 'app:app' ;;
+    fastapi) printf 'main:app' ;;
+    django|*) printf 'config.wsgi' ;;
+  esac
+}
+
+hm_python_write_placeholder() {
+  local home="$1" fw="$2" user="$3" cur="${1}/current"
+  mkdir -p "${cur}"
+  case "${fw}" in
+    flask)
+      [[ -f "${cur}/app.py" ]] && return 0
+      cat > "${cur}/app.py" <<'EOF'
+def app(environ, start_response):
+    start_response("200 OK", [("Content-Type", "text/plain")])
+    return [b"hmtools flask placeholder — deploy your app\n"]
+EOF
+      ;;
+    fastapi)
+      [[ -f "${cur}/main.py" ]] && return 0
+      cat > "${cur}/main.py" <<'EOF'
+from fastapi import FastAPI
+app = FastAPI()
+@app.get("/")
+def root():
+    return {"ok": True, "msg": "hmtools fastapi placeholder"}
+EOF
+      ;;
+    django)
+      [[ -f "${cur}/config/wsgi.py" || -f "${cur}/manage.py" ]] && return 0
+      mkdir -p "${cur}/config"
+      cat > "${cur}/config/wsgi.py" <<'EOF'
+def application(environ, start_response):
+    start_response("200 OK", [("Content-Type", "text/plain")])
+    return [b"hmtools django placeholder — deploy your project\n"]
+EOF
+      printf '' > "${cur}/config/__init__.py"
+      ;;
+    *) return 0 ;;
+  esac
+  chown -R "${user}:${user}" "${cur}" 2>/dev/null || true
+  hm_info "Utworzono placeholder aplikacji w current/ (framework=${fw})."
+}
+
 hm_site_python_provision() {
   local domain="$1" ver="$2" source="$3" fw="$4" server="$5" wsgi="$6" celery="${7:-0}" port="${8:-}"
   local home user bind exec unit venv workers cpu state os key idx
@@ -190,6 +236,7 @@ hm_site_python_provision() {
     django|flask|fastapi) ;;
     *) hm_err "Framework: django, flask albo fastapi."; return 1 ;;
   esac
+  [[ -n "${wsgi}" ]] || wsgi="$(hm_python_default_wsgi "${fw}")"
   os="$(hm_python_os_id)"
   if [[ "${source}" == "deadsnakes" && "${os}" != "ubuntu" ]]; then
     hm_err "deadsnakes jest tylko dla Ubuntu."
@@ -231,6 +278,7 @@ hm_site_python_provision() {
     esac
   fi
   hm_python_create_venv "${venv}" "${ver}" "${source}" "${user}" || return 1
+  hm_python_write_placeholder "${home}" "${fw}" "${user}"
   chown -R "${user}:${user}" "${home}/shared" "${home}/current" "${venv}" 2>/dev/null || true
   key="${HM_PYTHON_SECRET:-}"
   if [[ -z "${key}" ]]; then

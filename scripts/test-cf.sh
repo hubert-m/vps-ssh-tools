@@ -56,7 +56,13 @@ if [[ "${url}" == *ips-v6* ]]; then
   exit 0
 fi
 if [[ "${url}" == *'/zones?name='* ]]; then
-  printf '%s\n' '{"result":[{"id":"ZONE123","name":"example.com"}],"success":true}' > "${out}"
+  name="${url##*name=}"
+  name="${name%%&*}"
+  if [[ "${name}" == "example.com" ]]; then
+    printf '%s\n' '{"result":[{"id":"ZONE123","name":"example.com"}],"success":true}' > "${out}"
+  else
+    printf '%s\n' '{"result":[],"success":true}' > "${out}"
+  fi
   printf '200'
   exit 0
 fi
@@ -144,5 +150,18 @@ export HM_SITE_DOMAIN=example.com
 hm_cf_after_deploy
 grep -q 'purge_cache' "${HM_CF_LOG}" && ok deploy-hook || bad deploy-hook
 grep -q 'hm_cf_after_deploy' commands/git/deploy.sh commands/clone/main.sh && ok deploy-wired || bad deploy-wired
+
+# subdomena → strefa parent (zones?name=shop… puste, name=example.com → ZONE123)
+rm -f "${HM_CF_STATE}/zones.cache"
+: > "${HM_CF_LOG}"
+export HM_CF_CODE=200
+export HM_CF_BODY='success=yes'
+zid="$(hm_cf_zone_id shop.example.com)"
+[[ "${zid}" == "ZONE123" ]] && ok zone-subdomain || bad "zone-subdomain=${zid}"
+grep -q 'zones?name=shop.example.com' "${HM_CF_LOG}" && ok zone-try-sub || bad zone-try-sub
+grep -q 'zones?name=example.com' "${HM_CF_LOG}" && ok zone-try-parent || bad zone-try-parent
+: > "${HM_CF_LOG}"
+cmd_cf purge shop.example.com --all >/dev/null
+grep -q 'zones/ZONE123/purge_cache' "${HM_CF_LOG}" && ok purge-subdomain || bad purge-subdomain
 
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

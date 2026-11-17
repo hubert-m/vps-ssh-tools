@@ -48,6 +48,12 @@ printf '%s\n' "${out}" | grep -q $'hint\t' && ok oom-hint || bad oom-hint
 unset HM_MEM_OOM
 if cmd_memory oom >/dev/null 2>"${root}/oom.err"; then bad oom-no-src; else ok oom-no-src; fi
 grep -q 'Brak journala OOM' "${root}/oom.err" && ok oom-no-src-msg || bad oom-no-src-msg
+[[ "$(hm_mem_since_journal 7d)" == "7 days ago" ]] && ok since-7d || bad since-7d
+[[ "$(hm_mem_since_journal 2h)" == "2 hours ago" ]] && ok since-2h || bad since-2h
+printf -- '-- No entries --\n' > "${root}/empty-j"
+hm_mem_oom_body_usable "${root}/empty-j" && bad usable-noise || ok usable-noise
+printf -- '-- No entries --\noom-kill: task=x,pid=1,rss=1\n' > "${root}/ok-j"
+hm_mem_oom_body_usable "${root}/ok-j" && ok usable-real || bad usable-real
 export HM_MEM_OOM="${root}/oom.log"
 
 cmd_memory swap create 1G >/dev/null
