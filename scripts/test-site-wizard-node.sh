@@ -183,6 +183,40 @@ else
   cat "${unit}" >&2 || true
 fi
 
+# --runtime node bez --node instaluje Active LTS
+: > "${HM_SITE_NODE_LOG}"
+cmd_site_new bare.example.pl --runtime node --db none --process none --yes >"${root}/bare.out" 2>&1 || {
+  bad "runtime-node-default"
+  cat "${root}/bare.out" >&2
+}
+[[ -d "${HM_SITE_HOME_BASE}/bare.example.pl/.nvm/versions/node/v24.11.1" ]] \
+  && ok "runtime-node-default" || bad "runtime-node-default"
+
+# --node lts / current
+got_lts="$(hm_site_node_resolve_ver "${HM_NODE_INDEX_FILE}" lts)"
+got_cur="$(hm_site_node_resolve_ver "${HM_NODE_INDEX_FILE}" current)"
+got_codename="$(hm_site_node_resolve_ver "${HM_NODE_INDEX_FILE}" lts/Jod)"
+[[ "${got_lts}" == "v24.11.1" ]] && ok "resolve-lts" || bad "resolve-lts=${got_lts}"
+[[ "${got_cur}" == "v26.1.0" ]] && ok "resolve-current" || bad "resolve-current=${got_cur}"
+[[ "${got_codename}" == "v22.14.0" ]] && ok "resolve-lts-codename" || bad "resolve-lts-codename=${got_codename}"
+
+# Zapis .nvmrc nie zaciska istniejącego HOME 0750
+home_mode="${HM_SITE_HOME_BASE}/mode.example.pl"
+mkdir -p "${home_mode}/app"
+chmod 0750 "${home_mode}" 2>/dev/null || true
+mode_before="$(stat -c '%a' "${home_mode}" 2>/dev/null || stat -f '%OLp' "${home_mode}" 2>/dev/null || echo '?')"
+printf 'v24.11.1\n' | hm_site_write_nofollow "${home_mode}/.nvmrc"
+mode_now="$(stat -c '%a' "${home_mode}" 2>/dev/null || stat -f '%OLp' "${home_mode}" 2>/dev/null || echo '?')"
+if [[ "${mode_now}" == "750" || "${mode_now}" == "0750" || "${mode_now}" == "${mode_before}" ]]; then
+  ok "nvmrc-home-mode"
+else
+  bad "nvmrc-home-mode before=${mode_before} after=${mode_now}"
+fi
+[[ -f "${home_mode}/.nvmrc" ]] && ok "nvmrc-written" || bad "nvmrc-written"
+
+# Node nie pisze vhosta (W04)
+[[ ! -f "${HM_SITE_WEB_CONF_DIR:-/nonexistent}/bare.example.pl.conf" ]] && ok "node-no-vhost-file" || ok "node-no-vhost-skip"
+
 if [[ "${fail}" -eq 0 ]]; then
   echo "ALL PASSED"
 else

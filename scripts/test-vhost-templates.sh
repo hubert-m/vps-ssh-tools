@@ -148,6 +148,7 @@ else
 fi
 
 out="${root}/new.out"
+export HM_SITE_SSL_LIVE="${root}/le/live"
 cmd_site_new app.example.pl --db none --webserver nginx --vhost-type proxy --proxy-port auto --ssl --yes >"${out}" 2>&1 || {
   bad "site-new-web"
   cat "${out}" >&2
@@ -156,11 +157,16 @@ cmd_site_new app.example.pl --db none --webserver nginx --vhost-type proxy --pro
 conf="${HM_SITE_WEB_CONF_DIR}/app.example.pl.conf"
 if [[ -f "${conf}" ]] && grep -q '127.0.0.1:' "${conf}" && ! grep -q '0.0.0.0' "${conf}" \
   && grep -q 'reload nginx' "${HM_SITE_WEB_LOG}" \
-  && grep -q 'certbot certonly --webroot' "${HM_SITE_WEB_LOG}"; then
+  && grep -q 'certbot certonly --webroot' "${HM_SITE_WEB_LOG}" \
+  && grep -q 'listen 443 ssl' "${conf}" \
+  && grep -q 'ssl_certificate ' "${conf}" \
+  && grep -q 'return 301 https' "${conf}"; then
   ok "site-new-web"
+  ok "ssl-https-block"
 else
   bad "site-new-web"
   cat "${out}" >&2 || true
+  cat "${conf}" >&2 || true
 fi
 
 export HM_SITE_WEB_CONF_DIR="${root}/nginx/sites-available"
@@ -218,6 +224,39 @@ else
   bad "rhel-no-symlink"
 fi
 unset -f hm_os_nginx_sites_enabled
+
+# Runtime Node/Python nie piszą vhosta — tylko snippety dla W04.
+export HM_SITE_STATE_DIR="${root}/state"
+mkdir -p "${HM_SITE_STATE_DIR}" "${root}/conf-node"
+# shellcheck disable=SC1091
+source lib/site/node.sh 2>/dev/null || true
+if declare -F hm_site_node_write_proxy >/dev/null 2>&1; then
+  hm_site_node_write_proxy node.example.pl 3010 proxy
+  [[ ! -f "${root}/conf-node/node.example.pl.conf" ]] \
+    && [[ -f "${HM_SITE_STATE_DIR}/node.example.pl/proxy.snippet" ]] \
+    && ok "node-no-vhost" || bad "node-no-vhost"
+else
+  ok "node-no-vhost-skip"
+fi
+# shellcheck disable=SC1091
+source lib/site/python.sh 2>/dev/null || true
+if declare -F hm_python_write_vhost >/dev/null 2>&1; then
+  mkdir -p "${HM_SITE_HOME_BASE}/py.example/shared"
+  hm_python_write_vhost py.example "${HM_SITE_HOME_BASE}/py.example"
+  [[ ! -f "${root}/nginx/sites-available/py.example.conf" ]] \
+    && [[ -f "${HM_SITE_STATE_DIR}/py.example/vhost.extra" ]] \
+    && grep -q 'location /static/' "${HM_SITE_STATE_DIR}/py.example/vhost.extra" \
+    && ok "python-snippet-only" || bad "python-snippet-only"
+  export HM_SITE_WEB_DOMAIN=py.example
+  export HM_SITE_WEB_ROOT="${HM_SITE_HOME_BASE}/py.example/public_html"
+  export HM_SITE_WEB_UPSTREAM=127.0.0.1:8000
+  export HM_SITE_WEB_LOGDIR="${HM_SITE_HOME_BASE}/py.example/logs"
+  unset HM_SITE_WEB_PROXY_NAME HM_SITE_WEB_ALIASES_LINE HM_SITE_WEB_FORWARDED_PROTO
+  rendered="$(hm_site_web_render nginx proxy)"
+  printf '%s\n' "${rendered}" | grep -q 'location /static/' && ok "extra-in-render" || bad "extra-in-render"
+else
+  ok "python-snippet-skip"
+fi
 
 if [[ "${fail}" -eq 0 ]]; then
   echo "ALL PASSED"

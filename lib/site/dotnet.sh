@@ -76,8 +76,10 @@ hm_dotnet_publish_allowed() {
 hm_dotnet_write_secret() {
   local path="$1" key="$2" val="$3"
   mkdir -p "$(dirname "${path}")"
-  umask 077
-  printf '%s=%s\n' "${key}" "${val}" >> "${path}"
+  (
+    umask 077
+    printf '%s=%s\n' "${key}" "${val}" >> "${path}"
+  )
   chmod 0600 "${path}" 2>/dev/null || true
 }
 

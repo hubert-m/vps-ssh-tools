@@ -188,6 +188,18 @@ if [[ -x "${cbin}" ]] && "${cbin}" --version | grep -q '2.8.4'; then
 else
   bad "composer-ok"
 fi
+# Weryfikacja --version była na tmp roota; po install plik w HOME nie jest już execowany przez root.
+[[ -x "${cbin}" && ! -L "${cbin}" ]] && ok "composer-regular-file" || bad "composer-regular-file"
+# Symlink w HOME nie może przechwycić zapisu (rm linku, potem install do zwykłego pliku).
+mkdir -p "${HM_SITE_HOME_BASE}/sym.example.pl/.local/bin"
+ln -sfn "${root}/victim" "${HM_SITE_HOME_BASE}/sym.example.pl/.local/bin/composer" 2>/dev/null || true
+printf 'SAFE\n' > "${root}/victim"
+export HM_COMPOSER_PHAR="${root}/composer.phar"
+export HM_COMPOSER_SIG="${root}/good.sig"
+hm_site_php_composer sym.example.pl >/dev/null 2>&1 || true
+[[ "$(cat "${root}/victim" 2>/dev/null)" == "SAFE" ]] \
+  && [[ ! -L "${HM_SITE_HOME_BASE}/sym.example.pl/.local/bin/composer" ]] \
+  && ok "composer-no-symlink-follow" || bad "composer-no-symlink-follow"
 
 out="${root}/new.out"
 cmd_site_new shop.example.pl --runtime php --db none --php 8.4 --php-preset laravel \

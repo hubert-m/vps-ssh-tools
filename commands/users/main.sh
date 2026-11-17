@@ -86,51 +86,105 @@ cmd_users_list() {
   done < "${pf}"
 }
 
+# Pobiera klucz do pliku tmp (0600). Tylko https:// (nie http://).
+hm_users_fetch_key() {
+  local keysrc="$1" dest="$2"
+  case "${keysrc}" in
+    http://*)
+      hm_err "Klucz SSH tylko przez https:// (odmowa http:// — ryzyko MITM)."
+      return 1
+      ;;
+    https://github.com/*)
+      if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+        printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKeyFromGithub fixture\n' > "${dest}"
+        return 0
+      fi
+      curl --proto '=https' --tlsv1.2 -fsSL "${keysrc%/}.keys" > "${dest}" \
+        || curl --proto '=https' --tlsv1.2 -fsSL "${keysrc}" > "${dest}" \
+        || { hm_err "Nie pobrano klucza z ${keysrc}"; return 1; }
+      ;;
+    https://*)
+      if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+        printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKeyUrl fixture\n' > "${dest}"
+        return 0
+      fi
+      curl --proto '=https' --tlsv1.2 -fsSL "${keysrc}" > "${dest}" \
+        || { hm_err "Nie pobrano klucza z ${keysrc}"; return 1; }
+      ;;
+    *)
+      [[ -f "${keysrc}" && ! -L "${keysrc}" ]] || { hm_err "Brak pliku klucza: ${keysrc}"; return 1; }
+      cat "${keysrc}" > "${dest}"
+      ;;
+  esac
+}
+
+# Filtruje tmp → tylko linie, które ssh-keygen -l -f akceptuje (albo regex w teście).
+hm_users_filter_valid_keys() {
+  local src="$1" dest="$2" line n=0 ftmp
+  : > "${dest}"
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ -z "${line}" || "${line}" == \#* ]] && continue
+    [[ "${line}" =~ ^(ssh-|ecdsa-|sk-) ]] || continue
+    if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+      printf '%s\n' "${line}" >> "${dest}"
+      n=$((n + 1))
+      continue
+    fi
+    ftmp="$(mktemp)"
+    printf '%s\n' "${line}" > "${ftmp}"
+    if ssh-keygen -l -f "${ftmp}" >/dev/null 2>&1; then
+      printf '%s\n' "${line}" >> "${dest}"
+      n=$((n + 1))
+    fi
+    rm -f "${ftmp}"
+  done < "${src}"
+  [[ "${n}" -gt 0 ]] || { hm_err "Brak poprawnych kluczy publicznych SSH."; return 1; }
+  return 0
+}
+
 hm_users_install_key() {
-  local login="$1" keysrc="$2" home ak tmp
+  local login="$1" keysrc="$2" home ak raw filtered
   home="$(awk -F: -v u="${login}" '$1==u{print $6; exit}' "$(hm_users_passwd_file)")"
   [[ -n "${home}" ]] || home="$(hm_users_home_base)/${login}"
   mkdir -p "${home}/.ssh"
   chmod 700 "${home}/.ssh"
   ak="${home}/.ssh/authorized_keys"
-  tmp="$(mktemp)"
-  chmod 0600 "${tmp}"
-  case "${keysrc}" in
-    https://github.com/*)
-      if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
-        printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKeyFromGithub fixture\n' > "${tmp}"
-      else
-        curl -fsSL "${keysrc%/}.keys" > "${tmp}" || curl -fsSL "${keysrc}" > "${tmp}" || {
-          rm -f "${tmp}"; hm_err "Nie pobrano klucza z ${keysrc}"; return 1
-        }
-      fi
-      ;;
-    http://*|https://*)
-      [[ "${HMTOOLS_TEST:-}" == "1" ]] && { printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKeyUrl fixture\n' > "${tmp}"; } || {
-        curl -fsSL "${keysrc}" > "${tmp}" || { rm -f "${tmp}"; return 1; }
-      }
-      ;;
-    *)
-      [[ -f "${keysrc}" && ! -L "${keysrc}" ]] || { hm_err "Brak pliku klucza: ${keysrc}"; rm -f "${tmp}"; return 1; }
-      cat "${keysrc}" > "${tmp}"
-      ;;
-  esac
-  if ! grep -qE '^(ssh-|ecdsa-|sk-)' "${tmp}"; then
-    hm_err "Plik nie wygląda na klucz publiczny SSH."
-    rm -f "${tmp}"
+  raw="$(mktemp)"; filtered="$(mktemp)"
+  chmod 0600 "${raw}" "${filtered}"
+  if ! hm_users_fetch_key "${keysrc}" "${raw}"; then
+    rm -f "${raw}" "${filtered}"
     return 1
   fi
-  cat "${tmp}" >> "${ak}"
+  if ! hm_users_filter_valid_keys "${raw}" "${filtered}"; then
+    rm -f "${raw}" "${filtered}"
+    return 1
+  fi
+  cat "${filtered}" >> "${ak}"
   chmod 600 "${ak}"
-  rm -f "${tmp}"
+  rm -f "${raw}" "${filtered}"
   if declare -F hm_have_cmd >/dev/null 2>&1 && hm_have_cmd chown; then
     chown -R "${login}:${login}" "${home}/.ssh" 2>/dev/null || true
   fi
   return 0
 }
 
+hm_users_add_rollback() {
+  local login="$1"
+  cmd_users_sudo revoke "${login}" 2>/dev/null || true
+  if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+    local pf
+    pf="$(hm_users_passwd_file)"
+    if [[ -f "${pf}" ]]; then
+      grep -v "^${login}:" "${pf}" > "${pf}.tmp" && mv -f "${pf}.tmp" "${pf}"
+    fi
+    rm -rf -- "$(hm_users_home_base)/${login}"
+    return 0
+  fi
+  userdel -r "${login}" 2>/dev/null || userdel "${login}" 2>/dev/null || true
+}
+
 cmd_users_add() {
-  local login="${1:-}" key="" sudo=0 expire="" force=0 a
+  local login="${1:-}" key="" sudo=0 expire="" force=0 a raw filtered
   shift || true
   while [[ $# -gt 0 ]]; do
     a="$1"; shift || true
@@ -149,30 +203,86 @@ cmd_users_add() {
     return 1
   }
   [[ "${login}" =~ ^[a-z_][a-z0-9_-]*$ ]] || { hm_err "Zły login."; return 1; }
+
+  # Walidacja klucza PRZED useradd (tmp).
+  raw="$(mktemp)"; filtered="$(mktemp)"
+  chmod 0600 "${raw}" "${filtered}"
+  if ! hm_users_fetch_key "${key}" "${raw}"; then
+    rm -f "${raw}" "${filtered}"
+    return 1
+  fi
+  if ! hm_users_filter_valid_keys "${raw}" "${filtered}"; then
+    rm -f "${raw}" "${filtered}"
+    return 1
+  fi
+
   if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
     local pf
     pf="$(hm_users_passwd_file)"
     if ! grep -q "^${login}:" "${pf}" 2>/dev/null; then
       printf '%s:x:1500:1500::%s/%s:/bin/bash\n' "${login}" "$(hm_users_home_base)" "${login}" >> "${pf}"
     fi
-    mkdir -p "$(hm_users_home_base)/${login}"
-    hm_users_install_key "${login}" "${key}" || return 1
-    [[ "${sudo}" -eq 1 ]] && cmd_users_sudo grant "${login}"
-    [[ -n "${expire}" ]] && printf 'expire %s %s\n' "${login}" "${expire}" >> "${HM_USERS_EXPIRE_LOG:-/dev/null}"
+    mkdir -p "$(hm_users_home_base)/${login}/.ssh"
+    chmod 700 "$(hm_users_home_base)/${login}/.ssh"
+    cat "${filtered}" >> "$(hm_users_home_base)/${login}/.ssh/authorized_keys"
+    chmod 600 "$(hm_users_home_base)/${login}/.ssh/authorized_keys"
+    rm -f "${raw}" "${filtered}"
+    if [[ "${sudo}" -eq 1 ]]; then
+      if ! cmd_users_sudo grant "${login}"; then
+        hm_users_add_rollback "${login}"
+        return 1
+      fi
+    fi
+    if [[ -n "${expire}" ]]; then
+      if [[ ! "${expire}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        hm_err "Zła data --expire (YYYY-MM-DD)."
+        hm_users_add_rollback "${login}"
+        return 1
+      fi
+      printf 'expire %s %s\n' "${login}" "${expire}" >> "${HM_USERS_EXPIRE_LOG:-/dev/null}"
+    fi
     hm_ok "Dodano ${login} (test fixture)"
     return 0
   fi
+
   if id "${login}" >/dev/null 2>&1; then
+    rm -f "${raw}" "${filtered}"
     hm_err "Użytkownik ${login} już istnieje."
     return 1
   fi
-  useradd -m -s /bin/bash "${login}" || return 1
-  hm_users_install_key "${login}" "${key}" || return 1
+  if ! useradd -m -s /bin/bash "${login}"; then
+    rm -f "${raw}" "${filtered}"
+    return 1
+  fi
+  # Zainstaluj już zwalidowany plik (bez ponownego pobierania).
+  local home ak
+  home="$(getent passwd "${login}" | cut -d: -f6)"
+  [[ -n "${home}" ]] || home="$(hm_users_home_base)/${login}"
+  mkdir -p "${home}/.ssh"
+  chmod 700 "${home}/.ssh"
+  ak="${home}/.ssh/authorized_keys"
+  cat "${filtered}" >> "${ak}"
+  chmod 600 "${ak}"
+  chown -R "${login}:${login}" "${home}/.ssh" 2>/dev/null || true
+  rm -f "${raw}" "${filtered}"
+
   if [[ "${sudo}" -eq 1 ]]; then
-    cmd_users_sudo grant "${login}" || return 1
+    if ! cmd_users_sudo grant "${login}"; then
+      hm_users_add_rollback "${login}"
+      return 1
+    fi
   fi
   if [[ -n "${expire}" ]]; then
-    chage -E "${expire}" "${login}" 2>/dev/null || true
+    if [[ ! "${expire}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+      hm_err "Zła data --expire (YYYY-MM-DD)."
+      hm_users_add_rollback "${login}"
+      return 1
+    fi
+    if ! chage -E "${expire}" "${login}" 2>/dev/null; then
+      hm_err "chage -E nieudane dla ${expire}."
+      hm_users_add_rollback "${login}"
+      return 1
+    fi
   fi
   hm_ok "Dodano ${login}"
 }
@@ -184,7 +294,8 @@ cmd_users_lock() {
   [[ -n "${login}" ]] || { hm_err "Użycie: users lock <login> [--force]"; return 1; }
   hm_users_protected_target "${login}" "${force}" || return 1
   if [[ "${force}" -eq 1 ]]; then
-    hm_confirm_plan_critical "users lock ${login}" "Blokada konta chronionego." "passwd -l ${login}" || return 0
+    HM_CONFIRM_CRITICAL_NOUN="ego użytkownika" \
+      hm_confirm_plan_critical "${login}" "Blokada konta chronionego." "passwd -l ${login}" || return 0
   else
     hm_confirm_plan "users lock ${login}" "Blokuje logowanie hasłem." "passwd -l ${login}" || return 0
   fi
@@ -231,7 +342,8 @@ cmd_users_del() {
   [[ -n "${login}" ]] || { hm_err "Użycie: users del <login> [--force]"; return 1; }
   hm_users_protected_target "${login}" "${force}" || return 1
   if [[ "${force}" -eq 1 ]]; then
-    hm_confirm_plan_critical "users del ${login}" "Usunięcie konta chronionego." "userdel -r ${login}" || return 0
+    HM_CONFIRM_CRITICAL_NOUN="ego użytkownika" \
+      hm_confirm_plan_critical "${login}" "Usunięcie konta chronionego." "userdel -r ${login}" || return 0
   else
     hm_confirm_plan "users del ${login}" "Usuwa konto i home." "userdel -r ${login}" || return 0
   fi

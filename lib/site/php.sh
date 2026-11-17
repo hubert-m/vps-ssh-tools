@@ -346,43 +346,74 @@ hm_site_php_fpm_reload() {
 }
 
 hm_site_php_composer() {
-  local domain="$1" home bin dir sum sig user
+  local domain="$1" home bin dir sum sig user tmpdir tmp
   home="$(hm_site_home "${domain}")"
   user="$(hm_site_unix_user "${domain}")"
   dir="${home}/.local/bin"
-  mkdir -p "${dir}"
-  bin="${dir}/composer"
+  # Pobieranie i weryfikacja poza HOME usera (bez TOCTOU / symlink follow do cudzych ścieżek).
+  tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/hm-composer.XXXXXX")" || {
+    hm_err "Nie tworzę katalogu tymczasowego dla Composera."
+    return 1
+  }
+  chmod 0700 "${tmpdir}" || true
+  tmp="${tmpdir}/composer.phar"
   if [[ -n "${HM_COMPOSER_PHAR:-}" && -f "${HM_COMPOSER_PHAR}" ]]; then
-    cp "${HM_COMPOSER_PHAR}" "${bin}"
+    cp -f -- "${HM_COMPOSER_PHAR}" "${tmp}" || { rm -rf "${tmpdir}"; return 1; }
   else
-    hm_have_cmd curl || { hm_err "Brak curl — nie pobieram Composera."; return 1; }
-    curl -fsSL --max-time 60 -o "${bin}" "https://getcomposer.org/download/latest-stable/composer.phar" || return 1
+    if ! hm_have_cmd curl; then
+      hm_err "Brak curl — nie pobieram Composera."
+      rm -rf "${tmpdir}"
+      return 1
+    fi
+    # -o do pliku w tmp roota — nie do HOME (curl podąża za symlinkiem).
+    if ! curl -fsSL --max-time 60 -o "${tmp}" "https://getcomposer.org/download/latest-stable/composer.phar"; then
+      rm -rf "${tmpdir}"
+      return 1
+    fi
   fi
   # Oficjalny plik sumy to *.sha256sum (sha384 URL zwraca 404).
   if [[ -n "${HM_COMPOSER_SIG:-}" && -f "${HM_COMPOSER_SIG}" ]]; then
     sig="$(awk 'NF{print $1; exit}' "${HM_COMPOSER_SIG}" | tr -d '[:space:]')"
   else
-    hm_have_cmd curl || { rm -f "${bin}"; return 1; }
+    if ! hm_have_cmd curl; then
+      rm -rf "${tmpdir}"
+      return 1
+    fi
     sig="$(curl -fsSL --max-time 30 "https://getcomposer.org/download/latest-stable/composer.phar.sha256sum" \
       | awk 'NF{print $1; exit}' | tr -d '[:space:]')"
   fi
   if hm_have_cmd sha256sum; then
-    sum="$(sha256sum "${bin}" | awk '{print $1}')"
+    sum="$(sha256sum "${tmp}" | awk '{print $1}')"
   elif hm_have_cmd openssl; then
-    sum="$(openssl dgst -sha256 "${bin}" | awk '{print $NF}')"
+    sum="$(openssl dgst -sha256 "${tmp}" | awk '{print $NF}')"
   else
-    rm -f "${bin}"
     hm_err "Brak sha256sum — nie weryfikuję Composera."
+    rm -rf "${tmpdir}"
     return 1
   fi
   if [[ -z "${sig}" || "${sum}" != "${sig}" ]]; then
-    rm -f "${bin}"
     hm_err "Suma SHA-256 Composera nie zgadza się."
+    rm -rf "${tmpdir}"
     return 1
   fi
-  chmod 755 "${bin}"
-  chown -R "${user}:${user}" "${home}/.local" 2>/dev/null || true
-  HM_SITE_PHP_COMPOSER_VER="$("${bin}" --version 2>/dev/null | head -1 || true)"
+  chmod 0755 "${tmp}" || true
+  # --version na pliku w tmp (root) — zanim cokolwiek trafi do HOME usera.
+  HM_SITE_PHP_COMPOSER_VER="$("${tmp}" --version 2>/dev/null | head -1 || true)"
+  mkdir -p "${dir}"
+  bin="${dir}/composer"
+  # Usuń symlink/plik docelowy (rm na symlinku kasuje link, nie cel).
+  rm -f -- "${bin}"
+  if hm_have_cmd install; then
+    install -o "${user}" -g "${user}" -m 0755 "${tmp}" "${bin}" 2>/dev/null \
+      || { cp -f -- "${tmp}" "${bin}"; chmod 0755 "${bin}"; chown "${user}:${user}" "${bin}" 2>/dev/null || true; }
+  else
+    cp -f -- "${tmp}" "${bin}"
+    chmod 0755 "${bin}"
+    chown "${user}:${user}" "${bin}" 2>/dev/null || true
+  fi
+  # Nie chown -R całego .local i nie exec z HOME po oddaniu własności.
+  chown "${user}:${user}" "${dir}" "${home}/.local" 2>/dev/null || true
+  rm -rf "${tmpdir}"
   printf '%s' "${bin}"
 }
 
@@ -449,5 +480,6 @@ hm_site_php_provision() {
     man="$(hm_site_manifest_path "${domain}" 2>/dev/null || true)"
     [[ -n "${man}" && -f "${man}" ]] && hm_site_manifest_set_version "${man}" "${ver}" || true
   fi
+  printf '\n' >&2
   hm_ok "PHP ${ver} dla ${domain} (${sapi}). Composer: ${HM_SITE_PHP_COMPOSER_VER:-pominięty}."
 }

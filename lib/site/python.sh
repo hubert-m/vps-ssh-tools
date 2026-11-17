@@ -85,31 +85,26 @@ hm_python_write_unit() {
 
 hm_python_write_vhost() {
   local domain="$1" home="$2" path block
-  path="${HM_SITE_VHOST_DIR:-/etc/nginx/sites-available}/${domain}.conf"
-  # Gdy vhost już z proxy — wstaw location przed ostatnim } albo dopisz snipet
+  # Snipet dla W04 ({{EXTRA}}) — nie zapisujemy sites-available.
+  if declare -F hm_site_state_dir >/dev/null 2>&1; then
+    path="$(hm_site_state_dir "${domain}")/vhost.extra"
+  elif [[ -n "${HM_SITE_STATE_DIR:-}" ]]; then
+    path="${HM_SITE_STATE_DIR}/${domain}/vhost.extra"
+  else
+    path="${home}/.config/hmtools/vhost.extra"
+  fi
   block="$(cat <<EOF
-location /static/ {
-    alias ${home}/shared/static/;
-}
-location /media/ {
-    alias ${home}/shared/media/;
-}
+    location /static/ {
+        alias ${home}/shared/static/;
+    }
+    location /media/ {
+        alias ${home}/shared/media/;
+    }
 EOF
 )"
   mkdir -p "$(dirname "${path}")"
-  if [[ -f "${path}" ]] && grep -q 'location /' "${path}" 2>/dev/null; then
-    if ! grep -q 'location /static/' "${path}"; then
-      # wstaw przed ostatnią klamrą pliku
-      awk -v blk="${block}" '
-        { lines[NR]=$0 }
-        END {
-          for (i=1; i<=NR; i++) {
-            if (i==NR && lines[i] ~ /^}/) print blk
-            print lines[i]
-          }
-        }
-      ' "${path}" > "${path}.hmtmp" && mv -f "${path}.hmtmp" "${path}"
-    fi
+  if declare -F hm_site_write_nofollow >/dev/null 2>&1; then
+    printf '%s\n' "${block}" | hm_site_write_nofollow "${path}" || printf '%s\n' "${block}" > "${path}"
   else
     printf '%s\n' "${block}" > "${path}"
   fi

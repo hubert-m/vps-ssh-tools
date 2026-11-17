@@ -63,6 +63,24 @@ printf '%s\n' "${out}" | grep -q '1.2.3.4' && ok count-by-ip || bad count-by-ip
 out="$(cmd_logs_search --site a.test --url '/old' --limit 10)"
 printf '%s\n' "${out}" | grep -q '/old' && ok search-gz || bad search-gz
 
+# --since filtruje po czasie LINII (nie mtime pliku)
+# Plik świeży (mtime=now), ale linie: stara (5h) i świeża (1 min).
+now_s="$(date +%s)"
+old_cmp="$(date -d "@$((now_s - 5 * 3600))" +%d/%b/%Y:%H:%M:%S 2>/dev/null \
+  || date -r "$((now_s - 5 * 3600))" +%d/%b/%Y:%H:%M:%S)"
+new_cmp="$(date -d "@$((now_s - 60))" +%d/%b/%Y:%H:%M:%S 2>/dev/null \
+  || date -r "$((now_s - 60))" +%d/%b/%Y:%H:%M:%S)"
+mkdir -p "${HM_LOGS_SEARCH_ROOT}/since.test"
+printf '%s\n' \
+  "1.1.1.1 - - [${old_cmp} +0000] \"GET /stale HTTP/1.1\" 200 1" \
+  "1.1.1.1 - - [${new_cmp} +0000] \"GET /fresh HTTP/1.1\" 200 1" \
+  > "${HM_LOGS_SEARCH_ROOT}/since.test/access.log"
+export HM_LOGS_SEARCH_SITES="since.test"
+out="$(cmd_logs_search --since 2h --limit 50)"
+printf '%s\n' "${out}" | grep -q '/fresh' && ok since-keep-fresh || bad since-keep-fresh
+printf '%s\n' "${out}" | grep -q '/stale' && bad since-drop-stale || ok since-drop-stale
+export HM_LOGS_SEARCH_SITES="a.test,b.test"
+
 export HM_LOGS_ROTATE_CONF="${root}/hmtools-sites"
 cmd_logs_rotate fix >/dev/null
 [[ -s "${HM_LOGS_ROTATE_CONF}" ]] && ok rotate-fix || bad rotate-fix

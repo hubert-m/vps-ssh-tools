@@ -48,7 +48,12 @@ chmod +x "${root}/bin/systemd-analyze"
 export PATH="${root}/bin:${PATH}"
 
 # shellcheck disable=SC1091
+source lib/site/env.sh
+# shellcheck disable=SC1091
 source lib/site/dotnet.sh
+# minimalne stuby HOME (env.sh)
+hm_site_home() { printf '%s/%s' "${HM_SITE_HOME_BASE}" "$1"; }
+hm_site_unix_user() { printf '%s' "${HM_SITE_USER}"; }
 
 printf '%s\n' 'deb https://packages.microsoft.com/ubuntu/22.04/prod jammy main' > "${HM_DOTNET_SOURCES}/microsoft.list"
 if hm_dotnet_feeds_mixed; then bad feed-ms-only; else ok feed-ms-only; fi
@@ -85,5 +90,12 @@ export HM_DOTNET_KIND=aspnetcore-runtime
 hm_dotnet_publish_allowed && bad publish-runtime || ok publish-runtime
 export HM_DOTNET_KIND=sdk
 hm_dotnet_publish_allowed && ok publish-sdk || bad publish-sdk
+
+# umask nie przecieka z hm_dotnet_write_secret
+umask 022
+before_u="$(umask)"
+hm_dotnet_write_secret "${root}/secret.env" KEY val
+after_u="$(umask)"
+[[ "${before_u}" == "${after_u}" ]] && ok umask-no-leak || bad "umask-no-leak ${before_u}->${after_u}"
 
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

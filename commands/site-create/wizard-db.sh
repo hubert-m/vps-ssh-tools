@@ -548,7 +548,8 @@ cmd_site_new() {
     hm_err "site new nieudany — cofnięto bazy utworzone w tej próbie."
     return 1
   fi
-  if [[ -n "${node_spec}${node_default}${pkg}${process}${start}${port}${preset}" ]]; then
+  # --runtime node bez --node też instaluje (domyślnie Active LTS).
+  if [[ "${runtime}" == "node" || -n "${node_spec}${node_default}${pkg}${process}${start}" || ( -n "${preset}" && "${runtime}" == "node" ) ]]; then
     if ! declare -F hm_site_node_provision >/dev/null 2>&1; then
       hm_err "Brak lib/site/node.sh."
       return 1

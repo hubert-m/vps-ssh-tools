@@ -32,7 +32,11 @@ mkdir -p "${HM_SYSTEMD_UNIT_DIR}" "${HM_SITE_VHOST_DIR}" "${HM_SITE_MANIFEST_DIR
 : > "${HM_PYTHON_UV_LOG}"
 
 # shellcheck disable=SC1091
+source lib/site/env.sh
+# shellcheck disable=SC1091
 source lib/site/python.sh
+export HM_SITE_STATE_DIR="${root}/state"
+mkdir -p "${HM_SITE_STATE_DIR}"
 
 def="$(hm_python_default "${HM_PYTHON_INDEX}")"
 [[ "${def}" == "3.13" ]] && ok default-bugfix || bad default-bugfix
@@ -62,8 +66,17 @@ grep -q 'SECRET-PYTHON-KEY' "${unit}" && bad secret-unit || ok secret-unit
 grep -q "undo=systemd-unit	${unit}" "${root}/journal.log" && ok unit-undo || bad unit-undo
 grep -q 'is-active hm-app-api.example.pl.service' "${HM_PYTHON_SYSTEMCTL_LOG}" && ok active || bad active
 grep -q 'enable --now hm-celery-api.example.pl.service' "${HM_PYTHON_SYSTEMCTL_LOG}" && ok celery || bad celery
-grep -q 'location /static/' "${HM_SITE_VHOST_DIR}/api.example.pl.conf" && ok static || bad static
-grep -q 'shared/media' "${HM_SITE_VHOST_DIR}/api.example.pl.conf" && ok media || bad media
+home_py="${HM_SITE_HOME_BASE}/api.example.pl"
+extra=""
+for cand in \
+  "${HM_SITE_STATE_DIR}/api.example.pl/vhost.extra" \
+  "${home_py}/.config/hmtools/vhost.extra"
+do
+  [[ -f "${cand}" ]] && extra="${cand}" && break
+done
+[[ ! -f "${HM_SITE_VHOST_DIR}/api.example.pl.conf" ]] && ok vhost-not-written || bad vhost-not-written
+[[ -n "${extra}" ]] && grep -q 'location /static/' "${extra}" && ok static || bad static
+[[ -n "${extra}" ]] && grep -q 'shared/media' "${extra}" && ok media || bad media
 envf="${HM_SITE_HOME_BASE}/api.example.pl/shared/.env"
 grep -q 'SECRET-PYTHON-KEY' "${envf}" && ok secret-env || bad secret-env
 [[ "$(grep -c '^SECRET_KEY=' "${envf}")" -eq 1 ]] && ok secret-once || bad secret-once

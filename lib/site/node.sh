@@ -255,8 +255,37 @@ hm_site_node_print_catalog() {
 }
 
 hm_site_node_resolve_ver() {
-  local file="$1" spec="$2" ver major
+  local file="$1" spec="$2" ver major want_lts=""
   spec="${spec#v}"
+  case "${spec}" in
+    [Ll][Tt][Ss]|[Ll][Tt][Ss]/\*|[Ll][Tt][Ss]/-)
+      hm_site_node_classify "${file}" || return 1
+      [[ -n "${HM_SITE_NODE_ACTIVE}" ]] || { hm_err "Brak Active LTS w index.json."; return 1; }
+      printf '%s' "${HM_SITE_NODE_ACTIVE}"
+      return 0
+      ;;
+    [Cc][Uu][Rr][Rr][Ee][Nn][Tt])
+      hm_site_node_classify "${file}" || return 1
+      if [[ -n "${HM_SITE_NODE_CURRENT}" ]]; then
+        printf '%s' "${HM_SITE_NODE_CURRENT}"
+      else
+        printf '%s' "${HM_SITE_NODE_ACTIVE}"
+      fi
+      return 0
+      ;;
+    [Ll][Tt][Ss]/*)
+      want_lts="${spec#*/}"
+      want_lts="$(printf '%s' "${want_lts}" | tr '[:upper:]' '[:lower:]')"
+      while IFS=$'\t' read -r ver lts _; do
+        [[ -n "${ver}" ]] || continue
+        [[ "$(printf '%s' "${lts}" | tr '[:upper:]' '[:lower:]')" == "${want_lts}" ]] || continue
+        printf '%s' "${ver}"
+        return 0
+      done < <(hm_site_node_majors "${file}")
+      hm_err "Brak LTS ${want_lts} w index.json."
+      return 1
+      ;;
+  esac
   if [[ "${spec}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     printf 'v%s' "${spec}"
     return 0
@@ -291,6 +320,9 @@ hm_site_node_install_versions() {
   mkdir -p "${app}"
   printf '%s\n' "${def}" | hm_site_write_nofollow "${app}/.nvmrc" || return 1
   printf '%s\n' "${def}" | hm_site_write_nofollow "${home}/.nvmrc" || return 1
+  # .nvmrc czytelne dla usera; nie zaciskamy HOME (write_nofollow nie chmoduje istniejących katalogów).
+  chmod 0644 "${app}/.nvmrc" "${home}/.nvmrc" 2>/dev/null || true
+  chown "${user}:${user}" "${app}/.nvmrc" "${home}/.nvmrc" 2>/dev/null || true
 }
 
 hm_site_node_start_ok() {
@@ -433,10 +465,8 @@ hm_site_node_write_proxy() {
   local domain="$1" port="$2" mode="$3" home
   home="$(hm_site_state_dir "${domain}")"
   mkdir -p "${home}"
+  # Tylko snipet dla W04 — vhost pisze wyłącznie hm_site_web_provision.
   printf 'mode=%s\nupstream=127.0.0.1:%s\n' "${mode}" "${port}" | hm_site_write_nofollow "${home}/proxy.snippet"
-  if declare -F hm_site_web_apply_proxy >/dev/null 2>&1; then
-    hm_site_web_apply_proxy "${domain}" "${port}" "${mode}" || return 1
-  fi
 }
 
 hm_site_node_json_escape() {
@@ -562,7 +592,7 @@ hm_site_node_pm2_startup() {
 
 hm_site_node_provision() {
   local domain="$1" spec="$2" def_spec="$3" pkg="$4" process="$5" start="$6" port_want="$7" preset="$8" instances="${9:-1}" memory="${10:-300M}"
-  local home user file ver def="" port mode="proxy"
+  local home user file ver def="" port mode="proxy" start_in="${6:-}"
   local -a vers=()
   [[ "${instances}" =~ ^[0-9]+$ ]] || { hm_err "Złe instances."; return 1; }
   [[ "${memory}" =~ ^[0-9]+[KMG]?$ ]] || { hm_err "Zły limit pamięci."; return 1; }
@@ -630,6 +660,12 @@ hm_site_node_provision() {
       "const http=require('http');const p=process.env.PORT||3000;" \
       "http.createServer((_,r)=>{r.end('ok')}).listen(p,'127.0.0.1');" \
       | hm_site_write_nofollow "${home}/app/server.js" || true
+    chown "${user}:${user}" "${home}/app/server.js" 2>/dev/null || true
+    chmod 0644 "${home}/app/server.js" 2>/dev/null || true
+    # Bez jawnego --start: domyślny dist/main.js nie pasuje do placeholdera.
+    if [[ -z "${start_in}" && ( "${start}" == "node dist/main.js" || "${start}" == "node ./dist/main.js" ) ]]; then
+      start="node server.js"
+    fi
     hm_info "Utworzono placeholder app/server.js — podmień kod aplikacji (właściciel: ${user})."
   fi
 

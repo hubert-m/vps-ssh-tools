@@ -4,6 +4,7 @@
     ErrorLog {{LOGDIR}}/error.log
     CustomLog {{LOGDIR}}/access.log combined
     ProxyPreserveHost On
+    {{EXTRA}}
     ProxyPass /.well-known/acme-challenge/ !
     ProxyPass / http://{{UPSTREAM}}/
     ProxyPassReverse / http://{{UPSTREAM}}/

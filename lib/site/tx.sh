@@ -41,14 +41,20 @@ hm_site_path_has_symlink() {
 
 # Zapis bez podążania za symlinkiem (mktemp + mv w katalogu docelowym).
 hm_site_write_nofollow() {
-  local path="$1" dir tmp
+  local path="$1" dir tmp created=0
   dir="$(dirname "${path}")"
   if [[ -L "${path}" ]] || hm_site_path_has_symlink "${dir}"; then
     hm_err "Odmowa zapisu przez symlink: ${path}"
     return 1
   fi
-  mkdir -p "${dir}"
-  chmod 0700 "${dir}" 2>/dev/null || true
+  if [[ ! -d "${dir}" ]]; then
+    mkdir -p "${dir}"
+    created=1
+  fi
+  # Nie zmieniaj trybu istniejącego katalogu (np. HOME 0750 dla www-data).
+  if [[ "${created}" -eq 1 ]]; then
+    chmod 0700 "${dir}" 2>/dev/null || true
+  fi
   tmp="$(mktemp "${dir}/.write.XXXXXX")"
   cat > "${tmp}"
   chmod 0600 "${tmp}" 2>/dev/null || true

@@ -82,6 +82,45 @@ cmd_users_sudo revoke deploy >/dev/null
 out="$(cmd_users_list 2>&1 || true)"
 printf '%s\n' "${out}" | grep -q alice && ok list || { bad list; printf 'LIST OUT:\n%s\n' "${out}" >&2; }
 
+# http:// zabronione
+if cmd_users_add nohttp --key 'http://127.0.0.1/x' 2>/dev/null; then
+  bad http-deny
+else
+  ok http-deny
+fi
+grep -q '^nohttp:' "${HM_USERS_PASSWD}" && bad http-no-account || ok http-no-account
+
+# filtr: tylko poprawne linie ssh-
+mixed="${root}/mixed.pub"
+printf 'command="evil" ssh-ed25519 AAAA evil\nbogus line\nssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKeyDataHere000000000000000000000000 good@test\n' > "${mixed}"
+raw="$(mktemp)"; filtered="$(mktemp)"
+hm_users_fetch_key "${mixed}" "${raw}"
+hm_users_filter_valid_keys "${raw}" "${filtered}"
+grep -q 'good@test' "${filtered}" && ok filter-keep || bad filter-keep
+grep -q 'command=' "${filtered}" && bad filter-drop-opts || ok filter-drop-opts
+grep -q 'bogus' "${filtered}" && bad filter-drop-bogus || ok filter-drop-bogus
+rm -f "${raw}" "${filtered}"
+
+# zły klucz → brak konta (rollback / pre-check)
+if cmd_users_add badkey --key "${root}/missing.pub" 2>/dev/null; then
+  bad badkey-fail
+else
+  ok badkey-fail
+fi
+grep -q '^badkey:' "${HM_USERS_PASSWD}" && bad badkey-no-user || ok badkey-no-user
+
+# zła data expire
+if cmd_users_add expbad --key "${key}" --expire 'not-a-date' 2>/dev/null; then
+  bad expire-bad
+else
+  ok expire-bad
+fi
+grep -q '^expbad:' "${HM_USERS_PASSWD}" && bad expire-rollback || ok expire-rollback
+
+# prompt del --force: użytkownik (nie domena)
+noun_line="$(HM_CONFIRM_CRITICAL_NOUN='ego użytkownika' bash -c 'printf "Potwierdź docelow%s" "${HM_CONFIRM_CRITICAL_NOUN:-ą domenę}"')"
+[[ "${noun_line}" == *użytkownika* ]] && ok prompt-user || bad prompt-user
+
 if [[ "${fail}" -ne 0 ]]; then
   echo FAILED
   exit 1

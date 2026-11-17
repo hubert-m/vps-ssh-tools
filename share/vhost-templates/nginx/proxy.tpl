@@ -9,6 +9,7 @@ server {
     client_max_body_size 64m;
     location ^~ /.well-known/acme-challenge/ { root {{ROOT}}; }
     location ~ /\.(env|git) { return 404; }
+    {{EXTRA}}
     location / {
         proxy_pass http://{{UPSTREAM}};
         proxy_set_header Host $host;

@@ -228,7 +228,117 @@ hm_site_web_render() {
   else
     text="${text//\{\{VH_ALIASES\}\}/}"
   fi
+  local extra=""
+  if [[ -n "${HM_SITE_WEB_EXTRA:-}" ]]; then
+    extra="${HM_SITE_WEB_EXTRA}"
+  elif [[ -n "${HM_SITE_WEB_DOMAIN:-}" ]] && declare -F hm_site_state_dir >/dev/null 2>&1; then
+    local ef
+    ef="$(hm_site_state_dir "${HM_SITE_WEB_DOMAIN}")/vhost.extra"
+    [[ -f "${ef}" ]] && extra="$(cat "${ef}")"
+  fi
+  if [[ -n "${extra}" ]]; then
+    text="${text//\{\{EXTRA\}\}/${extra}}"
+  else
+    text="$(printf '%s\n' "${text}" | sed '/^[[:space:]]*{{EXTRA}}[[:space:]]*$/d')"
+  fi
   printf '%s\n' "${text}"
+}
+
+hm_site_web_ssl_live_dir() {
+  printf '%s' "${HM_SITE_SSL_LIVE:-/etc/letsencrypt/live}"
+}
+
+hm_site_web_ssl_cert_paths() {
+  local domain="$1" live
+  live="$(hm_site_web_ssl_live_dir)"
+  printf '%s/%s/fullchain.pem\n%s/%s/privkey.pem\n' "${live}" "${domain}" "${live}" "${domain}"
+}
+
+# Po certyfikacie: rewrite vhost o listen 443 + redirect 80→443 (ACME zostaje na 80).
+hm_site_web_enable_https() {
+  local domain="$1" server="$2" kind="$3" dest cert key body http80 line
+  dest="$(hm_site_web_conf_path "${server}" "${domain}")"
+  [[ -f "${dest}" || "${server}" == "ols" ]] || return 0
+  cert="$(hm_site_web_ssl_cert_paths "${domain}" | sed -n '1p')"
+  key="$(hm_site_web_ssl_cert_paths "${domain}" | sed -n '2p')"
+  if [[ "${HMTOOLS_TEST:-}" == "1" || "${HM_SITE_WEB_MOCK:-}" == "1" ]]; then
+    mkdir -p "$(dirname "${cert}")"
+    [[ -f "${cert}" ]] || printf 'CERT\n' > "${cert}"
+    [[ -f "${key}" ]] || printf 'KEY\n' > "${key}"
+  elif [[ ! -f "${cert}" || ! -f "${key}" ]]; then
+    hm_warn "Brak ${cert} / ${key} — HTTPS vhost pominięty."
+    return 0
+  fi
+  case "${server}" in
+    nginx)
+      body=""
+      while IFS= read -r line || [[ -n "${line}" ]]; do
+        case "${line}" in
+          *'listen 80;'*) line='    listen 443 ssl;' ;;
+          *'listen [::]:80;'*) line='    listen [::]:443 ssl;' ;;
+        esac
+        body+="${line}"$'\n'
+        if [[ "${line}" == *"server_name ${domain};"* ]]; then
+          body+="    ssl_certificate ${cert};"$'\n'
+          body+="    ssl_certificate_key ${key};"$'\n'
+        fi
+      done < <(hm_site_web_render nginx "${kind}")
+      http80="$(cat <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+    server_tokens off;
+    root ${HM_SITE_WEB_ROOT};
+    location ^~ /.well-known/acme-challenge/ { root ${HM_SITE_WEB_ROOT}; }
+    location / { return 301 https://\$host\$request_uri; }
+}
+EOF
+)"
+      body="${http80}
+${body}"
+      ;;
+    apache)
+      body=""
+      while IFS= read -r line || [[ -n "${line}" ]]; do
+        case "${line}" in
+          '<VirtualHost *:80>') line='<VirtualHost *:443>' ;;
+        esac
+        body+="${line}"$'\n'
+        if [[ "${line}" == *"ServerName ${domain}"* ]]; then
+          body+="    SSLEngine on"$'\n'
+          body+="    SSLCertificateFile ${cert}"$'\n'
+          body+="    SSLCertificateKeyFile ${key}"$'\n'
+        fi
+      done < <(hm_site_web_render apache "${kind}")
+      http80="$(cat <<EOF
+<VirtualHost *:80>
+    ServerName ${domain}
+    DocumentRoot ${HM_SITE_WEB_ROOT}
+    Alias /.well-known/acme-challenge/ ${HM_SITE_WEB_ROOT}/.well-known/acme-challenge/
+    RewriteEngine On
+    RewriteCond %{REQUEST_URI} !^/.well-known/acme-challenge/
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+</VirtualHost>
+EOF
+)"
+      body="${http80}
+${body}"
+      ;;
+    ols)
+      # OLS: cert w vhconf przez istniejące ścieżki ssl issue — bez osobnego rewrite tu.
+      return 0
+      ;;
+    *) return 0 ;;
+  esac
+  local prev_adopt="${HM_SITE_WEB_ADOPT:-0}"
+  HM_SITE_WEB_ADOPT=1
+  hm_site_web_apply_file "${server}" "${kind}" "${dest}" "${body}" >/dev/null || {
+    HM_SITE_WEB_ADOPT="${prev_adopt}"
+    return 1
+  }
+  HM_SITE_WEB_ADOPT="${prev_adopt}"
+  return 0
 }
 
 hm_site_web_upstream_ok() {
@@ -441,7 +551,7 @@ EOF
 }
 
 hm_site_web_ssl() {
-  local domain="$1" server="$2" root="$3" rc=0
+  local domain="$1" server="$2" root="$3" kind="${4:-}" rc=0 issued=0
   if [[ "${server}" == "ols" ]] && declare -F hm_sc_issue_ssl >/dev/null 2>&1; then
     hm_sc_issue_ssl "${domain}"
     return $?
@@ -450,19 +560,23 @@ hm_site_web_ssl() {
     printf 'certbot certonly --webroot -w %s -d %s\n' "${root}" "${domain}" >> "${HM_SITE_WEB_LOG}"
   fi
   if [[ "${HMTOOLS_TEST:-}" == "1" || "${HM_SITE_WEB_MOCK:-}" == "1" ]]; then
-    return 0
-  fi
-  if declare -F hm_ssl_issue_via_acme_webroot >/dev/null 2>&1 && [[ -d "${root}" ]]; then
+    issued=1
+  elif declare -F hm_ssl_issue_via_acme_webroot >/dev/null 2>&1 && [[ -d "${root}" ]]; then
     if hm_ssl_issue_via_acme_webroot "${domain}" "${root}"; then
-      return 0
+      issued=1
     fi
   fi
-  if hm_have_cmd certbot && [[ -d "${root}" ]]; then
+  if [[ "${issued}" -eq 0 ]] && hm_have_cmd certbot && [[ -d "${root}" ]]; then
     certbot certonly --non-interactive --agree-tos --webroot -w "${root}" -d "${domain}" || rc=$?
     if [[ "${rc}" -eq 0 ]]; then
       hm_ok "SSL (certbot) dla ${domain}."
-      return 0
+      issued=1
     fi
+  fi
+  if [[ "${issued}" -eq 1 ]]; then
+    [[ -n "${kind}" ]] || kind="proxy"
+    hm_site_web_enable_https "${domain}" "${server}" "${kind}" || return 1
+    return 0
   fi
   hm_warn "SSL pominięty dla ${domain} — brak acme/certbot albo błąd wydania. Później: ssl issue ${domain}"
   return 0
@@ -515,7 +629,7 @@ hm_site_web_provision() {
     fi
   fi
   if [[ "${ssl}" == "1" ]]; then
-    hm_site_web_ssl "${domain}" "${server}" "${HM_SITE_WEB_ROOT}" || return 1
+    hm_site_web_ssl "${domain}" "${server}" "${HM_SITE_WEB_ROOT}" "${kind}" || return 1
   fi
   if [[ -n "${port}" ]]; then
     hm_ok "Vhost ${server}/${kind} dla ${domain} (bind 127.0.0.1:${port})."

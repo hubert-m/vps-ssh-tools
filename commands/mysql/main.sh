@@ -33,27 +33,60 @@ hm_mysql_user_protected() {
 }
 
 cmd_mysql_users() {
+  local line user host pwd flag
   echo "${C_BOLD}mysql users${C_RESET}"
   if [[ "${HMTOOLS_TEST:-}" == "1" && -n "${HM_MYSQL_USERS_FIXTURE:-}" ]]; then
-    cat "${HM_MYSQL_USERS_FIXTURE}"
+    while IFS=$'\t' read -r user host pwd flag || [[ -n "${user}" ]]; do
+      [[ -z "${user}" ]] && continue
+      if [[ "${pwd}" == "EMPTY" ]]; then
+        printf '%s\t%s\t%s%s%s\t%s\n' "${user}" "${host}" "${C_RED:-}" "EMPTY WARN" "${C_RESET:-}" "${flag:-}"
+      else
+        printf '%s\t%s\t%s\t%s\n' "${user}" "${host}" "${pwd}" "${flag:-}"
+      fi
+    done < "${HM_MYSQL_USERS_FIXTURE}"
+    if [[ -n "${HM_MYSQL_GRANTS_FIXTURE:-}" && -f "${HM_MYSQL_GRANTS_FIXTURE}" ]]; then
+      echo
+      echo "${C_DIM}Granty (skrót):${C_RESET}"
+      cat "${HM_MYSQL_GRANTS_FIXTURE}"
+    fi
     return 0
   fi
-  hm_mysql_exec -N -e "
+  while IFS=$'\t' read -r user host pwd flag || [[ -n "${user}" ]]; do
+    [[ -z "${user}" ]] && continue
+    if [[ "${pwd}" == "EMPTY" ]]; then
+      printf '%s\t%s\t%sEMPTY WARN%s\t%s\n' "${user}" "${host}" "${C_RED:-}" "${C_RESET:-}" "${flag}"
+    else
+      printf '%s\t%s\t%s\t%s\n' "${user}" "${host}" "${pwd}" "${flag}"
+    fi
+  done < <(hm_mysql_exec -N -e "
 SELECT user, host,
   IF(authentication_string='' OR authentication_string IS NULL,'EMPTY','set') AS pwd,
   IF(host='%','WILDCARD','ok') AS host_flag
 FROM mysql.user
-ORDER BY user, host;" 2>/dev/null || {
+ORDER BY user, host;" 2>/dev/null) || {
     hm_err "Nie odczytano mysql.user"
     return 1
   }
   echo
   echo "${C_DIM}Granty (skrót):${C_RESET}"
+  # mysql.db — SCHEMA_PRIVILEGES bywa puste przy grantach per-DB w MariaDB
   hm_mysql_exec -N -e "
-SELECT GRANTEE, TABLE_SCHEMA, PRIVILEGE_TYPE
-FROM information_schema.SCHEMA_PRIVILEGES
-WHERE TABLE_SCHEMA NOT IN ('information_schema','performance_schema','mysql','sys')
-ORDER BY GRANTEE, TABLE_SCHEMA
+SELECT CONCAT(User,'@',Host) AS who, Db,
+  CONCAT_WS(',',
+    IF(Select_priv='Y','SELECT',NULL),
+    IF(Insert_priv='Y','INSERT',NULL),
+    IF(Update_priv='Y','UPDATE',NULL),
+    IF(Delete_priv='Y','DELETE',NULL),
+    IF(Create_priv='Y','CREATE',NULL),
+    IF(Drop_priv='Y','DROP',NULL),
+    IF(Index_priv='Y','INDEX',NULL),
+    IF(Alter_priv='Y','ALTER',NULL),
+    IF(Grant_priv='Y','GRANT',NULL)
+  ) AS privs
+FROM mysql.db
+WHERE Db NOT IN ('information_schema','performance_schema','mysql','sys')
+  AND Db NOT LIKE '\_\_%'
+ORDER BY User, Host, Db
 LIMIT 200;" 2>/dev/null || true
 }
 
@@ -100,7 +133,13 @@ cmd_mysql_revoke() {
   uq="$(hm_sql_quote "${user}")"
   hm_confirm_plan "mysql revoke" "Odbiera uprawnienia ${user}@${host} do ${db}." \
     "REVOKE ALL ON \`${db}\`.* FROM ${user}@${host}" || return 0
-  hm_mysql_exec -e "REVOKE ALL PRIVILEGES, GRANT OPTION ON \`${db//\`/}\`.* FROM ${uq}@$(hm_sql_quote "${host}"); FLUSH PRIVILEGES;" \
+  # GRANT OPTION nie łączy się z ALL PRIVILEGES na db.* — osobne REVOKE.
+  local dbq hq
+  dbq="${db//\`/}"
+  hq="$(hm_sql_quote "${host}")"
+  hm_mysql_exec -e "REVOKE ALL PRIVILEGES ON \`${dbq}\`.* FROM ${uq}@${hq};" || return 1
+  hm_mysql_exec -e "REVOKE GRANT OPTION ON \`${dbq}\`.* FROM ${uq}@${hq};" 2>/dev/null || true
+  hm_mysql_exec -e "FLUSH PRIVILEGES;" \
     && hm_ok "REVOKE ${user}@${host} ← ${db}"
 }
 
@@ -119,6 +158,10 @@ cmd_mysql_passwd() {
   done
   [[ -n "${user}" ]] || { hm_err "Użycie: mysql passwd <user> [--host H] [--secret-file f]"; return 1; }
   hm_mysql_user_protected "${user}" && { hm_err "Konto chronione: ${user}"; return 1; }
+  # Bez TTY i bez --secret-file: nie generuj hasła, którego nie da się bezpiecznie pokazać.
+  if [[ -z "${secret_file}" ]] && declare -F hm_secret_require_delivery >/dev/null 2>&1; then
+    hm_secret_require_delivery || return 1
+  fi
   if [[ -n "${secret_file}" ]]; then
     [[ -f "${secret_file}" && ! -L "${secret_file}" ]] || { hm_err "Brak pliku sekretu."; return 1; }
     pass="$(tr -d '\r\n' < "${secret_file}")"

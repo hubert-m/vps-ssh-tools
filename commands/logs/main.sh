@@ -295,6 +295,59 @@ hm_logs_parse_since_epoch() {
   printf '%s' 0
 }
 
+# Epoch → YYYYMMDDHHMMSS (porównanie stringów w awk, bez mktime).
+hm_logs_epoch_cmp() {
+  local ep="${1:-0}"
+  [[ "${ep}" =~ ^[0-9]+$ && "${ep}" -gt 0 ]] || { printf '%s' 0; return 0; }
+  if date -d "@${ep}" +%Y%m%d%H%M%S >/dev/null 2>&1; then
+    date -d "@${ep}" +%Y%m%d%H%M%S
+    return 0
+  fi
+  if date -r "${ep}" +%Y%m%d%H%M%S >/dev/null 2>&1; then
+    date -r "${ep}" +%Y%m%d%H%M%S
+    return 0
+  fi
+  printf '%s' 0
+}
+
+# Jedno awk: filtr IP/URL/status + czas linii CLF [dd/Mon/yyyy:HH:MM:SS …].
+hm_logs_search_awk() {
+  local domain="$1" ip="$2" url="$3" status="$4" since_cmp="$5" until_cmp="$6"
+  awk -v domain="${domain}" -v ip="${ip}" -v url="${url}" -v status="${status}" \
+      -v since_cmp="${since_cmp}" -v until_cmp="${until_cmp}" '
+    BEGIN {
+      split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec", _m, " ")
+      for (i = 1; i <= 12; i++) mon[_m[i]] = sprintf("%02d", i)
+    }
+    function line_cmp(s,   m, dd, mo, yy, hh, mi, ss) {
+      if (!match(s, /\[[0-9]{2}\/[A-Za-z]{3}\/[0-9]{4}:[0-9]{2}:[0-9]{2}:[0-9]{2}/)) return ""
+      m = substr(s, RSTART + 1, RLENGTH - 1)
+      dd = substr(m, 1, 2); mo = substr(m, 4, 3); yy = substr(m, 8, 4)
+      hh = substr(m, 13, 2); mi = substr(m, 16, 2); ss = substr(m, 19, 2)
+      if (!(mo in mon)) return ""
+      return yy mon[mo] dd hh mi ss
+    }
+    {
+      if (since_cmp != "0" || until_cmp != "0") {
+        ts = line_cmp($0)
+        if (ts == "") next
+        if (since_cmp != "0" && ts < since_cmp) next
+        if (until_cmp != "0" && ts > until_cmp) next
+      }
+      if (ip != "" && index($0, ip) == 0) next
+      if (url != "" && $0 !~ url) next
+      if (status != "") {
+        if (status == "5xx" || status == "5XX") {
+          if ($0 !~ /[[:space:]]5[0-9]{2}[[:space:]]/) next
+        } else if (status == "4xx" || status == "4XX") {
+          if ($0 !~ /[[:space:]]4[0-9]{2}[[:space:]]/) next
+        } else if (index($0, " " status " ") == 0) next
+      }
+      printf "%s\t%s\n", domain, $0
+    }
+  '
+}
+
 # Lista plików access (+ .gz) dla domeny: ścieżka TAB domena
 hm_logs_search_files_for_domain() {
   local domain="$1" f
@@ -405,26 +458,24 @@ cmd_logs_search() {
     *) hm_err "--count-by: ip|url|site"; return 1 ;;
   esac
 
-  local domain file line n=0 key tmpout since_ep age
+  local domain file n=0 tmpout since_ep until_ep since_cmp until_cmp
   since_ep="$(hm_logs_parse_since_epoch "${since}")"
+  until_ep="$(hm_logs_parse_since_epoch "${until}")"
+  since_cmp="$(hm_logs_epoch_cmp "${since_ep}")"
+  until_cmp="$(hm_logs_epoch_cmp "${until_ep}")"
   tmpout="$(mktemp)"
   echo "${C_BOLD}logs search${C_RESET}${ip:+ ip=${ip}}${url:+ url=${url}}${status:+ status=${status}}"
   while IFS= read -r domain; do
     [[ -n "${domain}" ]] || continue
     while IFS=$'\t' read -r file _dom; do
       [[ -n "${file}" && -f "${file}" ]] || continue
-      if [[ "${since_ep}" -gt 0 ]]; then
-        age="$(stat -c '%Y' "${file}" 2>/dev/null || stat -f '%m' "${file}" 2>/dev/null || echo 0)"
-        [[ "${age}" -ge "${since_ep}" ]] || continue
-      fi
-      if [[ "${file}" == *.gz ]]; then
-        zcat -f -- "${file}" 2>/dev/null || gzip -dc -- "${file}" 2>/dev/null || true
-      else
-        cat -- "${file}" 2>/dev/null || true
-      fi | while IFS= read -r line || [[ -n "${line}" ]]; do
-        hm_logs_search_match_line "${line}" "${ip}" "${url}" "${status}" || continue
-        printf '%s\t%s\n' "${domain}" "${line}"
-      done
+      {
+        if [[ "${file}" == *.gz ]]; then
+          zcat -f -- "${file}" 2>/dev/null || gzip -dc -- "${file}" 2>/dev/null || true
+        else
+          cat -- "${file}" 2>/dev/null || true
+        fi
+      } | hm_logs_search_awk "${domain}" "${ip}" "${url}" "${status}" "${since_cmp}" "${until_cmp}"
     done < <(hm_logs_search_files_for_domain "${domain}")
   done < <(hm_logs_search_iter_sites "${sites}") > "${tmpout}"
 

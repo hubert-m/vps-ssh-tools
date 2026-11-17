@@ -1,5 +1,13 @@
 # hmtools vX.Y.Z
 
+- Fix: logs search — `--since`/`--until` po czasie linii CLF (awk); filtr IP/URL/status w jednym awk (także `.gz`)
+- Fix: mysql revoke/passwd/users — REVOKE bez „ALL, GRANT OPTION”; passwd wymaga TTY/`--secret-file`; EMPTY WARN; granty z `mysql.db`
+- Fix: users — klucz przed useradd + rollback; tylko https; filtr ssh-keygen; chage bez `|| true`; prompt „użytkownika”
+- Fix: clone/umask — `hm_dotnet_write_secret` zapisuje w `( umask 077; … )` (bez przecieku na REPL)
+- Fix: report weekly — humanize Certyfikaty/Dysk; issue bez false positive (high=0/FAIL=0/fail2ban); pełny escape JSON; Ruch przez numfmt
+- Fix: site new W06 — `--runtime node` bez `--node`; `lts`/`current`; bez vhosta z Node; `.nvmrc` bez chmod HOME; placeholder=`node server.js`
+- Fix: site new W05 — Composer: pobranie+SHA-256+`--version` w tmp roota, potem `install -o user` (bez TOCTOU w HOME)
+- Fix: site new W04 — po `--ssl` blok `listen 443` + redirect; Node/Python nie piszą vhosta (tylko snippety dla W04)
 - Fix: webs delete — user z `site new` znika tylko przy `user_created=true` i braku innego serwisu; istniejące `--user` zostaje
 - Fix: openvpn client renew — `--days` jako `EASYRSA_CERT_EXPIRE`; Easy-RSA 3.0 też robi `gen-crl` i kopię `hm/crl.pem`
 - Fix: openvpn install — NAT `enable --now` + sprawdzenie MASQUERADE; CSF `csf -r`; `--yes` bez `--endpoint` wykrywa IP albo odmawia (bez `vpn.example`)

@@ -25,10 +25,63 @@ hm_html_escape() {
   printf '%s' "${s}"
 }
 
+# Tylko realne problemy (nie high=0 / FAIL=0 / słowo fail2ban).
+hm_report_body_has_issue() {
+  local body="$1"
+  printf '%s\n' "${body}" | grep -Eqi 'failed|wygasa|WYGAS|reboot|ERROR|problem' && return 0
+  printf '%s\n' "${body}" | grep -Eq 'critical=[1-9]|high=[1-9]|medium=[1-9]|FAIL=[1-9]|WARN=[1-9]|bans?=[1-9]' && return 0
+  printf '%s\n' "${body}" | grep -Eq '(^|[[:space:]])FAIL([[:space:]]|:|$)' && return 0
+  return 1
+}
+
+hm_json_escape() {
+  local s="$1"
+  if command -v python3 >/dev/null 2>&1; then
+    BODY="${s}" python3 -c 'import json,os; print(json.dumps(os.environ.get("BODY",""), ensure_ascii=False)[1:-1], end="")' 2>/dev/null && return 0
+  fi
+  if command -v jq >/dev/null 2>&1; then
+    local q
+    q="$(printf '%s' "${s}" | jq -Rs . 2>/dev/null)" || true
+    if [[ -n "${q}" && "${q}" == \"*\" ]]; then
+      printf '%s' "${q:1:${#q}-2}"
+      return 0
+    fi
+  fi
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  s="$(printf '%s' "${s}" | tr -d '\000-\010\013\014\016-\037')"
+  printf '%s' "${s}"
+}
+
+hm_report_fmt_bytes() {
+  local n="$1"
+  [[ "${n}" =~ ^[0-9]+$ ]] || { printf '%s' "${n}"; return 0; }
+  if command -v numfmt >/dev/null 2>&1; then
+    numfmt --to=iec --suffix=B "${n}" 2>/dev/null && return 0
+  fi
+  printf '%s B' "${n}"
+}
+
+hm_report_format_traffic() {
+  local line key val
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    if [[ "${line}" =~ ^(rx|tx):\ *([0-9]+)[[:space:]]*$ ]]; then
+      key="${BASH_REMATCH[1]}"
+      val="${BASH_REMATCH[2]}"
+      printf '%s: %s\n' "${key}" "$(hm_report_fmt_bytes "${val}")"
+    else
+      printf '%s\n' "${line}"
+    fi
+  done <<< "$1"
+}
+
 hm_report_push() {
   local title="$1" body="$2" issue=0
   body="$(hm_report_humanize "${title}" "${body}")"
-  if printf '%s\n' "${body}" | grep -Eqi 'FAIL|failed|wygasa|WYGAS|reboot|ban|ERROR|problem|critical|high=|[1-9][0-9]* high'; then
+  if hm_report_body_has_issue "${body}"; then
     issue=1
   fi
   HM_REPORT_TITLES+=("${title}")
@@ -141,6 +194,46 @@ elif title == "Usługi" and isinstance(data, dict) and "services" in data:
         line(f"  {s.get('name') or s.get('unit')}: {s.get('active')}")
     if not failed:
         line("Brak usług w stanie failed/inactive.")
+elif title == "Certyfikaty" and isinstance(data, dict) and "certs" in data:
+    certs = data.get("certs") or []
+    if not certs:
+        line("Brak certyfikatów.")
+    else:
+        for c in certs[:30]:
+            if not isinstance(c, dict):
+                continue
+            dom = c.get("domain") or "?"
+            days = c.get("days")
+            st = c.get("status") or ""
+            if days is None:
+                line(f"{dom}: {st or '?'}")
+            else:
+                try:
+                    d = int(days)
+                except Exception:
+                    d = days
+                if isinstance(d, int) and d < 30:
+                    line(f"{dom}: wygasa za {d}d ({st or 'WKRÓTCE'})")
+                else:
+                    line(f"{dom}: {d}d ({st or 'OK'})")
+        if len(certs) > 30:
+            line(f"… +{len(certs)-30} więcej")
+elif title == "Dysk" and isinstance(data, dict) and "filesystems" in data:
+    fss = data.get("filesystems") or []
+    if not fss:
+        line("Brak systemów plików.")
+    else:
+        for fs in fss[:20]:
+            if not isinstance(fs, dict):
+                continue
+            mount = fs.get("mount") or "?"
+            used = fs.get("used_percent")
+            avail = fs.get("avail_kb")
+            fstype = fs.get("fstype") or ""
+            bits = [f"{used}%" if used is not None else "?", f"avail_kb={avail}" if avail is not None else None]
+            if fstype:
+                bits.append(fstype)
+            line(f"{mount}: " + " ".join(str(b) for b in bits if b is not None))
 else:
     if isinstance(data, dict):
         keys = ", ".join(list(data.keys())[:8])
@@ -172,6 +265,12 @@ PY
       else
         printf '%s\n' "${body}" | head -c 400
       fi
+      ;;
+    Certyfikaty)
+      printf '%s' "${body}" | tr '{}' '\n' | grep -E '"domain"|"days"|"status"' | head -20 || printf '%s\n' "${body}" | head -c 400
+      ;;
+    Dysk)
+      printf '%s' "${body}" | tr '{}' '\n' | grep -E '"mount"|"used_percent"' | head -20 || printf '%s\n' "${body}" | head -c 400
       ;;
     *)
       printf '%s\n' "${body}" | head -c 500
@@ -375,6 +474,7 @@ hm_report_collect() {
     local traffic
     traffic="$(hm_traffic_summary || true)"
     if [[ -n "${traffic}" ]]; then
+      traffic="$(hm_report_format_traffic "${traffic}")"
       hm_report_push "Ruch" "${traffic}"
     fi
   fi
@@ -423,10 +523,8 @@ hm_report_json() {
     [[ "${first}" -eq 0 ]] && printf ','
     first=0
     local title body
-    title="${HM_REPORT_TITLES[$i]//\"/\\\"}"
-    body="${HM_REPORT_BODIES[$i]//\\/\\\\}"
-    body="${body//\"/\\\"}"
-    body="${body//$'\n'/\\n}"
+    title="$(hm_json_escape "${HM_REPORT_TITLES[$i]}")"
+    body="$(hm_json_escape "${HM_REPORT_BODIES[$i]}")"
     printf '{"title":"%s","body":"%s","issue":%s}' "${title}" "${body}" "${HM_REPORT_ISSUES[$i]}"
   done
   printf ']}\n'

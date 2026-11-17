@@ -103,4 +103,26 @@ printf '%s\n' "${fmt_a}" | grep -q '58/100' && ok human-audit || bad human-audit
 fmt_z="$(hm_report_humanize Zasoby '[{"metric":"cpu","empty":true}]')"
 printf '%s\n' "${fmt_z}" | grep -q 'brak danych' && ok human-stats || bad human-stats
 
+# Certyfikaty / Dysk — czytelny tekst zamiast „(json) klucze”
+fmt_c="$(hm_report_humanize Certyfikaty '{"certs":[{"domain":"a.example","status":"OK","days":90},{"domain":"b.example","status":"WKRÓTCE","days":5}]}')"
+printf '%s\n' "${fmt_c}" | grep -q 'a.example: 90d' && printf '%s\n' "${fmt_c}" | grep -q 'wygasa za 5d' && ok human-certs || bad human-certs
+fmt_d="$(hm_report_humanize Dysk '{"filesystems":[{"mount":"/","used_percent":40,"avail_kb":1000,"fstype":"ext4"}]}')"
+printf '%s\n' "${fmt_d}" | grep -q '/: 40%' && ok human-disk || bad human-disk
+
+# Fałszywe alarmy: high=0 / FAIL=0 / fail2ban
+hm_report_body_has_issue 'Aktualizacje: critical=0 high=0 medium=0 low=0' && bad issue-zero-high || ok issue-zero-high
+hm_report_body_has_issue 'Audyt: 100/100  FAIL=0 WARN=0 checks=10' && bad issue-zero-fail || ok issue-zero-fail
+hm_report_body_has_issue 'fail2ban bans=0' && bad issue-fail2ban-word || ok issue-fail2ban-word
+hm_report_body_has_issue 'Aktualizacje: critical=0 high=5 medium=0 low=0' && ok issue-real-high || bad issue-real-high
+hm_report_body_has_issue 'nginx failed' && ok issue-failed || bad issue-failed
+
+# JSON escape: tab / CR
+esc="$(hm_json_escape "$(printf 'a\tb\rc"d\\e')")"
+printf '%s' "${esc}" | grep -q '\\t' && printf '%s' "${esc}" | grep -q '\\r' && ok json-esc || bad json-esc
+printf '%s' "{\"x\":\"${esc}\"}" | python3 -c 'import json,sys; json.load(sys.stdin)' >/dev/null 2>&1 && ok json-valid || bad json-valid
+
+# Ruch: numfmt
+traf="$(hm_report_format_traffic "$(printf 'rx: 1048576\ntx: 2048\n')")"
+printf '%s\n' "${traf}" | grep -Eq 'rx: 1[.0-9]*M' && ok traffic-iec || bad traffic-iec="[${traf}]"
+
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

@@ -8,7 +8,7 @@ Alias: `new-site` (to samo co `site new`). `site create` zostaje osobną, krótk
 
 Kolejność prac: silnik kreatora, manifest i journal, preflight z użytkownikiem, vhost, PHP, Node, bazy i `.env`, Python, .NET, deploy z `releases/current`, operacje (cron, workery, logi, health, firewall), cykl życia wg manifestu, statyczna/SPA i Docker, testy z dokumentacją.
 
-MVP to preflight, manifest, vhost OLS i nginx, PHP, Node, MySQL/MariaDB z `.env` oraz testy tych części. SSL w MVP przy `--ssl`: `hm_site_web_ssl` woła acme webroot albo certbot (ten sam tor co `ssl issue`); przy braku narzędzia ostrzega i zostawia HTTP. Python, .NET, Docker, releases, workery i usuwanie wg manifestu są drugą fazą.
+MVP to preflight, manifest, vhost OLS i nginx, PHP, Node, MySQL/MariaDB z `.env` oraz testy tych części. SSL w MVP przy `--ssl`: `hm_site_web_ssl` woła acme webroot albo certbot, potem dopisuje `listen 443 ssl` (nginx/apache) z redirectem 80→443; przy braku narzędzia ostrzega i zostawia HTTP. Vhost pisze wyłącznie krok W04 — Node/Python zostawiają snippety (`proxy.snippet`, `vhost.extra`). Python, .NET, Docker, releases, workery i usuwanie wg manifestu są drugą fazą.
 
 Domyślne w kodzie, dopóki decyzje nie zostaną zmienione: Python przez `uv`, .NET przez `microsoft-repo` (mieszany feed Ubuntu jest odrzucany), układ releases tylko z `--releases`.
 
