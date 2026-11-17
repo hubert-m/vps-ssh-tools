@@ -33,7 +33,7 @@ openvpn install --dry-run
 openvpn install --yes --port 1194 --proto udp --endpoint vpn.example --subnet 10.8.0.0/24
 ```
 
-Powstają `hm.conf` (tls-crypt, AES-256-GCM), stan w `hmtools.state` i unit `openvpn-server@hm`. NAT dopisuje się w oznaczonym bloku i nie rusza reguł SSH. Unit NAT (`hmtools-openvpn-nat.service`) jest włączany od razu (`enable --now`); przy CSF reguły idą w życie przez `csf -r`. `--yes` bez `--endpoint` bierze publiczne IP albo odmawia — placeholder `vpn.example` tylko gdy podasz go jawnie.
+Powstają `hm.conf` (tls-crypt, AES-256-GCM), stan w `hmtools.state` i unit `openvpn-server@hm`. **Domyślny `MODE=full`** (`redirect-gateway`) — klient ma internet przez VPN zaraz po instalacji; `split` tylko przez `openvpn config set mode split` (+ trasy). NAT dopisuje się w oznaczonym bloku i nie rusza reguł SSH. Unit NAT (`hmtools-openvpn-nat.service`) jest włączany od razu (`enable --now`); przy CSF reguły idą w życie przez `csf -r`. `--yes` bez `--endpoint` bierze publiczne IP albo odmawia — placeholder `vpn.example` tylko gdy podasz go jawnie.
 
 `openvpn` bez argumentów pokazuje skrót (endpoint, port, liczba ważnych klientów, CRL). Gdy nie ma konfiguracji, podpowiada `openvpn install --dry-run`.
 

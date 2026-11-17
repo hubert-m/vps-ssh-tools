@@ -140,6 +140,24 @@ printf 'status %s 30\nport 1194\n' "${runstat}" > "$(hm_ovpn_conf_file)"
 who2="$(cmd_openvpn who)"
 printf '%s\n' "${who2}" | grep -q 'fromconf' && ok who-from-conf || bad who-from-conf
 printf '%s\n' "$(cmd_openvpn status)" | grep -q "status_file: ${runstat}" && ok status-path-conf || bad status-path-conf
+# client show/list: sesja z hm_ovpn_status_file (nie tylko HM_OVPN_STATUS)
+mkdir -p "${HM_OVPN_PKI}/issued"
+cat > "${HM_OVPN_PKI}/issued/fromconf.crt" <<'CRT'
+-----BEGIN CERT-----
+MII=
+-----END CERT-----
+CRT
+openssl() { case "$1" in x509) printf 'subject=CN=fromconf\n';; *) return 0;; esac; }
+show_fc="$(cmd_openvpn client show fromconf 2>/dev/null || true)"
+printf '%s\n' "${show_fc}" | grep -q 'sesja: połączony' && ok client-show-from-conf || bad client-show-from-conf
+unset -f openssl
+# kick: nazwa to literal (j.n ≠ jan); bez mgmt → rc≠0
+printf 'CLIENT_LIST,jan,1.1.1.1:1,10.8.0.2,,1,1,t,,,AES\n' > "${runstat}"
+if cmd_openvpn kick 'j.n' --yes >/dev/null 2>&1; then bad kick-regex; else ok kick-regex; fi
+unset HM_OVPN_MGMT_LOG
+printf 'CLIENT_LIST,jan,1.1.1.1:1,10.8.0.2,,1,1,t,,,AES\n' > "${runstat}"
+if cmd_openvpn kick jan --yes >/dev/null 2>&1; then bad kick-nomgmt; else ok kick-nomgmt; fi
+export HM_OVPN_MGMT_LOG="${root}/mgmt.log"
 
 export HM_OVPN_JOURNAL="${root}/journal.log"
 cat > "${HM_OVPN_JOURNAL}" <<'EOF'

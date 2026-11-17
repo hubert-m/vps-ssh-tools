@@ -159,7 +159,7 @@ hm_ovpn_kick() {
     hm_err "Brak pliku statusu (${file}) — nie mogę potwierdzić klienta ${name}."
     return 1
   fi
-  if ! grep -q "CLIENT_LIST,${name}," "${file}"; then
+  if ! grep -qF "CLIENT_LIST,${name}," "${file}"; then
     hm_err "Nie ma klienta ${name}."
     return 1
   fi
@@ -168,7 +168,10 @@ hm_ovpn_kick() {
   elif declare -F hm_confirm_plan >/dev/null 2>&1; then
     hm_confirm_plan "openvpn kick ${name}" "To nie jest revoke. Klient może połączyć się ponownie." "kill ${name}" || return 1
   fi
-  hm_ovpn_mgmt_kill "${name}"
+  if ! hm_ovpn_mgmt_kill "${name}"; then
+    hm_err "Nie udało się rozłączyć ${name} (brak management socket / nc)."
+    return 1
+  fi
   hm_ovpn_audit "kick ${name}"
   hm_info "Klient może połączyć się ponownie. To nie jest revoke."
 }

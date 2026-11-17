@@ -28,10 +28,6 @@ export HM_DOTNET_BIN="${root}/bin/dotnet"
 mkdir -p "${root}/bin" "${HM_DOTNET_SOURCES}" "${HM_SYSTEMD_UNIT_DIR}" "${root}/journal"
 : > "${HM_DOTNET_SYSTEMCTL_LOG}"
 : > "${HM_DOTNET_INSTALL_LOG}"
-# Journal + undo (jak w prawdziwym site new)
-hm_tx_note_undo() { printf 'undo=%s\n' "$1" >> "${root}/journal/open.log"; }
-hm_site_resource_add() { printf '%s\t%s\t%s\n' "$2" "$3" "$4" >> "${root}/resources"; }
-
 cat > "${root}/bin/systemd-analyze" <<'EOF'
 #!/usr/bin/env bash
 file=""
@@ -48,12 +44,13 @@ chmod +x "${root}/bin/systemd-analyze"
 export PATH="${root}/bin:${PATH}"
 
 # shellcheck disable=SC1091
-source lib/site/env.sh
-# shellcheck disable=SC1091
-source lib/site/dotnet.sh
-# minimalne stuby HOME (env.sh)
+source scripts/lib-test-site.sh
+hm_test_site_load
+# stuby po load (nadpisują prawdziwe hm_tx_* / resource)
 hm_site_home() { printf '%s/%s' "${HM_SITE_HOME_BASE}" "$1"; }
 hm_site_unix_user() { printf '%s' "${HM_SITE_USER}"; }
+hm_tx_note_undo() { printf 'undo=%s\n' "$1" >> "${root}/journal/open.log"; }
+hm_site_resource_add() { printf '%s\t%s\t%s\n' "$2" "$3" "$4" >> "${root}/resources"; }
 
 printf '%s\n' 'deb https://packages.microsoft.com/ubuntu/22.04/prod jammy main' > "${HM_DOTNET_SOURCES}/microsoft.list"
 if hm_dotnet_feeds_mixed; then bad feed-ms-only; else ok feed-ms-only; fi

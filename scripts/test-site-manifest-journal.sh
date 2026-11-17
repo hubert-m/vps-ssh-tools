@@ -14,9 +14,6 @@ hm_info() { echo "INFO: $*"; }
 hm_have_cmd() { return 1; }
 hm_confirm_plan() { return 0; }
 hm_is_valid_domain() { return 0; }
-hm_site_db_provision() { return 0; }
-hm_site_web_provision() { return 0; }
-
 fail=0
 ok() { printf 'OK   %s\n' "$1"; }
 bad() { printf 'FAIL %s\n' "$1" >&2; fail=1; }
@@ -27,12 +24,31 @@ export HM_SITE_MANIFEST_DIR="${root}/manifest"
 export HM_SITE_JOURNAL_DIR="${root}/journal"
 export HM_SITE_LOCK_DIR="${root}/locks"
 export HM_SITE_HOME_BASE="${root}/homes"
+export HM_SITE_OS_FILE="${root}/os-release"
+export HM_SITE_MEMINFO_FILE="${root}/meminfo"
+export HM_SITE_SS_FILE="${root}/ss.txt"
+export HM_SITE_PASSWD_FILE="${root}/passwd"
+export HM_SITE_USERADD_MOCK=1
+export HM_SITE_DISK_MB=20000
+export HM_SITE_NTP=synced
+export HM_SITE_REPO_OK=1
+export HM_SITE_WEB_GROUP=www-data
 mkdir -p "${HM_SITE_HOME_BASE}"
+: > "${HM_SITE_PASSWD_FILE}"
+printf 'MemTotal: 2097152 kB\n' > "${HM_SITE_MEMINFO_FILE}"
+printf 'LISTEN 0.0.0.0:80\nLISTEN 0.0.0.0:443\n' > "${HM_SITE_SS_FILE}"
+cat > "${HM_SITE_OS_FILE}" <<'EOF'
+ID=debian
+VERSION_ID="12"
+EOF
 
 # shellcheck disable=SC1091
-source lib/site/env.sh
-# shellcheck disable=SC1091
-source lib/site/tx.sh
+source scripts/lib-test-site.sh
+hm_test_site_load
+# stuby po load (nadpisują prawdziwe provision)
+hm_site_db_provision() { return 0; }
+hm_site_web_provision() { return 0; }
+hm_site_base_preflight() { return 0; }
 # shellcheck disable=SC1091
 source commands/site-create/wizard-db.sh
 

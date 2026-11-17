@@ -16,6 +16,14 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [vX.Y.Z]
 
+- Fix: openvpn config — `full`+IPv6: `redirect-gateway ipv6` / `block-ipv6`; keepalive raz z state
+- Fix: openvpn client show/list — sesja z `hm_ovpn_status_file`; kick `grep -F` + rc≠0 bez management
+- Fix: ufw remove — dokładny token To (80 ≠ 8080); whitelist z comment hmtools; remove from:IP rc≠0 gdy brak reguły
+- Fix: site ops — rollback firewalla woła `hm_os_firewall_remove`; port 1–65535
+- Fix: deploy release — build przez `runuser` (nie root); rollback failed stamp tylko z `--force`
+- Fix: openvpn install — domyślnie `MODE=full` + `redirect-gateway` (split tylko przez config set)
+- Fix: testy site-* — `scripts/lib-test-site.sh` (kolejność jak hmtools); memory OOM hermetyczny; node runuser bez fikcyjnego usera
+- Fix: dns expiry — data z `eventAction=expiration` (nie registration); `--all` z manifestów/webs + apex
 - Fix: traffic — day≠month (logi 24h/30d + vnstat/proc); domena nie z IP CF; `--since` CLF; spikes + „brak skoków”; numfmt
 - Fix: mail senders — raz na queue ID; tylko SASL/pickup; `--since` filtruje syslog; bez zewnętrznych from=
 - Fix: vhost nginx — `server_name` z `www.<domena>` (jak OLS vhAliases); Node bez podwójnego zapisu vhosta (W06)

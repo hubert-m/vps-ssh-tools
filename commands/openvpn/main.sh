@@ -194,21 +194,28 @@ hm_ovpn_copy_crl() {
 hm_ovpn_mgmt_kill() {
   local cn="$1" sock
   sock="$(hm_ovpn_mgmt_sock)"
-  [[ -n "${HM_OVPN_MGMT_LOG:-}" ]] && printf 'kill %s\nquit\n' "${cn}" >> "${HM_OVPN_MGMT_LOG}"
+  # Mock testów: zapis do logu (bez żywego socketa).
+  if [[ -n "${HM_OVPN_MGMT_LOG:-}" ]]; then
+    printf 'kill %s\nquit\n' "${cn}" >> "${HM_OVPN_MGMT_LOG}"
+  fi
   if [[ -S "${sock}" ]] && hm_have_cmd nc; then
     # -N zamyka stdin po zapisie; timeout chroni przed wiszącym sockiem.
     if command -v timeout >/dev/null 2>&1; then
-      printf 'kill %s\nquit\n' "${cn}" | timeout 5 nc -N -U -w 3 "${sock}" 2>/dev/null \
-        || printf 'kill %s\nquit\n' "${cn}" | timeout 5 nc -U -w 3 "${sock}" 2>/dev/null \
-        || hm_warn "sesja nie została rozłączona"
+      if printf 'kill %s\nquit\n' "${cn}" | timeout 5 nc -N -U -w 3 "${sock}" 2>/dev/null \
+        || printf 'kill %s\nquit\n' "${cn}" | timeout 5 nc -U -w 3 "${sock}" 2>/dev/null; then
+        return 0
+      fi
     else
-      printf 'kill %s\nquit\n' "${cn}" | nc -N -U -w 3 "${sock}" 2>/dev/null \
-        || printf 'kill %s\nquit\n' "${cn}" | nc -U -w 3 "${sock}" 2>/dev/null \
-        || hm_warn "sesja nie została rozłączona"
+      if printf 'kill %s\nquit\n' "${cn}" | nc -N -U -w 3 "${sock}" 2>/dev/null \
+        || printf 'kill %s\nquit\n' "${cn}" | nc -U -w 3 "${sock}" 2>/dev/null; then
+        return 0
+      fi
     fi
-    return 0
   fi
   hm_warn "sesja nie została rozłączona"
+  # Bez socketa: MGMT_LOG = mock sukces; produkcja bez mgmt → rc≠0 (kick).
+  [[ -n "${HM_OVPN_MGMT_LOG:-}" ]] && return 0
+  return 1
 }
 
 hm_ovpn_client_revoke() {
@@ -233,7 +240,7 @@ hm_ovpn_client_revoke() {
     printf 'CRL\n' > "$(hm_ovpn_pki)/crl.pem"
   fi
   hm_ovpn_copy_crl || return 1
-  hm_ovpn_mgmt_kill "${name}"
+  hm_ovpn_mgmt_kill "${name}" || true
   rm -f "$(hm_ovpn_server_dir)/ccd/${name}" "$(hm_ovpn_export_dir)/${name}.ovpn"
   hm_ovpn_audit "revoke ${name}"
   hm_ok "Unieważniono ${name}. Pozostali klienci zostają bez restartu."
@@ -858,9 +865,11 @@ hm_ovpn_client_row() {
   if [[ -f "$(hm_ovpn_server_dir)/ccd/${cn}" ]]; then
     ip="$(awk '{print $2; exit}' "$(hm_ovpn_server_dir)/ccd/${cn}")"
   fi
-  if [[ -n "${HM_OVPN_STATUS:-}" && -f "${HM_OVPN_STATUS}" ]] && grep -q "CLIENT_LIST,${cn}," "${HM_OVPN_STATUS}"; then
+  local sf
+  sf="$(hm_ovpn_status_file 2>/dev/null || true)"
+  if [[ -n "${sf}" && -f "${sf}" ]] && grep -qF "CLIENT_LIST,${cn}," "${sf}"; then
     conn="tak"
-    seen="$(awk -F, -v n="${cn}" '$1=="CLIENT_LIST" && $2==n {print $NF; exit}' "${HM_OVPN_STATUS}")"
+    seen="$(awk -F, -v n="${cn}" '$1=="CLIENT_LIST" && $2==n {print $NF; exit}' "${sf}")"
     [[ -n "${seen}" ]] || seen="-"
   fi
   case "${HM_OVPN_LIST_MODE:-valid}" in
@@ -909,7 +918,9 @@ hm_ovpn_client_show() {
   if [[ -f "$(hm_ovpn_server_dir)/ccd/${name}" ]]; then
     printf 'ip: %s\n' "$(awk '{print $2; exit}' "$(hm_ovpn_server_dir)/ccd/${name}")"
   fi
-  if [[ -n "${HM_OVPN_STATUS:-}" && -f "${HM_OVPN_STATUS}" ]] && grep -q "CLIENT_LIST,${name}," "${HM_OVPN_STATUS}"; then
+  local sf
+  sf="$(hm_ovpn_status_file 2>/dev/null || true)"
+  if [[ -n "${sf}" && -f "${sf}" ]] && grep -qF "CLIENT_LIST,${name}," "${sf}"; then
     printf 'sesja: połączony\n'
   else
     printf 'sesja: brak\n'

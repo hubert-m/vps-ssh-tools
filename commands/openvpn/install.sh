@@ -41,7 +41,7 @@ hm_ovpn_subnet_pair() {
 }
 
 hm_ovpn_render_conf() {
-  local etc="$1" port="$2" proto="$3" cidr="$4" group="$5" ver="${6:-2.6}" dns="${7:-}"
+  local etc="$1" port="$2" proto="$3" cidr="$4" group="$5" ver="${6:-2.6}" dns="${7:-}" keep="${8:-10 120}"
   local pair ciphers
   pair="$(hm_ovpn_subnet_pair "${cidr}")" || return 1
   if [[ "${ver}" == 2.4* ]]; then
@@ -49,6 +49,7 @@ hm_ovpn_render_conf() {
   else
     ciphers="data-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305"
   fi
+  [[ -n "${keep}" ]] || keep="10 120"
   cat <<EOF
 port ${port}
 proto ${proto}
@@ -69,7 +70,7 @@ user nobody
 group ${group}
 persist-key
 persist-tun
-keepalive 10 120
+keepalive ${keep}
 client-config-dir ${etc}/ccd
 status /run/openvpn-server/status-hm.log 30
 status-version 3
@@ -705,7 +706,7 @@ PKI=${pki}
 PREV_FORWARD=${prev}
 DNS=${dns}
 IPV6=${ipv6_val}
-MODE=split
+MODE=full
 EOF
 }
 
@@ -878,8 +879,13 @@ hm_ovpn_install() {
     hm_ovpn_rollback
     return 1
   }
+  # Domyślnie full tunnel (internet przez VPN); split tylko przez `config set mode split`.
+  printf '%s\n' 'push "redirect-gateway def1 bypass-dhcp"' >> "$(hm_ovpn_conf_file)"
   if [[ "${ipv6}" -eq 1 ]]; then
     printf 'server-ipv6 fd42:42:42::/64\n' >> "$(hm_ovpn_conf_file)"
+    printf '%s\n' 'push "redirect-gateway ipv6"' >> "$(hm_ovpn_conf_file)"
+  else
+    printf '%s\n' 'push "block-ipv6"' >> "$(hm_ovpn_conf_file)"
   fi
   local sysctl="${HM_OVPN_SYSCTL_D:-/etc/sysctl.d}/99-hmtools-openvpn.conf"
   mkdir -p "$(dirname "${sysctl}")"

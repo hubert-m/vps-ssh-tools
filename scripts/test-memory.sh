@@ -45,9 +45,12 @@ printf '%s\n' "${out}" | grep -q $'php-fpm\t123\t80000' && ok oom-php || bad oom
 printf '%s\n' "${out}" | grep -q $'example.com' && ok oom-site || bad oom-site
 printf '%s\n' "${out}" | grep -q $'hint\t' && ok oom-hint || bad oom-hint
 
+# Hermetycznie: brak fixture + HMTOOLS_TEST=1 (bez żywego journalctl); jawny brak pliku
 unset HM_MEM_OOM
+export HM_MEM_OOM="/nonexistent-oom-$$"
 if cmd_memory oom >/dev/null 2>"${root}/oom.err"; then bad oom-no-src; else ok oom-no-src; fi
 grep -q 'Brak journala OOM' "${root}/oom.err" && ok oom-no-src-msg || bad oom-no-src-msg
+unset HM_MEM_OOM
 [[ "$(hm_mem_since_journal 7d)" == "7 days ago" ]] && ok since-7d || bad since-7d
 [[ "$(hm_mem_since_journal 2h)" == "2 hours ago" ]] && ok since-2h || bad since-2h
 printf -- '-- No entries --\n' > "${root}/empty-j"

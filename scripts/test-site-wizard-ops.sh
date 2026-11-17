@@ -194,4 +194,22 @@ ok "runtime-version"
 [[ "$(hm_site_app_unit_name "a.b")" == "hm-app-a.b.service" ]] || bad "unit-name"
 ok "app-unit-name"
 
+# walidacja portu 1–65535
+if hm_site_ops_apply "badport.example" "" "" "" 1 "" 0 >/dev/null 2>&1; then bad "port-0"; else ok "port-0"; fi
+if hm_site_ops_apply "badport.example" "" "" "" 1 "" 70000 >/dev/null 2>&1; then bad "port-hi"; else ok "port-hi"; fi
+
+# rollback firewall → delete
+fw_domain="fwroll.example"
+mkdir -p "${HM_SITE_HOME_BASE}/${fw_domain}/.hmtools"
+printf '{"domain":"%s"}\n' "${fw_domain}" > "${HM_SITE_MANIFEST_DIR}/${fw_domain}.json"
+: > "${HM_SITE_OPS_LOG}"
+hm_os_firewall_allow() { printf 'allow %s/%s\n' "$1" "${2:-tcp}" >> "${HM_SITE_OPS_LOG}"; return 0; }
+hm_os_firewall_remove() { printf 'delete %s/%s\n' "$1" "${2:-tcp}" >> "${HM_SITE_OPS_LOG}"; return 0; }
+hm_site_ops_apply "${fw_domain}" "" "" "" 1 "" 8081 || bad "fw-apply2"
+snip="${HM_SITE_FW_DIR}/hm-fwroll.example.rules"
+[[ -f "${snip}" ]] || bad "fw-snip"
+hm_site_ops_rollback "${fw_domain}" "${snip}" || bad "fw-rb"
+grep -q 'delete 8081/tcp' "${HM_SITE_OPS_LOG}" && ok "fw-rollback-delete" || bad "fw-rollback-delete"
+[[ ! -f "${snip}" ]] && ok "fw-snip-gone" || bad "fw-snip-gone"
+
 echo ALL OK

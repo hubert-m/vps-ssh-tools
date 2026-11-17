@@ -38,7 +38,9 @@ export HM_DNS_DNSSEC="${root}/dnssec"
 : > "${HM_DNS_RDAP_HITS}"
 printf '%s\n' example.pl example.com example.eu > "${HM_DNS_DOMAINS}"
 printf 'renewal date: 2026.11.20 12:00:00\n' > "${root}/rdap/example.pl"
-printf '"eventAction":"expiration","eventDate":"2026-12-01T00:00:00Z"\n' > "${root}/rdap/example.com"
+# registration PRZED expiration — nie wolno brać pierwszej daty
+printf '%s\n' '{"events":[{"eventAction":"registration","eventDate":"1995-08-14T00:00:00Z"},{"eventAction":"expiration","eventDate":"2026-12-01T00:00:00Z"}]}' \
+  > "${root}/rdap/example.com"
 printf 'Expiry Date: 2026-11-15\n' > "${root}/rdap/example.eu"
 printf '%s\n' 'A example.pl 203.0.113.10' 'MX example.pl 10 mail.example.pl' > "${root}/base/example.pl"
 printf '%s\n' 'A example.pl 203.0.113.11' 'MX example.pl 10 mail.example.pl' > "${root}/pub/example.pl"
@@ -92,5 +94,22 @@ rc=0
 err="$(hm_dns_expiry_one missing.example 2>&1)" || rc=$?
 [[ "${rc}" -ne 0 ]] && printf '%s\n' "${err}" | grep -q 'RDAP\|WHOIS\|Brak' && ! printf '%s\n' "${err}" | grep -q 'null or not set' \
   && ok no-env || bad no-env
+
+# --all bez HM_DNS_DOMAINS: manifessty + apex (www.shop.example.com → example.com)
+unset HM_DNS_DOMAINS
+mkdir -p "${root}/manifests"
+printf '{}\n' > "${root}/manifests/www.shop.example.com.json"
+printf '{}\n' > "${root}/manifests/example.com.json"
+export HM_SITE_MANIFEST_DIR="${root}/manifests"
+export HM_DNS_RDAP_DIR="${root}/rdap"
+export HM_DNS_EXPIRY_CACHE="${root}/cache-all"
+export HM_DNS_RDAP_HITS="${root}/hits-all"
+export HM_DNS_DEDUP="${root}/dedup-all"
+: > "${HM_DNS_RDAP_HITS}"
+list="$(hm_dns_list_domains)"
+printf '%s\n' "${list}" | grep -qx 'example.com' && ok all-apex || bad all-apex
+[[ "$(printf '%s\n' "${list}" | grep -c .)" -eq 1 ]] && ok all-dedup || bad all-dedup
+out_all="$(cmd_dns expiry --all 2>/dev/null)"
+printf '%s\n' "${out_all}" | grep -q $'example.com\t20' && ok all-from-manifest || bad all-from-manifest
 
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

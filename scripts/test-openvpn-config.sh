@@ -41,6 +41,12 @@ export HM_OVPN_FW_LOG="${root}/fw.log"
 : > "${HM_OVPN_FW_LOG}"
 cmd_openvpn config set mode full >/dev/null
 grep -Fxf "${HMTOOLS_ROOT}/scripts/fixtures/openvpn/config-full.txt" "$(hm_ovpn_conf_file)" && ok mode-full || bad mode-full
+grep -q 'push "block-ipv6"' "$(hm_ovpn_conf_file)" && ok full-block-ipv6 || bad full-block-ipv6
+kc="$(grep -c '^keepalive ' "$(hm_ovpn_conf_file)" || true)"
+[[ "${kc}" == "1" ]] && ok keepalive-once || bad keepalive-once
+cmd_openvpn config set ipv6 on >/dev/null
+grep -q 'push "redirect-gateway ipv6"' "$(hm_ovpn_conf_file)" && ok full-ipv6-redirect || bad full-ipv6-redirect
+grep -q 'push "block-ipv6"' "$(hm_ovpn_conf_file)" && bad full-ipv6-noblock || ok full-ipv6-noblock
 cmd_openvpn config set mode split >/dev/null
 cmd_openvpn route add 10.10.0.0/16 >/dev/null
 grep -Fxf "${HMTOOLS_ROOT}/scripts/fixtures/openvpn/config-split.txt" "$(hm_ovpn_conf_file)" && ok mode-split || bad mode-split

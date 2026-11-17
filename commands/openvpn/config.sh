@@ -181,15 +181,22 @@ hm_ovpn_render_from_state() {
   [[ -n "${dns}" ]] || dns="quad9"
   group="$(hm_ovpn_group_name)"
   ver="${HM_OVPN_VERSION:-2.6.0}"
-  hm_ovpn_render_conf "$(hm_ovpn_etc)" "${port}" "${proto}" "${cidr}" "${group}" "${ver}" "$(hm_ovpn_dns_ips "${dns}")"
   mode="$(hm_ovpn_state_value MODE 2>/dev/null || true)"
   ipv6="$(hm_ovpn_state_value IPV6 2>/dev/null || true)"
   c2c="$(hm_ovpn_state_value CLIENT_TO_CLIENT 2>/dev/null || true)"
   max="$(hm_ovpn_state_value MAX_CLIENTS 2>/dev/null || true)"
   keep="$(hm_ovpn_state_value KEEPALIVE 2>/dev/null || true)"
   routes="$(hm_ovpn_state_value ROUTES 2>/dev/null || true)"
+  # keepalive raz — w bazowym render_conf (domyślnie 10 120)
+  hm_ovpn_render_conf "$(hm_ovpn_etc)" "${port}" "${proto}" "${cidr}" "${group}" "${ver}" \
+    "$(hm_ovpn_dns_ips "${dns}")" "${keep:-10 120}"
   if [[ "${mode}" == "full" ]]; then
     printf '%s\n' 'push "redirect-gateway def1 bypass-dhcp"'
+    if [[ "${ipv6}" == "on" ]]; then
+      printf '%s\n' 'push "redirect-gateway ipv6"'
+    else
+      printf '%s\n' 'push "block-ipv6"'
+    fi
   fi
   if [[ "${ipv6}" == "on" ]]; then
     printf '%s\n' 'server-ipv6 fd42:42:42::/64'
@@ -207,9 +214,6 @@ hm_ovpn_render_from_state() {
       mask="$(hm_ovpn_mask_for "${cidr_one#*/}")"
       printf 'push "route %s %s"\n' "${net}" "${mask}"
     done < <(printf '%s\n' "${routes}" | tr ',' '\n')
-  fi
-  if [[ -n "${keep}" ]]; then
-    printf 'keepalive %s\n' "${keep}"
   fi
 }
 
@@ -391,8 +395,16 @@ hm_ovpn_render_using() {
   routes="${routes#ROUTES=}"
   group="$(hm_ovpn_group_name)"
   ver="${HM_OVPN_VERSION:-2.6.0}"
-  hm_ovpn_render_conf "$(hm_ovpn_etc)" "${port}" "${proto}" "${cidr}" "${group}" "${ver}" "$(hm_ovpn_dns_ips "${dns}")"
-  [[ "${mode}" == "full" ]] && printf '%s\n' 'push "redirect-gateway def1 bypass-dhcp"'
+  hm_ovpn_render_conf "$(hm_ovpn_etc)" "${port}" "${proto}" "${cidr}" "${group}" "${ver}" \
+    "$(hm_ovpn_dns_ips "${dns}")" "${keep:-10 120}"
+  if [[ "${mode}" == "full" ]]; then
+    printf '%s\n' 'push "redirect-gateway def1 bypass-dhcp"'
+    if [[ "${ipv6}" == "on" ]]; then
+      printf '%s\n' 'push "redirect-gateway ipv6"'
+    else
+      printf '%s\n' 'push "block-ipv6"'
+    fi
+  fi
   [[ "${ipv6}" == "on" ]] && printf '%s\n' 'server-ipv6 fd42:42:42::/64'
   [[ "${c2c}" == "on" ]] && printf '%s\n' 'client-to-client'
   [[ -n "${max}" ]] && printf 'max-clients %s\n' "${max}"
@@ -403,9 +415,6 @@ hm_ovpn_render_using() {
       mask="$(hm_ovpn_mask_for "${cidr_one#*/}")"
       printf 'push "route %s %s"\n' "${net}" "${mask}"
     done < <(printf '%s\n' "${routes}" | tr ',' '\n')
-  fi
-  if [[ -n "${keep}" ]]; then
-    printf 'keepalive %s\n' "${keep}"
   fi
 }
 

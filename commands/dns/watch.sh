@@ -73,6 +73,151 @@ hm_dns_days_until() {
   printf '%s\n' "$(( (a - b) / 86400 ))"
 }
 
+# Apex: www. → bez; .co.uk/.com.pl → 3 etykiety; inaczej 2.
+hm_dns_apex() {
+  local d n
+  d="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  d="${d#www.}"
+  d="${d%.}"
+  [[ -n "${d}" ]] || return 0
+  case "${d}" in
+    *.co.uk|*.org.uk|*.ac.uk|*.gov.uk|*.com.pl|*.net.pl|*.org.pl|*.com.au|*.net.au|*.co.jp|*.com.br)
+      n="$(printf '%s' "${d}" | awk -F. '{ if (NF>=3) print $(NF-2)"."$(NF-1)"."$NF; else print $0 }')"
+      ;;
+    *)
+      n="$(printf '%s' "${d}" | awk -F. '{ if (NF>=2) print $(NF-1)"."$NF; else print $0 }')"
+      ;;
+  esac
+  printf '%s\n' "${n}"
+}
+
+# Lista domen: HM_DNS_DOMAINS → manifessty → webs (HM_SITES_LIST), zredukowane do apex.
+hm_dns_list_domains() {
+  local d apex dir f seen="" out=""
+  hm_dns_paths_init
+  if [[ -n "${HM_DNS_DOMAINS:-}" && -f "${HM_DNS_DOMAINS}" ]]; then
+    while IFS= read -r d; do
+      [[ -n "${d}" && "${d}" != \#* ]] || continue
+      apex="$(hm_dns_apex "${d}")"
+      [[ -n "${apex}" ]] || continue
+      case " ${seen} " in
+        *" ${apex} "*) continue ;;
+      esac
+      seen="${seen} ${apex}"
+      out="${out}${apex}"$'\n'
+    done < "${HM_DNS_DOMAINS}"
+    printf '%s' "${out}"
+    return 0
+  fi
+  dir="${HM_SITE_MANIFEST_DIR:-/etc/hmtools/sites}"
+  if [[ -d "${dir}" ]]; then
+    shopt -s nullglob
+    for f in "${dir}"/*.json; do
+      d="$(basename "${f}" .json)"
+      [[ "${d}" == *.resources ]] && continue
+      apex="$(hm_dns_apex "${d}")"
+      [[ -n "${apex}" ]] || continue
+      case " ${seen} " in
+        *" ${apex} "*) continue ;;
+      esac
+      seen="${seen} ${apex}"
+      out="${out}${apex}"$'\n'
+    done
+    shopt -u nullglob
+  fi
+  if declare -F hm_discover_sites >/dev/null 2>&1; then
+    hm_discover_sites 2>/dev/null || true
+    for d in "${HM_SITES_LIST[@]:-}"; do
+      [[ -n "${d}" ]] || continue
+      apex="$(hm_dns_apex "${d}")"
+      [[ -n "${apex}" ]] || continue
+      case " ${seen} " in
+        *" ${apex} "*) continue ;;
+      esac
+      seen="${seen} ${apex}"
+      out="${out}${apex}"$'\n'
+    done
+  fi
+  if [[ -z "${out}" ]]; then
+    return 1
+  fi
+  printf '%s' "${out}"
+}
+
+# Data wygaśnięcia z RDAP/WHOIS: eventAction=expiration, nie registration.
+hm_dns_parse_expiry_date() {
+  local src="$1" date=""
+  [[ -f "${src}" ]] || return 1
+  if command -v jq >/dev/null 2>&1; then
+    date="$(jq -r '
+      ([.events[]? | select(.eventAction == "expiration") | .eventDate] | first)
+      // empty
+    ' "${src}" 2>/dev/null || true)"
+    date="${date%%T*}"
+    date="${date%% *}"
+    [[ "${date}" == "null" ]] && date=""
+  fi
+  if [[ -z "${date}" ]]; then
+    date="$(awk '
+      function date_from(s,   m) {
+        if (match(s, /"eventDate"[[:space:]]*:[[:space:]]*"[0-9]{4}-[0-9]{2}-[0-9]{2}/)) {
+          m = substr(s, RSTART, RLENGTH)
+          if (match(m, /[0-9]{4}-[0-9]{2}-[0-9]{2}/)) return substr(m, RSTART, 10)
+        }
+        return ""
+      }
+      function last_date_from(s,   tmp, m, last) {
+        tmp = s; last = ""
+        while (match(tmp, /"eventDate"[[:space:]]*:[[:space:]]*"[0-9]{4}-[0-9]{2}-[0-9]{2}/)) {
+          m = substr(tmp, RSTART, RLENGTH)
+          if (match(m, /[0-9]{4}-[0-9]{2}-[0-9]{2}/)) last = substr(m, RSTART, 10)
+          tmp = substr(tmp, RSTART + RLENGTH)
+        }
+        return last
+      }
+      {
+        data = data $0
+      }
+      END {
+        rest = data
+        while (match(rest, /"eventAction"[[:space:]]*:[[:space:]]*"[^"]+"/)) {
+          act = substr(rest, RSTART, RLENGTH)
+          after = substr(rest, RSTART + RLENGTH)
+          if (act ~ /"expiration"/) {
+            # najpierw eventDate PO action (typowe RDAP)
+            d = date_from(substr(after, 1, 400))
+            if (d == "") {
+              # albo ostatnie eventDate tuż PRZED action (odwrotna kolejność pól)
+              ws = RSTART - 200; if (ws < 1) ws = 1
+              d = last_date_from(substr(rest, ws, RSTART - ws))
+            }
+            if (d != "") { print d; exit }
+          }
+          rest = after
+        }
+        # WHOIS
+        if (match(data, /[Rr]egistry [Ee]xpiry [Dd]ate:[[:space:]]*[0-9]{4}-[0-9]{2}-[0-9]{2}/)) {
+          m = substr(data, RSTART, RLENGTH)
+          if (match(m, /[0-9]{4}-[0-9]{2}-[0-9]{2}/)) { print substr(m, RSTART, 10); exit }
+        }
+        if (match(data, /[Ee]xpiry [Dd]ate:[[:space:]]*[0-9]{4}-[0-9]{2}-[0-9]{2}/)) {
+          m = substr(data, RSTART, RLENGTH)
+          if (match(m, /[0-9]{4}-[0-9]{2}-[0-9]{2}/)) { print substr(m, RSTART, 10); exit }
+        }
+        # .pl style
+        if (match(data, /renewal date:[[:space:]]*[0-9]{4}[.-][0-9]{2}[.-][0-9]{2}/)) {
+          m = substr(data, RSTART, RLENGTH)
+          if (match(m, /[0-9]{4}[.-][0-9]{2}[.-][0-9]{2}/)) {
+            d = substr(m, RSTART, 10); gsub(/\./, "-", d); print d; exit
+          }
+        }
+      }
+    ' "${src}")"
+  fi
+  [[ -n "${date}" ]] || return 1
+  printf '%s\n' "${date}"
+}
+
 hm_dns_expiry_alert() {
   local domain="$1" days="$2" date="$3" dedup key
   dedup="${HM_DNS_DEDUP:-/var/lib/hmtools/dns-expiry.dedup}"
@@ -115,9 +260,10 @@ hm_dns_expiry_one() {
       fi
     fi
     printf '%s\n' "${domain}" >> "${HM_DNS_RDAP_HITS}"
-    raw="$(awk 'match($0, /[0-9]{4}[.-][0-9]{2}[.-][0-9]{2}/) { print substr($0, RSTART, RLENGTH); exit }' "${src}")"
-    date="${raw//./-}"
-    [[ -n "${date}" ]] || { hm_err "Nie odczytano daty dla ${domain}."; return 1; }
+    date="$(hm_dns_parse_expiry_date "${src}")" || {
+      hm_err "Nie odczytano daty wygaśnięcia dla ${domain}."
+      return 1
+    }
     printf '%s\n' "${date}" > "${cache}"
   fi
   days="$(hm_dns_days_until "${date}")"
@@ -128,13 +274,13 @@ hm_dns_expiry_one() {
 }
 
 hm_dns_expiry_cmd() {
-  local target="${1:-${HM_SITE_DOMAIN:-}}" domain
+  local target="${1:-${HM_SITE_DOMAIN:-}}" domain list
   if [[ "${target}" == "--all" ]]; then
-    [[ -f "${HM_DNS_DOMAINS:-}" ]] || { hm_err "Brak listy domen."; return 1; }
+    list="$(hm_dns_list_domains)" || { hm_err "Brak listy domen (HM_DNS_DOMAINS, manifessty lub webs)."; return 1; }
     while IFS= read -r domain; do
       [[ -n "${domain}" ]] || continue
       hm_dns_expiry_one "${domain}" || return 1
-    done < "${HM_DNS_DOMAINS}"
+    done <<< "${list}"
     return 0
   fi
   [[ -n "${target}" ]] || { hm_err "Użycie: dns expiry <domena|--all>"; return 1; }
@@ -171,7 +317,7 @@ hm_dns_drift_one() {
 }
 
 hm_dns_drift_cmd() {
-  local domain
+  local domain list
   if [[ "${1:-}" == "baseline" ]]; then
     hm_dns_paths_init
     domain="${2:-${HM_SITE_DOMAIN:-}}"
@@ -187,11 +333,11 @@ hm_dns_drift_cmd() {
   fi
   domain="${1:-${HM_SITE_DOMAIN:-}}"
   if [[ "${domain}" == "--all" ]]; then
-    [[ -f "${HM_DNS_DOMAINS:-}" ]] || { hm_err "Brak listy domen."; return 1; }
+    list="$(hm_dns_list_domains)" || { hm_err "Brak listy domen (HM_DNS_DOMAINS, manifessty lub webs)."; return 1; }
     while IFS= read -r domain; do
       [[ -n "${domain}" ]] || continue
       hm_dns_drift_one "${domain}" || return 1
-    done < "${HM_DNS_DOMAINS}"
+    done <<< "${list}"
     return 0
   fi
   [[ -n "${domain}" ]] || { hm_err "Użycie: dns drift [baseline] <domena|--all>"; return 1; }
@@ -222,8 +368,8 @@ hm_dns_dnssec_cmd() {
 }
 
 hm_health_dns_alerts() {
-  local domain line days
-  [[ -f "${HM_DNS_DOMAINS:-}" ]] || return 0
+  local domain line days list
+  list="$(hm_dns_list_domains 2>/dev/null)" || return 0
   while IFS= read -r domain; do
     [[ -n "${domain}" ]] || continue
     line="$(hm_dns_expiry_one "${domain}" 2>/dev/null || true)"
@@ -232,18 +378,18 @@ hm_health_dns_alerts() {
     if [[ "${days}" =~ ^-?[0-9]+$ && "${days}" -le 30 ]]; then
       printf 'dns:expiry:%s:%s\n' "${domain}" "${days}"
     fi
-  done < "${HM_DNS_DOMAINS}"
+  done <<< "${list}"
 }
 
 hm_dns_watch_summary() {
-  local domain
-  [[ -f "${HM_DNS_DOMAINS:-}" ]] || return 0
+  local domain list
+  list="$(hm_dns_list_domains 2>/dev/null)" || return 0
   hm_dns_expiry_cmd --all || true
   if declare -F hm_mail_check_cmd >/dev/null 2>&1; then
     while IFS= read -r domain; do
       [[ -n "${domain}" ]] || continue
       hm_mail_check_cmd "${domain}" >/dev/null 2>&1 || true
       printf 'mail diag: %s\n' "${domain}"
-    done < "${HM_DNS_DOMAINS}"
+    done <<< "${list}"
   fi
 }

@@ -137,6 +137,72 @@ if grep -q 'DENY' "${UFW_STATUS}" && grep -q '\[ 4\]' "${UFW_STATUS}"; then
 else
   echo "FAIL ufw-status-intact"; fail=1
 fi
+
+# Exact To match: remove 80/tcp nie kasuje 8080/tcp
+: > "${UFW_DELETED}"
+cat > "${UFW_STATUS}" <<'EOF'
+Status: active
+
+     To                         Action      From
+     --                         ------      ----
+[ 1] 80/tcp                     ALLOW IN    Anywhere                   # hmtools
+[ 2] 8080/tcp                   ALLOW IN    Anywhere                   # hmtools
+[ 3] 80/tcp (v6)                ALLOW IN    Anywhere (v6)              # hmtools
+EOF
+_hm_os_do_firewall_remove "80/tcp"
+if grep -qx '1' "${UFW_DELETED}" && grep -qx '3' "${UFW_DELETED}" && ! grep -qx '2' "${UFW_DELETED}"; then
+  echo "OK   ufw-remove-exact-port"
+else
+  echo "FAIL ufw-remove-exact-port deleted=$(tr '\n' ',' < "${UFW_DELETED}")"; fail=1
+fi
+
+# Whitelist comment + remove from:IP; brak reguły → rc≠0
+: > "${UFW_DELETED}"
+UFW_CMDS="${tmpdir}/ufw.cmds"
+: > "${UFW_CMDS}"
+cat > "${UFW_STATUS}" <<'EOF'
+Status: active
+
+     To                         Action      From
+     --                         ------      ----
+[ 1] Anywhere                   ALLOW IN    203.0.113.10               # hmtools whitelist
+[ 2] Anywhere                   ALLOW IN    198.51.100.1
+EOF
+ufw() {
+  printf '%s\n' "$*" >> "${UFW_CMDS}"
+  case "${1:-}" in
+    status) cat "${UFW_STATUS}" ;;
+    delete)
+      shift || true
+      local n=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in --force) shift || true ;; *) n="$1"; break ;; esac
+      done
+      printf '%s\n' "${n}" >> "${UFW_DELETED}"
+      ;;
+    *) return 0 ;;
+  esac
+}
+_hm_os_do_firewall_whitelist "9.9.9.9"
+if grep -q 'comment hmtools whitelist' "${UFW_CMDS}"; then
+  echo "OK   ufw-whitelist-comment"
+else
+  echo "FAIL ufw-whitelist-comment cmds=$(tr '\n' '|' < "${UFW_CMDS}")"; fail=1
+fi
+: > "${UFW_DELETED}"
+if _hm_os_do_firewall_remove "from:203.0.113.10" \
+  && grep -qx '1' "${UFW_DELETED}" && ! grep -qx '2' "${UFW_DELETED}"; then
+  echo "OK   ufw-remove-from-ours"
+else
+  echo "FAIL ufw-remove-from-ours deleted=$(tr '\n' ',' < "${UFW_DELETED}")"; fail=1
+fi
+: > "${UFW_DELETED}"
+if _hm_os_do_firewall_remove "from:198.51.100.1"; then
+  echo "FAIL ufw-remove-from-foreign-should-fail"; fail=1
+else
+  echo "OK   ufw-remove-from-foreign-rc"
+fi
+
 cmt="$(_hm_os_fw_comment "")"
 [[ "${cmt}" == "hmtools" ]] && echo "OK   fw-comment-default" || { echo "FAIL fw-comment-default"; fail=1; }
 cmt="$(_hm_os_fw_comment "openvpn")"

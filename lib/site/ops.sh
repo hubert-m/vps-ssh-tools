@@ -143,11 +143,36 @@ hm_site_ops_rollback() {
         hm_site_ops_disable "${base}"
         hm_site_ops_remove "${path}" || true
         ;;
-      logrotate|firewall)
+      logrotate)
+        hm_site_ops_remove "${path}" || true
+        ;;
+      firewall)
+        hm_site_ops_firewall_undo "${path}" || true
         hm_site_ops_remove "${path}" || true
         ;;
     esac
   done < "${file}"
+}
+
+# Wycofaj regułę z snippeta (port/proto # hm:domena).
+hm_site_ops_firewall_undo() {
+  local snip="$1" line port proto=""
+  [[ -f "${snip}" && ! -L "${snip}" ]] || return 0
+  line="$(head -n 1 "${snip}" 2>/dev/null || true)"
+  [[ -n "${line}" ]] || return 0
+  port="${line%%/*}"
+  proto="${line#*/}"
+  proto="${proto%% *}"
+  proto="${proto%%#*}"
+  proto="$(printf '%s' "${proto}" | tr -d '[:space:]')"
+  [[ "${port}" =~ ^[0-9]+$ ]] || return 0
+  [[ -n "${proto}" ]] || proto="tcp"
+  if [[ -n "${HM_SITE_OPS_LOG:-}" ]]; then
+    printf 'firewall delete %s/%s\n' "${port}" "${proto}" >> "${HM_SITE_OPS_LOG}"
+  fi
+  if declare -F hm_os_firewall_remove >/dev/null 2>&1; then
+    hm_os_firewall_remove "${port}" "${proto}" 2>/dev/null || hm_warn "Nie usunięto reguły firewall ${port}/${proto}."
+  fi
 }
 
 hm_site_ops_is_active() {
@@ -307,9 +332,11 @@ hm_site_ops_apply() {
   fwdir="${HM_SITE_FW_DIR:-/etc/hmtools/firewall}"
   [[ "${workers}" =~ ^[0-9]+$ ]] || workers=1
   [[ "${workers}" -ge 1 ]] || workers=1
-  if [[ -n "${open_port}" && ! "${open_port}" =~ ^[0-9]+$ ]]; then
-    hm_err "Port firewalla musi być liczbą."
-    return 1
+  if [[ -n "${open_port}" ]]; then
+    if [[ ! "${open_port}" =~ ^[0-9]+$ ]] || [[ "${open_port}" -lt 1 || "${open_port}" -gt 65535 ]]; then
+      hm_err "Port firewalla musi być w zakresie 1–65535."
+      return 1
+    fi
   fi
   mkdir -p "${home}/logs" "$(hm_site_state_dir "${domain}")" "${unitdir}" "${lrdir}" "${fwdir}"
   chmod 0750 "${home}/logs" 2>/dev/null || true
@@ -454,16 +481,21 @@ EOF
       printf 'firewall allow %s/tcp hm:%s\n' "${open_port}" "${domain}" >> "${HM_SITE_OPS_LOG}"
     fi
     # opcjonalne: brak backendu / błąd allow = ostrzeżenie, bez rollbacku strony/ops
-    if [[ "${HMTOOLS_TEST:-}" != "1" ]]; then
-      if ! hm_site_ops_firewall_backend >/dev/null 2>&1; then
-        hm_warn "Brak ufw/firewalld/csf — zapisano snippet ${snip}, reguła nie zastosowana."
-      elif declare -F hm_os_firewall_allow >/dev/null 2>&1; then
-        if ! hm_os_firewall_allow "${open_port}" tcp "" "hm:${domain}"; then
-          hm_warn "Firewall nie przyjął portu ${open_port} — snippet zapisany, reszta ops bez zmian."
-        fi
-      else
-        hm_warn "Brak hm_os_firewall_allow — snippet zapisany bez aplikacji reguły."
+    if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+      if declare -F hm_os_firewall_allow >/dev/null 2>&1; then
+        hm_os_firewall_allow "${open_port}" tcp "" "hm:${domain}" || true
       fi
+    elif ! hm_site_ops_firewall_backend >/dev/null 2>&1; then
+      hm_warn "Brak ufw/firewalld/csf — zapisano snippet ${snip}, reguła nie zastosowana."
+    elif declare -F hm_os_firewall_allow >/dev/null 2>&1; then
+      if ! hm_os_firewall_allow "${open_port}" tcp "" "hm:${domain}"; then
+        hm_warn "Firewall nie przyjął portu ${open_port} — snippet zapisany, reszta ops bez zmian."
+      else
+        # marker: reguła dodana w tym przebiegu (rollback wywoła remove)
+        printf 'applied=1\n' >> "${snip}"
+      fi
+    else
+      hm_warn "Brak hm_os_firewall_allow — snippet zapisany bez aplikacji reguły."
     fi
   fi
   if [[ "${#enable_units[@]}" -gt 0 ]]; then

@@ -124,9 +124,28 @@ if ls -ld "${HM_DEPLOY_HOME}/current" 2>/dev/null | grep -q -- '->'; then
   hm_deploy_release_rollback || bad rb-ok-rc
   now="$(readlink "${HM_DEPLOY_HOME}/current")"
   [[ "${now}" == "releases/20260101010101" ]] && ok rb-skip-failed || bad rb-skip-failed
+  # jawny stamp failed → wymaga --force
+  if hm_deploy_release_rollback 20260101010102 >/dev/null 2>&1; then bad rb-failed-stamp; else ok rb-failed-stamp; fi
+  hm_deploy_release_rollback 20260101010102 --force >/dev/null 2>&1 || bad rb-force-rc
+  now="$(readlink "${HM_DEPLOY_HOME}/current")"
+  [[ "${now}" == "releases/20260101010102" ]] && ok rb-force-ok || bad rb-force-ok
 else
   ok rb-ok-platform
   ok rb-skip-failed
+  ok rb-failed-stamp-platform
+  ok rb-force-platform
 fi
+
+# Build jako user: root używa runuser (asercja w kodzie + mock npm na whiteliście)
+grep -q 'runuser -u "${user}"' commands/git/releases.sh && ok build-runuser-code || bad build-runuser-code
+grep -q 'Build release wymaga użytkownika strony' commands/git/releases.sh && ok build-no-root-eval || bad build-no-root-eval
+export HM_DEPLOY_HOME="${root}/app"
+mkdir -p "${root}/bin-npm" "${HM_DEPLOY_HOME}/releases/builduser"
+printf '#!/usr/bin/env bash\nexit 0\n' > "${root}/bin-npm/npm"
+chmod +x "${root}/bin-npm/npm"
+export PATH="${root}/bin-npm:${PATH}"
+export HM_DEPLOY_BUILD_CMD='npm run build'
+unset HM_DEPLOY_BUILD_FAIL
+hm_deploy_release_build "${HM_DEPLOY_HOME}/releases/builduser" && ok build-cmd || bad build-cmd
 
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

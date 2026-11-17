@@ -141,8 +141,23 @@ hm_deploy_release_populate() {
   return 0
 }
 
+hm_deploy_release_site_user() {
+  local user=""
+  if [[ -n "${HM_DEPLOY_SITE_USER:-}" ]]; then
+    printf '%s' "${HM_DEPLOY_SITE_USER}"
+    return 0
+  fi
+  if declare -F hm_access_require_site_user >/dev/null 2>&1 && [[ -n "${HM_SITE_DOMAIN:-}" ]]; then
+    user="$(hm_access_require_site_user "${HM_SITE_DOMAIN}" 2>/dev/null || true)"
+  fi
+  if [[ -z "${user}" ]] && declare -F hm_site_unix_user >/dev/null 2>&1 && [[ -n "${HM_SITE_DOMAIN:-}" ]]; then
+    user="$(hm_site_unix_user "${HM_SITE_DOMAIN}" 2>/dev/null || true)"
+  fi
+  printf '%s' "${user}"
+}
+
 hm_deploy_release_build() {
-  local rel="${1:-}"
+  local rel="${1:-}" user="" qrel
   [[ "${HM_DEPLOY_BUILD_FAIL:-}" == "1" ]] && return 1
   if [[ "${HMTOOLS_TEST:-}" == "1" && -z "${HM_DEPLOY_BUILD_CMD:-}" ]]; then
     return 0
@@ -154,6 +169,30 @@ hm_deploy_release_build() {
       hm_err "Build spoza whitelist: ${cmd}"
       return 1
     }
+  fi
+  user="$(hm_deploy_release_site_user)"
+  # Root: tylko runuser jako user strony — bez eval w kontekście roota.
+  if [[ "$(id -u)" -eq 0 ]]; then
+    if [[ -z "${user}" ]] || ! id -u "${user}" >/dev/null 2>&1; then
+      if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+        (
+          cd "${rel}" || exit 1
+          # shellcheck disable=SC2086
+          eval "${cmd}"
+        )
+        return $?
+      fi
+      hm_err "Build release wymaga użytkownika strony (runuser)."
+      return 1
+    fi
+    if ! command -v runuser >/dev/null 2>&1; then
+      hm_err "Brak runuser — nie buduję release jako root."
+      return 1
+    fi
+    chown -R "${user}:" "${rel}" 2>/dev/null || true
+    qrel="$(printf '%q' "${rel}")"
+    runuser -u "${user}" -- bash -lc "cd ${qrel} && ${cmd}"
+    return $?
   fi
   (
     cd "${rel}" || exit 1
@@ -212,7 +251,7 @@ hm_deploy_release_prune() {
 }
 
 hm_deploy_release_apply() {
-  local home stamp rel
+  local home stamp rel site_u=""
   home="$(hm_deploy_home)"
   stamp="${1:-${HM_DEPLOY_STAMP:-}}"
   [[ -n "${stamp}" ]] || stamp="$(date -u +%Y%m%d%H%M%S)"
@@ -235,6 +274,11 @@ hm_deploy_release_apply() {
     hm_err "Populate release ${stamp} nieudany. current bez zmian."
     return 1
   fi
+  # Właściciel releasu = user strony (przed buildem)
+  site_u="$(hm_deploy_release_site_user)"
+  if [[ -n "${site_u}" ]] && id -u "${site_u}" >/dev/null 2>&1; then
+    chown -R "${site_u}:" "${rel}" 2>/dev/null || true
+  fi
   if ! hm_deploy_release_build "${rel}"; then
     hm_deploy_status_write "${rel}/.hm-release-status" "failed" || true
     hm_err "Build release ${stamp} nieudany. current bez zmian."
@@ -252,10 +296,27 @@ hm_deploy_release_apply() {
 }
 
 hm_deploy_release_rollback() {
-  local home cur prev="" stamp st
+  local home cur prev="" stamp st force=0 target=""
   home="$(hm_deploy_home)"
-  if [[ -n "${1:-}" ]]; then
-    hm_deploy_switch_current "${home}" "$1"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force) force=1; shift ;;
+      *)
+        [[ -z "${target}" ]] && target="$1"
+        shift
+        ;;
+    esac
+  done
+  if [[ -n "${target}" ]]; then
+    st=""
+    if [[ -f "${home}/releases/${target}/.hm-release-status" && ! -L "${home}/releases/${target}/.hm-release-status" ]]; then
+      st="$(tr -d '[:space:]' < "${home}/releases/${target}/.hm-release-status")"
+    fi
+    if [[ "${st}" == "failed" && "${force}" -ne 1 ]]; then
+      hm_err "Release ${target} ma status failed — użyj --force."
+      return 1
+    fi
+    hm_deploy_switch_current "${home}" "${target}"
     return $?
   fi
   if [[ -L "${home}/current" ]]; then

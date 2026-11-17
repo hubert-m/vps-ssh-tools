@@ -32,9 +32,8 @@ mkdir -p "${HM_SYSTEMD_UNIT_DIR}" "${HM_SITE_VHOST_DIR}" "${HM_SITE_MANIFEST_DIR
 : > "${HM_PYTHON_UV_LOG}"
 
 # shellcheck disable=SC1091
-source lib/site/env.sh
-# shellcheck disable=SC1091
-source lib/site/python.sh
+source scripts/lib-test-site.sh
+hm_test_site_load
 export HM_SITE_STATE_DIR="${root}/state"
 mkdir -p "${HM_SITE_STATE_DIR}"
 

@@ -74,18 +74,22 @@ hm_node_ver_cmp() {
 }
 
 hm_node_run_as_user() {
-  local user="$1" home="$2"
+  local user="$1" home="$2" exists=0
   shift 2 || true
   [[ -n "${user}" && -n "${home}" ]] || return 1
-  if [[ "$(id -u)" -eq 0 ]] && hm_have_cmd runuser; then
-    runuser -u "${user}" -- env HOME="${home}" USER="${user}" LOGNAME="${user}" "$@"
-    return $?
+  id -u "${user}" >/dev/null 2>&1 && exists=1
+  # Istniejący user: runuser/sudo. Brak konta (fixture testów) — tylko HOME/PATH, bez runuser.
+  if [[ "$(id -u)" -eq 0 && "${exists}" -eq 1 ]]; then
+    if hm_have_cmd runuser; then
+      runuser -u "${user}" -- env HOME="${home}" USER="${user}" LOGNAME="${user}" "$@"
+      return $?
+    fi
+    if hm_have_cmd sudo; then
+      sudo -u "${user}" -- env HOME="${home}" USER="${user}" LOGNAME="${user}" "$@"
+      return $?
+    fi
   fi
-  if [[ "$(id -u)" -eq 0 ]] && hm_have_cmd sudo; then
-    sudo -u "${user}" -- env HOME="${home}" USER="${user}" LOGNAME="${user}" "$@"
-    return $?
-  fi
-  if [[ "$(id -un)" == "${user}" || "$(id -u)" -ne 0 ]]; then
+  if [[ "$(id -un)" == "${user}" || "$(id -u)" -ne 0 || "${exists}" -eq 0 ]]; then
     env HOME="${home}" USER="${user}" LOGNAME="${user}" "$@"
     return $?
   fi

@@ -47,15 +47,12 @@ VERSION_ID="12"
 EOF
 
 # shellcheck disable=SC1091
-source lib/site/env.sh
-# shellcheck disable=SC1091
-source lib/site/tx.sh
-# shellcheck disable=SC1091
-source lib/site/base.sh
-# shellcheck disable=SC1091
-source lib/site/db.sh
+source scripts/lib-test-site.sh
+hm_test_site_load
 # shellcheck disable=SC1091
 source commands/site-create/wizard-db.sh
+# stub web po load — nadpisze prawdziwy hm_site_web_provision
+hm_site_web_provision() { printf 'WEB:%s\n' "$*" >> "${HM_SITE_RUN_LOG}"; return 0; }
 export HM_SITE_MANIFEST_DIR="${root}/manifest"
 export HM_SITE_JOURNAL_DIR="${root}/journal"
 export HM_SITE_LOCK_DIR="${root}/locks"
@@ -138,7 +135,6 @@ cmd_site_new cp.example.pl --db none --preset wordpress --yes >"${root}/cp.out" 
 grep -q 'cyberpanel createWebsite' "${HM_SITE_RUN_LOG}" && ok "cyberpanel-run" || { bad "cyberpanel-run"; cat "${HM_SITE_RUN_LOG}" >&2; }
 
 export PANEL=cyberpanel WEBSERVER=nginx
-hm_site_web_provision() { printf 'WEB:%s\n' "$*" >> "${HM_SITE_RUN_LOG}"; return 0; }
 : > "${HM_SITE_RUN_LOG}"
 cmd_site_new nx.example.pl --db none --preset static --yes >"${root}/nx.out" 2>&1 || { bad "nx-new"; cat "${root}/nx.out" >&2; exit 1; }
 if grep -q 'cyberpanel' "${HM_SITE_RUN_LOG}"; then
