@@ -51,6 +51,29 @@ hm_site_docker_preflight() {
   return 0
 }
 
+hm_site_docker_image_ok() {
+  local image="${1:-}"
+  [[ -n "${image}" ]] || return 1
+  # Bez spacji/nowych linii — chroni przed wstrzyknięciem YAML.
+  [[ "${image}" =~ ^[a-zA-Z0-9][a-zA-Z0-9._/:@-]*$ ]] || return 1
+  return 0
+}
+
+hm_site_docker_port_ok() {
+  local p="${1:-}"
+  [[ "${p}" =~ ^[0-9]+$ ]] || return 1
+  ((10#${p} >= 1 && 10#${p} <= 65535))
+}
+
+hm_site_build_out_ok() {
+  local out="${1:-}"
+  [[ -n "${out}" ]] || return 1
+  [[ "${out}" != /* && "${out}" != ~* ]] || return 1
+  [[ "${out}" != *..* ]] || return 1
+  [[ "${out}" =~ ^[a-zA-Z0-9._][a-zA-Z0-9._/-]*$ ]] || return 1
+  return 0
+}
+
 hm_site_docker_validate_compose() {
   local file="$1"
   [[ -f "${file}" ]] || {
@@ -62,8 +85,22 @@ hm_site_docker_validate_compose() {
     hm_err "Odmowa: compose publikuje port na 0.0.0.0 (wymagane 127.0.0.1)."
     return 1
   fi
+  # Port bez 127.0.0.1 (np. "8080:80")
+  if grep -Eq '^[[:space:]]*-[[:space:]]*["'\'']?[0-9]+:[0-9]+' "${file}"; then
+    hm_err "Odmowa: port bez 127.0.0.1 (Docker omija UFW)."
+    return 1
+  fi
   if ! grep -Eq '127\.0\.0\.1:[0-9]+:[0-9]+' "${file}"; then
     hm_err "Compose musi mapować port jako 127.0.0.1:<host>:<container>."
+    return 1
+  fi
+  if grep -Eqi '^[[:space:]]*(privileged|network_mode|cap_add|pid)[[:space:]]*:' "${file}"; then
+    hm_err "Odmowa: privileged / network_mode / cap_add / pid w compose."
+    return 1
+  fi
+  # Wolumeny hosta z absolutną ścieżką /
+  if grep -Eqi '^[[:space:]]*-[[:space:]]*["'\'']?/' "${file}"; then
+    hm_err "Odmowa: wolumen hosta z ścieżką absolutną (/…)."
     return 1
   fi
   return 0
@@ -138,8 +175,12 @@ hm_site_docker_provision() {
     hm_err "Użycie: --runtime docker --image OBRAZ[:tag] [--container-port N]"
     return 1
   }
-  [[ "${cport}" =~ ^[0-9]+$ ]] || {
-    hm_err "Nieprawidłowy --container-port: ${cport}"
+  hm_site_docker_image_ok "${image}" || {
+    hm_err "Nieprawidłowy --image (dozwolone: [a-zA-Z0-9._/:@-], bez spacji/nowych linii)."
+    return 1
+  }
+  hm_site_docker_port_ok "${cport}" || {
+    hm_err "Nieprawidłowy --container-port: ${cport} (1–65535)"
     return 1
   }
   hm_site_docker_preflight || return 1
@@ -155,6 +196,12 @@ hm_site_docker_provision() {
   else
     host="${host_port}"
     [[ "${host}" == "auto" ]] && host="3001"
+  fi
+  if [[ "${host}" != "auto" ]]; then
+    hm_site_docker_port_ok "${host}" || {
+      hm_err "Nieprawidłowy port hosta: ${host} (1–65535)"
+      return 1
+    }
   fi
 
   hm_site_docker_write_compose "${compose}" "${image}" "${host}" "${cport}" "shared/.env" || return 1

@@ -289,12 +289,24 @@ if hm_chrome_path_in_use "${prof}"; then
 else
   bad path-in-use-udd
 fi
-# SingletonLock host-PID
+# SingletonLock host-PID (wiszący symlink; cmdline pusty — tylko lock)
+: > "${base}/fakeproc/4242/cmdline"
 ln -sfn "testhost-4242" "${prof}/SingletonLock" 2>/dev/null || printf 'testhost-4242' > "${prof}/SingletonLock"
+# Cel symlinku nie istnieje (-e false); -L musi wykryć
+if [[ -L "${prof}/SingletonLock" ]] || [[ -e "${prof}/SingletonLock" ]]; then
+  :
+fi
 if hm_chrome_path_in_use "${prof}"; then
   ok path-in-use-lock
 else
   bad path-in-use-lock
+fi
+# bez katalogu PID → wolny
+rm -rf "${base}/fakeproc/4242"
+if hm_chrome_path_in_use "${prof}"; then
+  bad path-in-use-lock-dead
+else
+  ok path-in-use-lock-dead
 fi
 unset HM_CHROME_PROC
 

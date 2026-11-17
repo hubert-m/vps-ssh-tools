@@ -84,6 +84,30 @@ hm_system_locale_gen_file() {
   printf '%s' "${HM_SYSTEM_LOCALE_GEN:-/etc/locale.gen}"
 }
 
+hm_system_etc_hosts() {
+  printf '%s' "${HM_SYSTEM_ETC_HOSTS:-/etc/hosts}"
+}
+
+# 127.0.1.1 <fqdn> <short> — unika „unable to resolve host” po hostnamectl.
+hm_system_hosts_set_fqdn() {
+  local fqdn="$1" short hosts line tmp
+  short="${fqdn%%.*}"
+  [[ -n "${short}" ]] || short="${fqdn}"
+  hosts="$(hm_system_etc_hosts)"
+  line="127.0.1.1 ${fqdn} ${short}"
+  if [[ -n "${HM_SYSTEM_HOSTS_LOG:-}" ]]; then
+    printf '%s\n' "${line}" >> "${HM_SYSTEM_HOSTS_LOG}"
+  fi
+  touch "${hosts}" 2>/dev/null || true
+  tmp="${hosts}.hm.$$"
+  {
+    grep -vE '^[[:space:]]*127\.0\.1\.1[[:space:]]' "${hosts}" 2>/dev/null || true
+    printf '%s\n' "${line}"
+  } > "${tmp}"
+  mv "${tmp}" "${hosts}"
+  return 0
+}
+
 hm_system_main_ipv4() {
   if [[ -n "${HM_SYSTEM_MAIN_IP:-}" ]]; then
     printf '%s' "${HM_SYSTEM_MAIN_IP}"
@@ -406,12 +430,58 @@ hm_system_hostname_set() {
     return 0
   fi
   local warn="CyberPanel: po zmianie uruchom «ssl hostname» (certyfikat hostNameSSL panelu)."
+  local hosts_path
+  hosts_path="$(hm_system_etc_hosts)"
   hm_confirm_plan "system hostname set" "${warn}" \
     "hostnamectl set-hostname ${fqdn}" \
+    "Zaktualizuj ${hosts_path}: 127.0.1.1 ${fqdn} ${fqdn%%.*}" \
     "Zaktualizuj rekordy DNS / rDNS u dostawcy" || return 0
   hm_system_hostnamectl set-hostname "${fqdn}" || return 1
+  hm_system_hosts_set_fqdn "${fqdn}" || hm_warn "Nie udało się zaktualizować ${hosts_path}"
   hm_warn "${warn}"
   hm_ok "Ustawiono hostname: ${fqdn}"
+}
+
+# RHEL: langpacki + localedef — bez localectl set-locale (nie zmienia LANG systemu).
+hm_system_locale_rhel_ensure() {
+  local loc base failed=0
+  if [[ -n "${HM_SYSTEM_LOCALEDEF_LOG:-}" ]]; then
+    if declare -F hm_pkg_install >/dev/null 2>&1; then
+      hm_pkg_install glibc-langpack-pl || failed=1
+      hm_pkg_install glibc-langpack-en || failed=1
+    fi
+    while IFS= read -r loc; do
+      [[ -n "${loc}" ]] || continue
+      printf 'localedef %s\n' "${loc}" >> "${HM_SYSTEM_LOCALEDEF_LOG}"
+      if [[ "${HM_SYSTEM_LOCALEDEF_FAIL:-0}" == "1" ]]; then
+        hm_err "localedef nie udał się dla ${loc}"
+        failed=1
+      fi
+    done < <(hm_system_locales_required)
+    [[ "${failed}" -eq 0 ]] && return 0
+    return 1
+  fi
+  if declare -F hm_pkg_install >/dev/null 2>&1; then
+    hm_info "Instaluję glibc-langpack-pl / glibc-langpack-en…"
+    hm_pkg_install glibc-langpack-pl || failed=1
+    hm_pkg_install glibc-langpack-en || failed=1
+  else
+    hm_warn "Brak hm_pkg_install — pomijam langpacki."
+  fi
+  while IFS= read -r loc; do
+    [[ -n "${loc}" ]] || continue
+    if hm_system_locale_list 2>/dev/null | grep -qixF "${loc}" \
+      || hm_system_locale_list 2>/dev/null | grep -qiE "^${loc%%.*}(\\.|$)" ; then
+      continue
+    fi
+    base="${loc%%.*}"
+    if ! localedef -i "${base}" -f UTF-8 "${loc}" 2>/dev/null; then
+      hm_err "localedef nie udał się dla ${loc} (brak langpacka?)."
+      failed=1
+    fi
+  done < <(hm_system_locales_required)
+  [[ "${failed}" -eq 0 ]] && return 0
+  return 1
 }
 
 hm_system_locale_gen_run() {
@@ -419,23 +489,23 @@ hm_system_locale_gen_run() {
     printf 'locale-gen\n' >> "${HM_SYSTEM_LOCALE_GEN_LOG}"
     return 0
   fi
+  if [[ -n "${HM_SYSTEM_LOCALEDEF_LOG:-}" ]]; then
+    hm_system_locale_rhel_ensure
+    return $?
+  fi
   if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
-    hm_err "Ustaw HM_SYSTEM_LOCALE_GEN_LOG w teście."
+    hm_err "Ustaw HM_SYSTEM_LOCALE_GEN_LOG lub HM_SYSTEM_LOCALEDEF_LOG w teście."
     return 1
   fi
   if command -v locale-gen >/dev/null 2>&1; then
     locale-gen
     return $?
   fi
-  if command -v localectl >/dev/null 2>&1; then
-    local loc
-    while IFS= read -r loc; do
-      [[ -n "${loc}" ]] || continue
-      localedef -i "${loc%%.*}" -f UTF-8 "${loc}" 2>/dev/null || localectl set-locale "LANG=${loc}"
-    done < <(hm_system_locales_required)
-    return 0
+  if [[ "${OS_FAMILY:-}" == "rhel" ]] || command -v localedef >/dev/null 2>&1; then
+    hm_system_locale_rhel_ensure
+    return $?
   fi
-  hm_err "Brak locale-gen / localectl."
+  hm_err "Brak locale-gen / localedef."
   return 1
 }
 
@@ -468,11 +538,18 @@ hm_system_locale_fix() {
     [[ -n "${loc}" ]] || continue
     steps+=("Wygeneruj locale: ${loc}")
   done <<<"${miss}"
-  steps+=("Uruchom locale-gen (lub localedef na RHEL)")
-  hm_confirm_plan "system locale fix" "LANG=C utrudnia narzędzia UTF-8." "${steps[@]}" || return 0
+  if [[ "${OS_FAMILY:-}" == "rhel" ]] || [[ -n "${HM_SYSTEM_LOCALEDEF_LOG:-}" ]]; then
+    steps+=("hm_pkg_install glibc-langpack-pl glibc-langpack-en")
+    steps+=("localedef -i … -f UTF-8 (bez zmiany LANG / localectl set-locale)")
+  else
+    steps+=("Uruchom locale-gen")
+  fi
+  hm_confirm_plan "system locale fix" "LANG=C utrudnia narzędzia UTF-8. Zmiana LANG systemu osobno." "${steps[@]}" || return 0
 
   if [[ "${OS_FAMILY:-}" == "debian" || -f "$(hm_system_locale_gen_file)" ]]; then
-    hm_system_locale_ensure_lines "$(hm_system_locale_gen_file)"
+    if [[ "${OS_FAMILY:-}" != "rhel" && -z "${HM_SYSTEM_LOCALEDEF_LOG:-}" ]]; then
+      hm_system_locale_ensure_lines "$(hm_system_locale_gen_file)"
+    fi
   fi
   hm_system_locale_gen_run || return 1
   if [[ -n "${HM_SYSTEM_LOCALE_A:-}" ]]; then

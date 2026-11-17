@@ -16,6 +16,12 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [vX.Y.Z]
 
+- Fix: chrome clean — `SingletonLock` przez `-L` (wiszący symlink); test lock bez cmdline
+- Fix: site new W09 — walidacja `--image`/`--container-port`/`--out`; compose bez privileged/network_mode; build przez `runuser`
+- Fix: `run-tests.sh` → `exec bash run-all-tests.sh` (+x w indeksie) — bez Permission denied na świeżym klonie
+- Fix: maintenance — ExecStart bez `\`; timer `*:0/5`; `run-scheduled` wykonuje `reboot.at`; `REQUIRE_BACKUP` w env + check przy run
+- Fix: ratelimit — whitelist CSF/ufw (komentarz hmtools); `geoip allow` bez DB odmawia + guard `!^$`; `geoip off`; f2b `port=http,https`
+- Fix: system locale fix (RHEL) — glibc-langpack + localedef, bez `localectl set-locale`; rc≠0 przy fail; hostname set aktualizuje 127.0.1.1 w `/etc/hosts`
 - Fix: fleet — remote `printf %q` + reject metaznaków; destrukcyjne na całej linii; report `issues` (+fallback `issue`); bez SC2259 (python <<<body)
 - Fix: webs delete — reload wg webserver z manifestu (nginx/apache ≠ ols); bez fałszywego „OLS przeładowany”
 - Fix: metrics/security ports — `ss` adres z `$5`; disk `--json` z `df -PT` (fstype≠device)

@@ -153,8 +153,8 @@ hm_maint_schedule_update() {
       ;;
   esac
   if [[ "${require_backup}" -eq 1 ]]; then
-    if [[ -z "${HM_MAINT_BACKUP_OK:-}" ]]; then
-      hm_err "Wymagana kopia przed aktualizacją (--require-backup); ustaw HM_MAINT_BACKUP_OK=1 po backupie albo uruchom backup."
+    if ! hm_maint_backup_fresh; then
+      hm_err "Wymagana świeża kopia przed aktualizacją (--require-backup; <24h)."
       return 1
     fi
   fi
@@ -162,36 +162,98 @@ hm_maint_schedule_update() {
   {
     printf 'KIND=%s\n' "${kind}"
     printf 'REBOOT_IF_REQUIRED=%s\n' "${reboot_if}"
+    printf 'REQUIRE_BACKUP=%s\n' "${require_backup}"
     printf 'CREATED=%s\n' "$(date -Iseconds 2>/dev/null || date)"
   } > "$(hm_maint_sched_file)"
-  # systemd timer (mockowalny)
+  # systemd timer (mockowalny) — co 5 min, żeby okna nie na pełnej godzinie też trafiały
   local unit_dir timer service
   unit_dir="$(hm_maint_unit_dir)"
   mkdir -p "${unit_dir}"
   timer="${unit_dir}/hmtools-maint-update.timer"
   service="${unit_dir}/hmtools-maint-update.service"
   printf '%s\n' '[Unit]' 'Description=hmtools maintenance update' '' '[Service]' 'Type=oneshot' \
-    "ExecStart=/usr/bin/hmtools -c \"maintenance run-scheduled\"" > "${service}"
+    'ExecStart=/usr/bin/hmtools -c "maintenance run-scheduled"' > "${service}"
   printf '%s\n' '[Unit]' 'Description=hmtools maintenance update timer' '' '[Timer]' \
-    'OnCalendar=*-*-* *:00:00' 'Persistent=true' '' '[Install]' 'WantedBy=timers.target' > "${timer}"
+    'OnCalendar=*-*-* *:0/5:00' 'Persistent=true' '' '[Install]' 'WantedBy=timers.target' > "${timer}"
   hm_maint_systemctl daemon-reload
   hm_maint_systemctl enable --now hmtools-maint-update.timer
   hm_maint_notify "info" "maintenance schedule" "Zaplanowano update ${kind}"
   hm_ok "Zaplanowano update ${kind} (timer hmtools-maint-update)."
 }
 
+# Bezpieczne KEY=VALUE (whitelist) zamiast source schedule.env.
+hm_maint_load_sched() {
+  HM_MAINT_KIND="security"
+  HM_MAINT_REBOOT_IF=0
+  HM_MAINT_REQUIRE_BACKUP=0
+  local f line key val
+  f="$(hm_maint_sched_file)"
+  [[ -f "${f}" ]] || return 1
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ "${line}" =~ ^([A-Z_]+)=(.*)$ ]] || continue
+    key="${BASH_REMATCH[1]}"
+    val="${BASH_REMATCH[2]}"
+    case "${key}" in
+      KIND) HM_MAINT_KIND="${val}" ;;
+      REBOOT_IF_REQUIRED) HM_MAINT_REBOOT_IF="${val}" ;;
+      REQUIRE_BACKUP) HM_MAINT_REQUIRE_BACKUP="${val}" ;;
+      CREATED) ;;
+      *) ;;
+    esac
+  done < "${f}"
+  return 0
+}
+
+# Świeży backup: HM_MAINT_BACKUP_OK=1 albo znacznik <24h (epoch).
+hm_maint_backup_fresh() {
+  [[ "${HM_MAINT_BACKUP_OK:-}" == "1" ]] && return 0
+  local stamp="${HM_MAINT_BACKUP_STAMP:-$(hm_maint_state_dir)/last-backup.epoch}"
+  local now age max=86400
+  [[ -f "${stamp}" ]] || return 1
+  now="$(date +%s 2>/dev/null || echo 0)"
+  age=$((now - $(cat "${stamp}" 2>/dev/null || echo 0)))
+  [[ "${age}" -ge 0 && "${age}" -lt "${max}" ]]
+}
+
+hm_maint_reboot_due() {
+  local at day hh mm now_day now_hm want
+  [[ -f "$(hm_maint_reboot_file)" ]] || return 1
+  at="$(tr -d '\r\n' < "$(hm_maint_reboot_file)")"
+  [[ -n "${at}" ]] || return 1
+  [[ "${at}" == "now-in-window" ]] && return 0
+  if [[ "${at}" =~ ^([A-Za-z]{3})[[:space:]]+([0-9]{1,2}):([0-9]{2})$ ]]; then
+    day="${BASH_REMATCH[1]}"
+    hh="$(printf '%02d' "${BASH_REMATCH[2]}")"
+    mm="$(printf '%02d' "${BASH_REMATCH[3]}")"
+    want="${hh}${mm}"
+    read -r now_day now_hm <<<"$(hm_maint_now_parts)"
+    [[ "${now_day,,}" == "${day,,}" ]] || return 1
+    [[ "${now_hm}" -ge "${want}" ]] || return 1
+    return 0
+  fi
+  return 1
+}
+
 hm_maint_run_scheduled() {
-  # Wywoływane z timera — tylko w oknie.
-  local kind="security" reboot_if=0
+  # Wywoływane z timera — tylko w oknie; też sprawdza zaplanowany reboot.
+  local kind="security" reboot_if=0 require_backup=0
+  if hm_maint_in_window && hm_maint_reboot_due; then
+    hm_maint_reboot_maybe || true
+  fi
   [[ -f "$(hm_maint_sched_file)" ]] || {
-    hm_info "Brak harmonogramu."
+    hm_info "Brak harmonogramu update."
     return 0
   }
-  # shellcheck disable=SC1090
-  source "$(hm_maint_sched_file)"
-  kind="${KIND:-security}"
-  reboot_if="${REBOOT_IF_REQUIRED:-0}"
+  hm_maint_load_sched || return 0
+  kind="${HM_MAINT_KIND:-security}"
+  reboot_if="${HM_MAINT_REBOOT_IF:-0}"
+  require_backup="${HM_MAINT_REQUIRE_BACKUP:-0}"
   hm_maint_require_window_or_fail || return 1
+  if [[ "${require_backup}" == "1" ]] && ! hm_maint_backup_fresh; then
+    hm_err "run-scheduled: brak świeżej kopii (--require-backup)."
+    hm_maint_notify "error" "maintenance update aborted" "require-backup"
+    return 1
+  fi
   hm_maint_notify "info" "maintenance update start" "Rodzaj: ${kind}"
   if [[ -n "${HM_MAINT_UPDATE_LOG:-}" ]]; then
     printf 'update %s\n' "${kind}" >> "${HM_MAINT_UPDATE_LOG}"
@@ -209,6 +271,10 @@ hm_maint_run_scheduled() {
     if [[ "${rb}" == "yes" ]]; then
       hm_maint_reboot_schedule ""
     fi
+  fi
+  # Po update: jeśli reboot.at już jest i jesteśmy w oknie — wykonaj.
+  if hm_maint_reboot_due; then
+    hm_maint_reboot_maybe || true
   fi
   return 0
 }
@@ -236,7 +302,7 @@ hm_maint_reboot_schedule() {
   mkdir -p "${unit_dir}"
   service="${unit_dir}/hmtools-maint-postcheck.service"
   printf '%s\n' '[Unit]' 'Description=hmtools post-reboot check' 'After=network-online.target' \
-    '' '[Service]' 'Type=oneshot' 'ExecStart=/usr/bin/hmtools -c \"maintenance post-check --yes\"' \
+    '' '[Service]' 'Type=oneshot' 'ExecStart=/usr/bin/hmtools -c "maintenance post-check --yes"' \
     '' '[Install]' 'WantedBy=multi-user.target' > "${service}"
   hm_maint_systemctl daemon-reload
   hm_maint_systemctl enable hmtools-maint-postcheck.service

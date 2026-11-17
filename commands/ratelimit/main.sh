@@ -23,9 +23,11 @@ _hm_cmd_help geoip <<'EOF'
 Użycie:
   geoip block|allow <kod> [--domain d] [--yes]
   geoip status [--domain d]
+  geoip off|clear [--domain d] [--yes]
 
 Kod kraju ISO-3166 (PL, US, …). Blokada/allowlista w vhconf (# hmtools:geoip).
-Wymaga bazy GeoIP (MaxMind) — geoip install opcjonalnie przez hm_pkg.
+Wymaga bazy GeoIP (MaxMind) — `allow` odmawia bez bazy; `block` ostrzega.
+geoip off/clear usuwa blok vhconf i stan.
 EOF
 
 _hm_cmd_help bots <<'EOF'
@@ -104,27 +106,50 @@ hm_rl_session_ssh_ip() {
 }
 
 hm_rl_firewall_whitelist_ips() {
-  local -a ips=() line ip
-  if [[ -f /etc/csf/csf.allow ]]; then
+  local -a ips=() line ip cmt rest
+  local csf_file="${HM_RL_CSF_ALLOW:-/etc/csf/csf.allow}"
+  if [[ -f "${csf_file}" ]]; then
     while IFS= read -r line || [[ -n "${line}" ]]; do
-      line="${line%%#*}"
-      line="${line//[[:space:]]/}"
-      [[ -n "${line}" ]] || continue
+      # Najpierw komentarz (hmtools), potem ucięcie — inaczej „IP # hmtools” znika.
       [[ "${line}" == *hmtools* ]] || continue
-      ip="${line%%/*}"
+      line="${line%%#*}"
+      line="${line#"${line%%[![:space:]]*}"}"
+      line="${line%"${line##*[![:space:]]}"}"
+      [[ -n "${line}" ]] || continue
+      ip="${line%%[[:space:]]*}"
+      ip="${ip%%/*}"
       [[ -n "${ip}" ]] && ips+=("${ip}")
-    done < /etc/csf/csf.allow
+    done < "${csf_file}"
   fi
-  if hm_have_cmd ufw; then
+  local ufw_src=""
+  if [[ -n "${HM_RL_UFW_STATUS:-}" && -f "${HM_RL_UFW_STATUS}" ]]; then
+    ufw_src="${HM_RL_UFW_STATUS}"
+  elif hm_have_cmd ufw; then
+    ufw_src="ufw"
+  fi
+  if [[ -n "${ufw_src}" ]]; then
     while IFS= read -r line || [[ -n "${line}" ]]; do
       [[ "${line}" == *ALLOW* ]] || continue
-      [[ "${line}" == *"from "* ]] || continue
+      [[ "${line}" == *"#"* ]] || continue
+      cmt="${line#*#}"
+      [[ "${cmt}" == *hmtools* ]] || continue
+      rest="${line%%#*}"
+      # Kolumna From = ostatni token (nie słowo „from ” — ufw status go nie ma).
+      ip="$(printf '%s' "${rest}" | awk '{print $NF}')"
+      [[ "${ip}" =~ ^[0-9a-fA-F:.]+$ || "${ip}" == */* ]] || continue
+      ip="${ip%%/*}"
+      ips+=("${ip}")
+    done < <(if [[ "${ufw_src}" == "ufw" ]]; then ufw status numbered 2>/dev/null || true; else cat "${ufw_src}"; fi)
+  fi
+  # user.rules (ALLOW + komentarz hmtools) — gdy ufw status niedostępny
+  local urules="${HM_RL_UFW_USER_RULES:-/etc/ufw/user.rules}"
+  if [[ -f "${urules}" ]]; then
+    while IFS= read -r line || [[ -n "${line}" ]]; do
       [[ "${line}" == *hmtools* ]] || continue
-      if [[ "${line}" =~ from[[:space:]]+([^[:space:]]+) ]]; then
-        ip="${BASH_REMATCH[1]}"
-        ips+=("${ip}")
+      if [[ "${line}" =~ -s[[:space:]]+([^[:space:]]+) ]]; then
+        ips+=("${BASH_REMATCH[1]}")
       fi
-    done < <(ufw status numbered 2>/dev/null || true)
+    done < "${urules}"
   fi
   local x
   for x in "${ips[@]}"; do
@@ -301,9 +326,12 @@ hm_rl_block_geoip_body() {
   printf 'rewrite  {\n  enable                  1\n  rules                   <<<END_hmtools_geoip\n'
   printf '# GeoIP: wymaga modułu/geo — reguły oparte o %%{ENV:GEOIP_COUNTRY_CODE}\n'
   if [[ "${mode}" == "block" ]]; then
+    printf 'RewriteCond %%{ENV:GEOIP_COUNTRY_CODE} !^$\n'
     printf 'RewriteCond %%{ENV:GEOIP_COUNTRY_CODE} ^(%s)$ [NC]\n' "$(IFS='|'; printf '%s' "${codes[*]}")"
     printf 'RewriteRule .* - [F,L]\n'
   else
+    # Pusty GEOIP_COUNTRY_CODE ≠ „nie-PL” — inaczej allow blokuje cały ruch bez bazy.
+    printf 'RewriteCond %%{ENV:GEOIP_COUNTRY_CODE} !^$\n'
     printf 'RewriteCond %%{ENV:GEOIP_COUNTRY_CODE} !^(%s)$ [NC]\n' "$(IFS='|'; printf '%s' "${codes[*]}")"
     printf 'RewriteRule .* - [F,L]\n'
   fi
@@ -407,6 +435,7 @@ EOF
 [hmtools-wp-login]
 enabled = true
 filter = hmtools-wp-login
+port = http,https
 logpath = ${logf}
 maxretry = 10
 findtime = 600
@@ -599,6 +628,27 @@ hm_rl_geoip_load_modes() {
   awk -v m="${mode}" '$1==m {print toupper($2)}' "${f}" 2>/dev/null
 }
 
+hm_rl_geoip_clear() {
+  local domain="$1" yes="${2:-0}"
+  local conf tmp f
+  f="$(hm_rl_geoip_file "${domain}")"
+  conf="$(hm_rl_vhost_conf "${domain}")" || return 1
+  if [[ "${yes}" -ne 1 ]]; then
+    hm_confirm_plan "geoip off ${domain}" "" "Usuń blok # hmtools:geoip" "Wyczyść stan geoip.list" || return 0
+  fi
+  if declare -F hm_ols_vhost_strip_block >/dev/null 2>&1; then
+    tmp="$(hm_mktemp .geooff)"
+    hm_ols_vhost_strip_block "${conf}" "geoip" "${tmp}"
+    hm_ols_vhost_write "${conf}" "${tmp}"
+    rm -f "${tmp}"
+  fi
+  rm -f "${f}"
+  if [[ "${HMTOOLS_TEST:-}" != "1" ]]; then
+    hm_ols_reload_soft 2>/dev/null || true
+  fi
+  hm_ok "GeoIP wyłączone (${domain})"
+}
+
 hm_rl_cmd_geoip() {
   local sub="${1:-status}"
   shift || true
@@ -609,6 +659,20 @@ hm_rl_cmd_geoip() {
       [[ -n "${1:-}" ]] || { hm_err "Użycie: geoip ${sub} <kod> [--domain d]"; return 1; }
       cc="${1^^}"
       shift
+      ;;
+    off|clear)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --domain) domain="${2:-}"; shift 2 ;;
+          --domain=*) domain="${1#*=}"; shift ;;
+          --yes) yes=1; shift ;;
+          *) shift ;;
+        esac
+      done
+      [[ -n "${domain}" ]] || { hm_err "Podaj --domain lub use <domena>"; return 1; }
+      hm_is_valid_domain "${domain}" || return 1
+      hm_rl_geoip_clear "${domain}" "${yes}"
+      return $?
       ;;
     status|stat)
       while [[ $# -gt 0 ]]; do
@@ -633,7 +697,7 @@ hm_rl_cmd_geoip() {
       return 0
       ;;
     *)
-      hm_err "Użycie: geoip block|allow <kod> [--domain d]"
+      hm_err "Użycie: geoip block|allow <kod> | off|clear [--domain d]"
       return 1
       ;;
   esac
@@ -650,9 +714,16 @@ hm_rl_cmd_geoip() {
   [[ -n "${domain}" ]] || { hm_err "Podaj --domain lub use <domena>"; return 1; }
   hm_is_valid_domain "${domain}" || return 1
 
+  if [[ "${mode}" == "allow" ]] && ! hm_rl_geoip_mmdb >/dev/null; then
+    hm_err "geoip allow wymaga bazy GeoIP (GEOIP_COUNTRY_CODE puste = blokada całego ruchu). Zainstaluj bazę lub: geoip install."
+    return 1
+  fi
+  if [[ "${mode}" == "block" ]] && ! hm_rl_geoip_mmdb >/dev/null; then
+    hm_warn "GeoIP DB nie znaleziona — reguła block zapisana, ale bez bazy nie zadziała (warunek !^$)."
+  fi
+
   hm_rl_ensure_state
   hm_rl_geoip_save "${domain}" "${mode}" "${cc}"
-  hm_rl_geoip_mmdb >/dev/null || hm_warn "GeoIP DB nie znaleziona — reguły zapisane, efekt po instalacji bazy."
 
   local -a block=() allow=()
   while IFS= read -r line; do
@@ -664,6 +735,9 @@ hm_rl_cmd_geoip() {
 
   local body=""
   if [[ "${#block[@]}" -gt 0 ]]; then
+    if [[ "${#allow[@]}" -gt 0 ]]; then
+      hm_warn "Jednocześnie block i allow — stosuję tylko block; allow ignorowane."
+    fi
     body="$(hm_rl_block_geoip_body block "${block[@]}")"
   elif [[ "${#allow[@]}" -gt 0 ]]; then
     body="$(hm_rl_block_geoip_body allow "${allow[@]}")"

@@ -70,6 +70,17 @@ body="$(hm_rl_block_ratelimit_body "/wp-login.php" 5 15)"
 printf '%s\n' "${body}" | grep -qF "${TEST_SESSION_IP}T" \
   && ok "trusted-session-ip" || bad "trusted-session-ip"
 
+# --- whitelist CSF / ufw (komentarz hmtools przed ucięciem) ---
+export HM_RL_CSF_ALLOW="${tmpdir}/csf.allow"
+printf '203.0.113.9 # hmtools whitelist\n# comment only\n1.2.3.4\n' > "${HM_RL_CSF_ALLOW}"
+export HM_RL_UFW_STATUS="${tmpdir}/ufw.status"
+printf '[ 1] Anywhere                   ALLOW IN    203.0.113.4             # hmtools whitelist\n' > "${HM_RL_UFW_STATUS}"
+wl="$(hm_rl_firewall_whitelist_ips | tr '\n' ' ')"
+printf '%s' "${wl}" | grep -q '203.0.113.9' && ok "wl-csf" || bad "wl-csf"
+printf '%s' "${wl}" | grep -q '203.0.113.4' && ok "wl-ufw" || bad "wl-ufw"
+body_wl="$(hm_rl_block_ratelimit_body "/wp-login.php" 5 15)"
+printf '%s\n' "${body_wl}" | grep -qF '203.0.113.9T' && ok "wl-in-access" || bad "wl-in-access"
+
 # --- ratelimit set ---
 export HM_OLS_VHOST_YES=1
 hm_rl_cmd_set example.pl --rps 8 --burst 16 --path /wp-login.php --yes \
@@ -92,12 +103,35 @@ grep -q 'hmtools-wp-login' "${HM_RL_F2B_JAIL}" 2>/dev/null \
   && ok "f2b-jail-name" || bad "f2b-jail-name"
 grep -q "${TEST_SESSION_IP}" "${HM_RL_F2B_JAIL}" 2>/dev/null \
   && ok "f2b-ignore-session" || bad "f2b-ignore-session"
+grep -qE '^port[[:space:]]*=[[:space:]]*http,https' "${HM_RL_F2B_JAIL}" \
+  && ok "f2b-port-http" || bad "f2b-port-http"
 
-# --- geoip block ---
+# --- geoip: allow bez bazy = odmowa; block OK z warunkiem !^$ ---
+if hm_rl_cmd_geoip allow PL --domain example.pl --yes >/dev/null 2>&1; then
+  bad "geoip-allow-no-db"
+else
+  ok "geoip-allow-no-db"
+fi
 hm_rl_cmd_geoip block PL --domain example.pl --yes >/dev/null 2>&1 || bad "geoip-rc"
 grep -q '# hmtools:geoip BEGIN' "${TEST_VHCONF}" && ok "geoip-block" || bad "geoip-block"
 grep -q 'GEOIP_COUNTRY_CODE' "${TEST_VHCONF}" && ok "geoip-rewrite" || bad "geoip-rewrite"
 grep -qE '\(PL\)' "${TEST_VHCONF}" && ok "geoip-country-pl" || bad "geoip-country-pl"
+grep -qF 'GEOIP_COUNTRY_CODE} !^$' "${TEST_VHCONF}" && ok "geoip-nonempty-guard" || bad "geoip-nonempty-guard"
+
+# allow z mock DB
+: > "${tmpdir}/GeoLite2-Country.mmdb"
+export HM_RL_GEOIP_MMDB="${tmpdir}/GeoLite2-Country.mmdb"
+hm_rl_cmd_geoip allow DE --domain example.pl --yes >/dev/null 2>&1 || bad "geoip-allow-rc"
+# block ma pierwszeństwo — DE allow zapisane, ale vhconf = block PL
+grep -qE '\(PL\)' "${TEST_VHCONF}" && ok "geoip-block-wins" || bad "geoip-block-wins"
+
+hm_rl_cmd_geoip off --domain example.pl --yes >/dev/null 2>&1 || bad "geoip-off-rc"
+! grep -q '# hmtools:geoip BEGIN' "${TEST_VHCONF}" && ok "geoip-off" || bad "geoip-off"
+# allow sam (bez block)
+rm -f "$(hm_rl_geoip_file example.pl)"
+hm_rl_cmd_geoip allow PL --domain example.pl --yes >/dev/null 2>&1 || bad "geoip-allow-solo"
+grep -qF 'GEOIP_COUNTRY_CODE} !^$' "${TEST_VHCONF}" && ok "geoip-allow-guard" || bad "geoip-allow-guard"
+grep -qF '!^(PL)$' "${TEST_VHCONF}" && ok "geoip-allow-pl" || bad "geoip-allow-pl"
 
 # --- bots verify (mock DNS) ---
 export HM_RL_MOCK_PTR=crawl-66-249-66-1.googlebot.com

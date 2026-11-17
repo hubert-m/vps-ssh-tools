@@ -628,26 +628,61 @@ cmd_site_new() {
   fi
   # Static/SPA: opcjonalny build (Node tylko do budowania) + placeholder index.html
   if [[ "${runtime}" == "static" || "${spa_on}" -eq 1 ]]; then
-    local home_static ph
+    local home_static ph out_abs src_abs home_abs build_user
     home_static="$(hm_site_home "${domain}")"
     ph="${home_static}/public_html"
     mkdir -p "${ph}"
     if [[ -n "${build_cmd}" ]]; then
+      if declare -F hm_site_build_out_ok >/dev/null 2>&1; then
+        hm_site_build_out_ok "${build_out}" || {
+          hm_err "Nieprawidłowy --out: ${build_out} (tylko względna ścieżka bez ..)."
+          return 1
+        }
+      elif [[ "${build_out}" == /* || "${build_out}" == *..* ]]; then
+        hm_err "Nieprawidłowy --out: ${build_out} (tylko względna ścieżka bez ..)."
+        return 1
+      fi
       hm_info "Build static/SPA: ${build_cmd}"
+      build_user="${site_user:-${HM_SITE_USER:-}}"
       if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
         mkdir -p "${home_static}/${build_out}"
         printf '<!doctype html><title>built</title>\n' > "${home_static}/${build_out}/index.html"
+        if [[ -n "${HM_SITE_BUILD_LOG:-}" ]]; then
+          printf 'runuser -u %s -- bash -lc %s\n' "${build_user:-nobody}" "${build_cmd}" >> "${HM_SITE_BUILD_LOG}"
+        fi
       else
-        (cd "${home_static}" && bash -lc "${build_cmd}") || {
-          [[ -n "${HM_TX_JOURNAL:-}" ]] && hm_tx_rollback "${domain}" || true
-          hm_err "Build static/SPA nieudany."
+        if [[ -n "${build_user}" ]] && command -v runuser >/dev/null 2>&1; then
+          runuser -u "${build_user}" -- bash -lc "cd $(printf '%q' "${home_static}") && ${build_cmd}" || {
+            [[ -n "${HM_TX_JOURNAL:-}" ]] && hm_tx_rollback "${domain}" || true
+            hm_err "Build static/SPA nieudany."
+            return 1
+          }
+        else
+          hm_err "Build static/SPA wymaga użytkownika serwisu (--user) i runuser."
           return 1
-        }
+        fi
       fi
-      if [[ -d "${home_static}/${build_out}" ]]; then
-        # Publikacja out/ → public_html (bez kasowania całego HOME)
+      out_abs="${home_static}/${build_out}"
+      # realpath musi zostać pod HOME (bez symlinków wychodzących)
+      if command -v realpath >/dev/null 2>&1; then
+        src_abs="$(realpath -m "${out_abs}" 2>/dev/null || true)"
+        home_abs="$(realpath -m "${home_static}" 2>/dev/null || true)"
+        if [[ -z "${src_abs}" || -z "${home_abs}" || "${src_abs}" != "${home_abs}"/* ]]; then
+          hm_err "--out poza katalogiem źródeł: ${build_out}"
+          return 1
+        fi
+        if [[ -L "${out_abs}" ]]; then
+          hm_err "--out nie może być symlinkiem."
+          return 1
+        fi
+        out_abs="${src_abs}"
+      fi
+      if [[ -d "${out_abs}" ]]; then
         find "${ph}" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
-        cp -a "${home_static}/${build_out}/." "${ph}/"
+        cp -a "${out_abs}/." "${ph}/"
+        if [[ -n "${build_user}" ]]; then
+          chown -R "${build_user}:${build_user}" "${ph}" 2>/dev/null || true
+        fi
       fi
     fi
     if [[ ! -f "${ph}/index.html" ]]; then

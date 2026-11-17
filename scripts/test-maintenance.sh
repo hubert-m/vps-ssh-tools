@@ -55,9 +55,23 @@ cmd_maintenance reboot cancel >/dev/null
 export HM_MAINT_NOW="Sun 0315"
 cmd_maintenance schedule update security --reboot-if-required >/dev/null
 grep -q 'hmtools-maint-update.timer' "${HM_MAINT_SYSTEMCTL_LOG}" && ok "timer" || bad "timer"
+grep -qF 'OnCalendar=*-*-* *:0/5:00' "${HM_MAINT_UNIT_DIR}/hmtools-maint-update.timer" \
+  && ok "timer-5min" || bad "timer-5min"
+grep -qF 'ExecStart=/usr/bin/hmtools -c "maintenance run-scheduled"' \
+  "${HM_MAINT_UNIT_DIR}/hmtools-maint-update.service" && ok "svc-exec" || bad "svc-exec"
 cmd_maintenance run-scheduled >/dev/null
 grep -q 'update security' "${HM_MAINT_UPDATE_LOG}" && ok "run-update" || bad "run-update"
 grep -q 'maintenance update' "${HM_MAINT_NOTIFY_LOG}" && ok "notify" || bad "notify"
+
+# reboot.at wykonywany przez run-scheduled (w oknie)
+: > "${HM_MAINT_REBOOT_LOG}"
+cmd_maintenance reboot schedule --at "Sun 03:10" >/dev/null
+grep -qF 'ExecStart=/usr/bin/hmtools -c "maintenance post-check --yes"' \
+  "${HM_MAINT_UNIT_DIR}/hmtools-maint-postcheck.service" && ok "postcheck-exec" || bad "postcheck-exec"
+! grep -q '\\"' "${HM_MAINT_UNIT_DIR}/hmtools-maint-postcheck.service" && ok "postcheck-no-backslash" || bad "postcheck-no-backslash"
+cmd_maintenance run-scheduled >/dev/null
+grep -q reboot "${HM_MAINT_REBOOT_LOG}" && ok "reboot-via-timer" || bad "reboot-via-timer"
+[[ ! -f "${HM_MAINT_STATE_DIR}/reboot.at" ]] && ok "reboot-cleared" || bad "reboot-cleared"
 
 printf '%s\n' 'lsws=active' 'nginx=failed' 'mysql=active' > "${tmp}/svcs"
 export HM_MAINT_SERVICES_FILE="${tmp}/svcs"
@@ -73,6 +87,7 @@ grep -q 'post-check FAIL' "${HM_MAINT_NOTIFY_LOG}" && ok "postcheck-notify" || b
 cmd_maintenance livepatch enable >/dev/null
 grep -q 'enable canonical' "${HM_MAINT_LIVEPATCH_LOG}" && ok "livepatch" || bad "livepatch"
 
+unset HM_MAINT_BACKUP_OK
 if cmd_maintenance schedule update security --require-backup >/dev/null 2>&1; then
   bad "require-backup"
 else
@@ -80,6 +95,18 @@ else
 fi
 export HM_MAINT_BACKUP_OK=1
 cmd_maintenance schedule update packages --require-backup >/dev/null && ok "backup-ok" || bad "backup-ok"
+grep -q 'REQUIRE_BACKUP=1' "${HM_MAINT_STATE_DIR}/schedule.env" && ok "require-in-env" || bad "require-in-env"
+# run-scheduled sprawdza świeżość ponownie
+unset HM_MAINT_BACKUP_OK
+: > "${HM_MAINT_UPDATE_LOG}"
+if cmd_maintenance run-scheduled >/dev/null 2>&1; then
+  bad "require-at-run"
+else
+  ok "require-at-run"
+fi
+[[ ! -s "${HM_MAINT_UPDATE_LOG}" ]] && ok "no-update-without-backup" || bad "no-update-without-backup"
+export HM_MAINT_BACKUP_OK=1
+cmd_maintenance run-scheduled >/dev/null && ok "run-with-backup" || bad "run-with-backup"
 
 st="$(cmd_maintenance status 2>/dev/null || true)"
 printf '%s\n' "${st}" | grep -q 'okno' && ok "status" || bad "status"

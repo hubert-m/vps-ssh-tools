@@ -181,8 +181,8 @@ hm_chrome_path_in_use() {
   if [[ -n "${HM_CHROME_BUSY:-}" ]] && grep -qxF -- "${p}" "${HM_CHROME_BUSY}" 2>/dev/null; then
     return 0
   fi
-  # SingletonLock → host-PID (żywy proces = profil zajęty)
-  if [[ -e "${p}/SingletonLock" ]]; then
+  # SingletonLock → host-PID (Chrome: wiszący symlink; -e podąża za celem i zawodzi)
+  if [[ -L "${p}/SingletonLock" || -e "${p}/SingletonLock" ]]; then
     locktgt="$(readlink "${p}/SingletonLock" 2>/dev/null || true)"
     [[ -z "${locktgt}" && -f "${p}/SingletonLock" ]] && locktgt="$(tr -d '\0' < "${p}/SingletonLock" 2>/dev/null || true)"
     lockpid="${locktgt##*-}"

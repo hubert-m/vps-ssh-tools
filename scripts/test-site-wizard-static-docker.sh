@@ -154,6 +154,48 @@ else
   ok "refuse-public-port"
 fi
 
+# image YAML injection / port / out
+hm_site_docker_image_ok 'nginx:1' && ok "image-ok" || bad "image-ok"
+if hm_site_docker_image_ok $'nginx:1\n    privileged: true'; then
+  bad "image-inject"
+else
+  ok "image-inject"
+fi
+hm_site_docker_port_ok 3000 && ok "port-ok" || bad "port-ok"
+hm_site_docker_port_ok 99999 && bad "port-hi" || ok "port-hi"
+hm_site_build_out_ok dist && ok "out-ok" || bad "out-ok"
+hm_site_build_out_ok '../../etc' && bad "out-traversal" || ok "out-traversal"
+
+injc="${root}/inj-compose.yaml"
+printf '%s\n' 'services:' '  app:' '    image: x' '    privileged: true' '    ports:' '      - "127.0.0.1:80:80"' > "${injc}"
+if hm_site_docker_validate_compose "${injc}" >/dev/null 2>&1; then
+  bad "refuse-privileged"
+else
+  ok "refuse-privileged"
+fi
+
+if hm_site_docker_provision evil.test $'nginx:1\n    network_mode: host\n    privileged: true\n    ports: ["8080:80"]' 3000 auto 1 >/dev/null 2>&1; then
+  bad "provision-inject"
+else
+  ok "provision-inject"
+fi
+if hm_site_docker_provision evil2.test nginx:alpine 99999 auto 1 >/dev/null 2>&1; then
+  bad "provision-bad-port"
+else
+  ok "provision-bad-port"
+fi
+
+# static build: --out bad + runuser log
+export HM_SITE_BUILD_LOG="${root}/build.log"
+: > "${HM_SITE_BUILD_LOG}"
+if cmd_site_new badout.example.pl --runtime static --build 'npm run build' --out '../../etc' --db none --webserver nginx --user spaapp --yes >/dev/null 2>&1; then
+  bad "out-site-new"
+else
+  ok "out-site-new"
+fi
+cmd_site_new build.example.pl --runtime static --build 'npm run build' --out dist --db none --webserver nginx --user spaapp --yes >/dev/null 2>&1 \
+  && grep -q 'runuser -u spaapp' "${HM_SITE_BUILD_LOG}" && ok "build-runuser" || bad "build-runuser"
+
 # --- Rollback: compose-down (undo dispatch) ---
 : > "${HM_SITE_DOCKER_LOG}"
 mkdir -p "${root}/homes/rb.example.pl"
