@@ -83,6 +83,31 @@ else
   fail=1
 fi
 
+# Kontekst serwisu: --heavy tylko w HOME domeny (nie od /)
+SITE="${TMP}/homes/shop.example"
+mkdir -p "${SITE}/public_html" "${SITE}/logs" "${TMP}/homes/other.example"
+dd if=/dev/zero of="${SITE}/public_html/big.bin" bs=1024 count=40 status=none 2>/dev/null || \
+  head -c 40960 /dev/zero > "${SITE}/public_html/big.bin"
+echo tiny > "${TMP}/homes/other.example/x"
+export HM_SITE_DOMAIN=shop.example
+export HM_SITE_ROOT="${SITE}"
+hm_print_du_depth() { :; }
+hm_format_size_from_path() { echo "0 B"; }
+hout="$(hm_disk_section_heavy 2 2 2>&1 || true)"
+if printf '%s' "${hout}" | grep -q 'shop.example' && printf '%s' "${hout}" | grep -q 'public_html\|big.bin\|logs'; then
+  echo "OK   site-heavy scoped"
+else
+  echo "FAIL site-heavy: ${hout}"
+  fail=1
+fi
+if printf '%s' "${hout}" | grep -q 'other.example'; then
+  echo "FAIL site-heavy wyciekł do other.example"
+  fail=1
+else
+  echo "OK   site-heavy bez other"
+fi
+unset HM_SITE_DOMAIN HM_SITE_ROOT
+
 rm -rf "${TMP}"
 
 if [[ "${fail}" -ne 0 ]]; then

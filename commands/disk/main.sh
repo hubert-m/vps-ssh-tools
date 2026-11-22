@@ -15,7 +15,25 @@ Użycie:
 
   --count N  ile najcięższych pozycji na poziomie
   --deep N   ile poziomów zejścia w najcięższe katalogi
+
+  W kontekście [domena]>: domyślny raport i --home/--heavy dotyczą tylko
+  katalogu tego serwisu (HM_SITE_ROOT), nie całego / ani /home.
+  Jawne --drive / --inodes nadal pokazują system plików.
 EOF
+
+# Katalog serwisu z kontekstu REPL (use <domena>).
+hm_disk_site_root() {
+  local root="${HM_SITE_ROOT:-}"
+  if [[ -z "${root}" && -n "${HM_SITE_DOMAIN:-}" ]]; then
+    if declare -F hm_site_home >/dev/null 2>&1; then
+      root="$(hm_site_home "${HM_SITE_DOMAIN}")"
+    else
+      root="/home/${HM_SITE_DOMAIN}"
+    fi
+  fi
+  [[ -n "${root}" && -d "${root}" ]] || return 1
+  printf '%s' "${root}"
+}
 
 hm_disk_section_drive() {
   echo "${C_BOLD}Zużycie dysku${C_RESET}"
@@ -28,6 +46,32 @@ hm_disk_section_inodes() {
 }
 
 hm_disk_section_home() {
+  local root out=""
+  if [[ -n "${HM_SITE_DOMAIN:-}" ]]; then
+    root="$(hm_disk_site_root)" || {
+      hm_err "Brak katalogu serwisu (${HM_SITE_DOMAIN})."
+      return 1
+    }
+    echo "${C_BOLD}Zajętość — ${HM_SITE_DOMAIN}${C_RESET}"
+    echo "  Środowisko : ${root}"
+    if declare -F hm_format_size_from_path >/dev/null 2>&1; then
+      echo "  Całość     : $(hm_format_size_from_path "${root}")"
+      if [[ -d "${root}/public_html" ]]; then
+        echo "  public_html: $(hm_format_size_from_path "${root}/public_html")"
+      elif [[ -n "${HM_SITE_DOCROOT:-}" && -d "${HM_SITE_DOCROOT}" ]]; then
+        echo "  Docroot    : $(hm_format_size_from_path "${HM_SITE_DOCROOT}")"
+      fi
+      [[ -d "${root}/logs" ]] && echo "  logs       : $(hm_format_size_from_path "${root}/logs")"
+      [[ -d "${root}/mail" ]] && echo "  mail       : $(hm_format_size_from_path "${root}/mail")"
+    fi
+    echo
+    echo "${C_BOLD}Top katalogi w ${root}${C_RESET}"
+    hm_status_line "Obliczanie rozmiaru katalogów serwisu ${HM_SITE_DOMAIN}..."
+    out="$(hm_print_du_depth "${root}" 1 25 "")" || true
+    hm_status_clear
+    [[ -n "${out}" ]] && printf '%s\n' "${out}"
+    return 0
+  fi
   if [[ ! -d /home ]]; then
     hm_warn "Brak katalogu /home."
     return 0
@@ -35,7 +79,6 @@ hm_disk_section_home() {
   echo "${C_BOLD}Top katalogi w /home${C_RESET}"
   hm_status_line "Obliczanie rozmiaru katalogów w /home..."
   # zbierz najpierw — status (\r) nie może doklejać się do pierwszej linii
-  local out=""
   out="$(hm_print_du_depth /home 1 25 "")" || true
   hm_status_clear
   [[ -n "${out}" ]] && printf '%s\n' "${out}"
@@ -117,7 +160,19 @@ hm_disk_heavy_walk() {
 }
 
 hm_disk_section_heavy() {
-  local count="${1:-3}" deep="${2:-5}"
+  local count="${1:-3}" deep="${2:-5}" root="/" label="/"
+  if [[ -n "${HM_SITE_DOMAIN:-}" ]]; then
+    root="$(hm_disk_site_root)" || {
+      hm_err "Brak katalogu serwisu (${HM_SITE_DOMAIN}) — --heavy w kontekście wymaga HOME serwisu."
+      return 1
+    }
+    label="${root}"
+    echo "${C_BOLD}Najcięższe w ${label}${C_RESET}  (${HM_SITE_DOMAIN}; top ${count}, głębokość ${deep})"
+    hm_status_line "Skanowanie najcięższych ścieżek serwisu ${HM_SITE_DOMAIN}..."
+    hm_disk_heavy_walk "${root}" "${count}" "${deep}" 1
+    hm_status_clear
+    return 0
+  fi
   echo "${C_BOLD}Najcięższe w /${C_RESET}  (top ${count}, głębokość ${deep})"
   hm_status_line "Skanowanie najcięższych ścieżek od / (może chwilę potrwać)..."
   hm_disk_heavy_walk "/" "${count}" "${deep}" 1
@@ -224,11 +279,15 @@ cmd_disk() {
     return 1
   fi
 
-  # Bez flag = pełny raport jak dotychczas
+  # Bez flag: globalnie df+inody+/home; w kontekście serwisu — tylko zajętość tego HOME
   if [[ "${any_section}" -eq 0 ]]; then
-    do_drive=1
-    do_inodes=1
-    do_home=1
+    if [[ -n "${HM_SITE_DOMAIN:-}" ]]; then
+      do_home=1
+    else
+      do_drive=1
+      do_inodes=1
+      do_home=1
+    fi
   fi
 
   local need_sep=0
