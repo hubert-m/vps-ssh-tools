@@ -28,7 +28,8 @@ export HM_MEM_ZRAM="${root}/zram"
 export HM_MEM_SYSCTL="${root}/90-hmtools.conf"
 export HM_MEM_STATE="${root}/state"
 export HM_MEM_SYSCTL_LIVE="${root}/live-sysctl"
-unset HM_MEM_VIRT
+# Hermetycznie: bez systemd-detect-virt (kontener → container-other blokuje swap/zram).
+export HM_MEM_VIRT=none
 mkdir -p "${HM_MEM_STATE}"
 printf 'net.core.somaxconn=4096\n' > "${HM_MEM_SYSCTL_LIVE}"
 
@@ -83,7 +84,7 @@ grep -qF "${root}/swapfile none swap sw 0 0" "${root}/fstab" && bad swap-fstab-r
 HM_MEM_VIRT=openvz
 if cmd_memory swap create 1G >/dev/null 2>"${root}/vz.err"; then bad virt; else ok virt; fi
 grep -q 'nie są wspierane' "${root}/vz.err" && ok virt-msg || bad virt-msg
-unset HM_MEM_VIRT
+export HM_MEM_VIRT=none
 
 cmd_memory zram on >/dev/null
 grep -qx on "${root}/zram" && ok zram || bad zram

@@ -16,6 +16,10 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 
 ## [Unreleased] / [vX.Y.Z]
 
+- Fix: test-memory — `HM_MEM_VIRT=none` (hermetycznie; bez `systemd-detect-virt` w kontenerze)
+- Fix: test-site-wizard-secrets — `lib-test-site.sh` + mocki Node (index/nvm); `site-new-rc` PASS
+- Fix: test-site-wizard-fixtures — snap `nginx-proxy` z domyślnym aliasem `www.app.example`
+
 ## [v0.1.15]
 
 - Fix: chrome clean — `SingletonLock` przez `-L` (wiszący symlink); test lock bez cmdline

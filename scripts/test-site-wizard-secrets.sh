@@ -11,13 +11,8 @@ source lib/common/ui.sh
 # shellcheck disable=SC1091
 source lib/logging.sh
 # shellcheck disable=SC1091
-source lib/site/env.sh
-# shellcheck disable=SC1091
-source lib/site/base.sh
-# shellcheck disable=SC1091
-source lib/site/tx.sh
-# shellcheck disable=SC1091
-source lib/site/db.sh
+source scripts/lib-test-site.sh
+hm_test_site_load
 # shellcheck disable=SC1091
 source commands/site-create/wizard-db.sh
 
@@ -44,34 +39,65 @@ export HM_SITE_DB_SQL_LOG="${root}/sql.log"
 export HM_SITE_JOURNAL_DIR="${root}/journal"
 export HM_SITE_LOCK_DIR="${root}/lock"
 export HM_SITE_MANIFEST_DIR="${root}/manifest"
+export HM_SITE_PORT_FILE="${root}/ports.ndjson"
+export HM_SITE_NODE_MOCK=1
+export HM_SITE_NODE_LOG="${root}/node.log"
+export HM_NODE_INDEX_FILE="${root}/node-index.json"
+export HM_NODE_FETCH_MOCK=1
+export HM_NODE_FETCH_BODY="${root}/nvm-install.sh"
+export HM_NODE_FETCH_LOG="${root}/fetch.log"
+export HM_SYSTEMD_UNIT_DIR="${root}/systemd"
+export HM_SECRET_FILE="${root}/secret.out"
 export LOG_DIR="${root}/logs"
 export LOG_ENABLED=1
 export HM_LOG="${root}/hm.log"
 export TMP_DIR="${root}/tmp"
-mkdir -p "${HM_SITE_HOME_BASE}" "${LOG_DIR}" "${TMP_DIR}" "${HM_SITE_JOURNAL_DIR}" "${HM_SITE_LOCK_DIR}"
+mkdir -p "${HM_SITE_HOME_BASE}" "${LOG_DIR}" "${TMP_DIR}" "${HM_SITE_JOURNAL_DIR}" "${HM_SITE_LOCK_DIR}" "${HM_SYSTEMD_UNIT_DIR}"
 : > "${HM_SITE_PASSWD_FILE}"
 : > "${HM_SITE_DB_ARGV_LOG}"
 : > "${HM_SITE_DB_SQL_LOG}"
 : > "${HM_LOG}"
+: > "${HM_SITE_NODE_LOG}"
+: > "${HM_NODE_FETCH_LOG}"
+: > "${HM_SECRET_FILE}"
 printf 'MemTotal: 2097152 kB\n' > "${HM_SITE_MEMINFO_FILE}"
 printf 'LISTEN 0.0.0.0:80\nLISTEN 0.0.0.0:443\n' > "${HM_SITE_SS_FILE}"
 printf 'ID=debian\nVERSION_ID="12"\n' > "${HM_SITE_OS_FILE}"
+cat > "${HM_NODE_FETCH_BODY}" <<'EOF'
+#!/bin/bash
+mkdir -p "$NVM_DIR"
+printf '%s\n' 'NVM_DIR nvm_echo "0.40.3"' > "$NVM_DIR/nvm.sh"
+EOF
+export HM_NODE_NVM_PIN_SHA256
+HM_NODE_NVM_PIN_SHA256="$(sha256sum "${HM_NODE_FETCH_BODY}" | awk '{print $1}')"
+cat > "${HM_NODE_INDEX_FILE}" <<'EOF'
+[
+{"version":"v22.14.0","lts":"Jod","security":false},
+{"version":"v20.18.0","lts":"Iron","security":false}
+]
+EOF
 
 hm_confirm_plan() { return 0; }
 hm_gen_password() { printf '%s' "${PASS}"; }
-hm_have_cmd() { return 1; }
+hm_have_cmd() {
+  case "$1" in
+    sha256sum) command -v "$1" >/dev/null 2>&1 ;;
+    *) return 1 ;;
+  esac
+}
 hm_mysql_cli() { printf '%s\n' mysql; }
 hm_mysql_create() {
   HM_MYSQL_CREATE_PASS="${PASS}"
   return 0
 }
 hm_run() { printf 'RUN:%s\n' "$*" >> "${root}/run.log"; return 0; }
+userdel() { return 0; }
 
 umask 022
 before="$(umask)"
 outf="${root}/new.out"
 errf="${root}/new.err"
-if ! cmd_site_new shop.example --runtime node --db mysql --yes >"${outf}" 2>"${errf}"; then
+if ! cmd_site_new shop.example --runtime node --db mysql --process none --yes >"${outf}" 2>"${errf}"; then
   bad "site-new-rc"
   cat "${outf}" "${errf}" >&2 || true
 else

@@ -1,7 +1,7 @@
 server {
     listen 80;
     listen [::]:80;
-    server_name app.example;
+    server_name app.example www.app.example;
     server_tokens off;
     root /var/www/app.example/public_html;
     access_log /var/www/app.example/logs/access.log;
