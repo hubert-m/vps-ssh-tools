@@ -671,15 +671,49 @@ hm_site_lifecycle_remove_path() {
   hm_ok "Usunięto ${kind}: ${path}"
 }
 
-# Usuń bazy/userów z .{domena}.dbs (manifest kreatora).
+# Czy baza z .{domena}.dbs jest w planie usunięcia (HM_DEL_DBS)?
+hm_site_lifecycle_db_in_plan() {
+  local name="$1" dline n_dbs=0 n_skip=0
+  [[ -n "${name}" ]] || return 1
+  n_dbs="${#HM_DEL_DBS[@]}"
+  n_skip="${#HM_DEL_SKIP_DBS[@]}"
+  # Brak inwentaryzacji (np. sam lifecycle) → pozwól (dalej guard współdzielenia).
+  if [[ "${n_dbs}" -eq 0 && "${n_skip}" -eq 0 ]]; then
+    return 0
+  fi
+  for dline in "${HM_DEL_DBS[@]+"${HM_DEL_DBS[@]}"}"; do
+    [[ -n "${dline}" ]] || continue
+    [[ "${dline%%|*}" == "${name}" ]] && return 0
+  done
+  return 1
+}
+
+# Usuń bazy/userów z .{domena}.dbs — tylko wyłączne i obecne w planie (HM_DEL_DBS).
 hm_site_lifecycle_drop_manifest_dbs() {
-  local domain="${1:-${HM_DEL_DOMAIN:-}}" dbfile typ name dbuser host port
+  local domain="${1:-${HM_DEL_DOMAIN:-}}" dbfile typ name dbuser host port other planned
   [[ -n "${domain}" ]] || return 0
   [[ "${HM_DEL_KEEP_DB:-0}" == "1" ]] && return 0
   dbfile="$(hm_site_manifest_dir)/.${domain}.dbs"
   [[ -f "${dbfile}" && ! -L "${dbfile}" ]] || return 0
   while IFS=$'\t' read -r typ name dbuser host port || [[ -n "${typ}" ]]; do
     [[ -n "${typ}" && -n "${name}" ]] || continue
+    other=""
+    if declare -F hm_site_mysql_db_owned_elsewhere >/dev/null 2>&1; then
+      other="$(hm_site_mysql_db_owned_elsewhere "${domain}" "${name}" 2>/dev/null || true)"
+    fi
+    if [[ -n "${other}" ]]; then
+      hm_warn "Pomijam DROP ${name} (manifest) — współdzielona z serwisem ${other}."
+      continue
+    fi
+    if declare -F hm_del_db_owned_by_other >/dev/null 2>&1 \
+        && hm_del_db_owned_by_other "${name}" "${domain}"; then
+      hm_warn "Pomijam DROP ${name} (manifest) — współdzielona z inną domeną."
+      continue
+    fi
+    if ! hm_site_lifecycle_db_in_plan "${name}"; then
+      hm_warn "Pomijam DROP ${name} (manifest) — nie w planie usunięcia."
+      continue
+    fi
     case "${typ}" in
       mysql|mariadb)
         if declare -F hm_mysql_exec >/dev/null 2>&1; then

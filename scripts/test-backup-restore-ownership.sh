@@ -44,14 +44,26 @@ assert_eq "flags-conflict" "$(_hm_flags_conflict --files-only --db-only)" "confl
 assert_eq "flags-files" "$(_hm_flags_conflict --files-only)" "ok"
 assert_eq "flags-db" "$(_hm_flags_conflict --db-only)" "ok"
 
+# --- hm_os_web_group: nginx → www-data (nie nogroup) ---
+_ps_stub() { return 0; }
+ps() { _ps_stub "$@"; }
+export WEBSERVER=nginx
+unset HM_SITE_WEBSERVER
+# Wymuś debian adapter bez żywego OLS/nginx
+OS_FAMILY=debian
+# shellcheck disable=SC1091
+source lib/os/debian.sh
+hm_os_bind() { OS_FAMILY=debian; source lib/os/debian.sh; return 0; }
+got_wg="$(hm_os_web_group)"
+assert_eq "web-group-nginx-www-data" "${got_wg}" "www-data"
+
 # --- ownership: public_html zachowuje web group ---
-# Asercje chown user↔nogroup są wiarygodne tylko jako non-root z możliwością
-# sprawdzenia logiki bez omijania DAC; jako root harness myli asercje (user=root).
+# Asercje chown są wiarygodne tylko jako non-root; jako root harness myli asercje.
 if [[ "$(id -u)" -eq 0 ]]; then
   echo "SKIP ownership chown asserts — wymaga non-root (root omija uprawnienia/chown harness)"
 else
-  # stub grupy WWW
-  hm_os_web_group() { printf 'nogroup'; }
+  # stub grupy WWW (produkcyjnie hm_os_web_group → www-data na nginx)
+  hm_os_web_group() { printf 'www-data'; }
 
   # shellcheck disable=SC1091
   source commands/backup/restore.sh
@@ -65,13 +77,12 @@ else
   chown -R "$(id -u):$(id -g)" "${tmp}/site" 2>/dev/null || true
 
   user="$(id -un)"
-  if ! getent group nogroup >/dev/null 2>&1; then
+  if ! getent group www-data >/dev/null 2>&1; then
     hm_backup_restore_fix_ownership "${tmp}/site" "${user}" "${tmp}/site/public_html" || true
-    echo "OK   ownership-skip-nogroup (brak grupy nogroup na tym hoście)"
+    echo "OK   ownership-skip-www-data (brak grupy www-data na tym hoście)"
   else
-    # bez root: chown do nogroup zwykle się nie uda — sprawdzamy brak crasha + soft path
     hm_backup_restore_fix_ownership "${tmp}/site" "${user}" "${tmp}/site/public_html" || true
-    echo "OK   ownership-nonroot-no-crash (pełne asercje chown→nogroup tylko w sandboxie z fakowym chown)"
+    echo "OK   ownership-nonroot-no-crash (pełne asercje chown→www-data w sandboxie)"
   fi
 fi
 

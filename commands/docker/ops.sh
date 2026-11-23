@@ -85,15 +85,25 @@ hm_docker_compose_exec() {
 }
 
 hm_docker_save_digests() {
-  local project="$1" out="$2" id img dig
+  # Format linii: tag imageID [repoDigest]
+  # imageID = .Image kontenera (lokalny sha256) — do docker tag przy rollbacku
+  # repoDigest = index .RepoDigests 0 (manifest) — do docker pull gdy obraz usunięty
+  local project="$1" out="$2" id img iid repo
   : > "${out}"
   chmod 0600 "${out}" || true
   while IFS= read -r id; do
     [[ -n "${id}" ]] || continue
     img="$("${DOCKER_BIN}" inspect -f '{{.Config.Image}}' "${id}" 2>/dev/null || true)"
-    dig="$("${DOCKER_BIN}" inspect -f '{{.Image}}' "${id}" 2>/dev/null || true)"
-    [[ -n "${img}" && -n "${dig}" && "${dig}" != "<no value>" ]] || continue
-    printf '%s %s\n' "${img}" "${dig}" >> "${out}"
+    iid="$("${DOCKER_BIN}" inspect -f '{{.Image}}' "${id}" 2>/dev/null || true)"
+    [[ -n "${img}" && -n "${iid}" && "${iid}" != "<no value>" ]] || continue
+    repo=""
+    if [[ -n "${iid}" ]]; then
+      repo="$("${DOCKER_BIN}" image inspect -f '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' "${iid}" 2>/dev/null || true)"
+      [[ "${repo}" == "<no value>" ]] && repo=""
+    fi
+    # Zachowaj lokalny tag-prev żeby prune nie usunął obrazu przed rollbackiem
+    "${DOCKER_BIN}" tag "${iid}" "${img}-hmtools-prev" 2>/dev/null || true
+    printf '%s %s %s\n' "${img}" "${iid}" "${repo}" >> "${out}"
   done < <("${DOCKER_BIN}" ps -aq --filter "label=com.docker.compose.project=${project}" 2>/dev/null)
   # test fixture: jeśli brak kontenerów, a jest images.txt — tylko gdy HMTOOLS_TEST
   if [[ ! -s "${out}" && "${HMTOOLS_TEST:-}" == "1" && -f "${_hm_dc_wd}/images.txt" ]]; then
@@ -129,17 +139,29 @@ hm_docker_health_ok() {
 }
 
 hm_docker_rollback_digests() {
-  local digests="$1" name digest tag
-  local rc=0
-  while read -r name digest; do
-    [[ -n "${name}" && -n "${digest}" ]] || continue
-    "${DOCKER_BIN}" pull "${name%@*}@${digest}" 2>/dev/null \
-      || "${DOCKER_BIN}" pull "${name}@${digest}" \
-      || { rc=1; continue; }
-    # przetaguj na oryginalny tag, żeby compose nie wziął nowego
-    "${DOCKER_BIN}" tag "${name%@*}@${digest}" "${name}" 2>/dev/null \
-      || "${DOCKER_BIN}" tag "${digest}" "${name}" \
-      || rc=1
+  # Linie: tag imageID [repoDigest]  (stary format: tag imageID — nadal OK)
+  local digests="$1" name iid repo
+  local rc=0 tagged
+  while read -r name iid repo; do
+    [[ -n "${name}" && -n "${iid}" ]] || continue
+    tagged=0
+    # 1) lokalny image ID (nadal na dysku po pull nowego) — nie pull-uj ID
+    if "${DOCKER_BIN}" tag "${iid}" "${name}" 2>/dev/null; then
+      tagged=1
+    elif [[ -n "${repo}" ]] && "${DOCKER_BIN}" pull "${repo}" 2>/dev/null; then
+      "${DOCKER_BIN}" tag "${repo}" "${name}" 2>/dev/null && tagged=1
+    elif "${DOCKER_BIN}" tag "${name}-hmtools-prev" "${name}" 2>/dev/null; then
+      tagged=1
+    else
+      # ostatnia szansa: pull name@digest gdy iid wygląda na sha256:… a repo pusty (stary format)
+      if [[ "${iid}" == sha256:* ]]; then
+        if "${DOCKER_BIN}" pull "${name%@*}@${iid}" 2>/dev/null \
+            || "${DOCKER_BIN}" pull "${name}@${iid}" 2>/dev/null; then
+          "${DOCKER_BIN}" tag "${iid}" "${name}" 2>/dev/null && tagged=1
+        fi
+      fi
+    fi
+    [[ "${tagged}" -eq 1 ]] || rc=1
   done < "${digests}"
   hm_docker_compose_exec up -d --force-recreate || rc=1
   return "${rc}"

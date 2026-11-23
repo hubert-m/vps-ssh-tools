@@ -12,3 +12,11 @@
 - Fix: SECURITY users del — UID_MIN/konta usług/właściciele serwisów; `userdel -r` tylko dla czystego `/home/<login>`; test-users-del-protect
 - Fix: clone — odmowa nadpisania istniejącego celu bez `--overwrite`; confirm_critical + snapshot; test-clone-staging
 - Fix: mysql default DB — bez prefix-match (wspólne `hm_dbs_for_site`); test-mysql-default-db
+- Fix: site new — skrót usera jak CyberPanel (cała domena, 8 znaków); auto-user przy kolizji → unikalny wariant (`shop2t1`); MySQL odmawia cudzej/istniejącej bazy poza resume; test-site-wizard-base
+- Fix: webs delete — DROP z `.{domena}.dbs` tylko baz wyłącznych i w planie; `hm_del_db_owned_by_other` widzi cudzy manifest; test-delete-manifest-db-owner
+- Fix: `hm_os_web_group` — po OLS wykrywa nginx/apache (`WEBSERVER` / żywy worker) → `www-data`/`nginx`/`apache` zamiast `nogroup` (403 po clone/restore); test-os-web-group
+- Fix: archive/restore — `webserver.tar.gz` + `php-fpm.tar.gz` + `meta.tar.gz` (nginx/apache); restore z walidacją; reload stack-aware (nie OLS na nginx); test-archive-restore-nginx
+- Fix: backup local --keep — chroni `type=archive`, kasuje uszkodzone poza limitem N, `rm -rf -- ${base:?}/${s:?}`; ostrzeżenie overlap z RCLONE_REMOTE; test-backup-local-keep
+- Fix: backup restore — walidacja gzip/tar przed zmianą; staging→rsync (`--delete` przy `--overwrite-files`); Unix po plikach; dump DB `gzip -t` przed importem; test-restore-atomic
+- Fix: backup restore-full — bez `--overwrite-db` pomija niepuste bazy; `gzip -t` + rc≠0 przy błędzie; `backup restore` szuka też `full/<stamp>/sites/<d>`; test-restore-full
+- Fix: docker compose update rollback — zapis tag+imageID+repoDigest; `docker tag <ID> <tag>` przed pull; bez `continue` omijającego retag; test-docker-ops

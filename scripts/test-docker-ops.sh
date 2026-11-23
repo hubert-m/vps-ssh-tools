@@ -96,10 +96,22 @@ if [[ "${cmd}" == "compose" && "$*" == *logs* ]]; then
   printf 'PASSWORD=SECRET-DOCKER still-ok-line\n'
   exit 0
 fi
-if [[ "${cmd}" == "pull" || "${cmd}" == "tag" || "${cmd}" == "manifest" ]]; then
+if [[ "${cmd}" == "pull" ]]; then
+  # pull name@<imageID> musi padać (jak na prawdziwym Dockerze)
+  if [[ "$*" == *@sha256:* ]]; then
+    exit 1
+  fi
+  exit 0
+fi
+if [[ "${cmd}" == "tag" || "${cmd}" == "manifest" ]]; then
   exit 0
 fi
 if [[ "${cmd}" == "image" ]]; then
+  # image inspect -f RepoDigests
+  if [[ "${1:-}" == "inspect" ]]; then
+    echo ''
+    exit 0
+  fi
   exit 0
 fi
 exit 0
@@ -125,16 +137,21 @@ else
   ok update-rc
 fi
 grep -q 'sha256:aaa' "${root}/stack/.hmtools-digests" && ok update-digest || bad update-digest
-grep -q 'pull ' "${HM_DOCKER_LOG}" | head -1 >/dev/null
-grep -E 'pull .*sha256:aaa' "${HM_DOCKER_LOG}" >/dev/null && ok update-rollback-pull || {
-  bad update-rollback-pull
-  grep pull "${HM_DOCKER_LOG}" || true
-}
-grep -E 'tag .*nginx:1.25' "${HM_DOCKER_LOG}" >/dev/null && ok update-rollback-tag || {
+# Rollback: najpierw tag <imageID> <tag> (bez udanego pull ID)
+grep -E 'tag sha256:aaa nginx:1.25|tag sha256:aaa mariadb' "${HM_DOCKER_LOG}" >/dev/null && ok update-rollback-tag || {
   bad update-rollback-tag
   grep tag "${HM_DOCKER_LOG}" || true
 }
+# pull @imageID nie powinien być wymagany do sukcesu (może być próbowany i padać)
 grep -E 'force-recreate' "${HM_DOCKER_LOG}" >/dev/null && ok update-force-recreate || bad update-force-recreate
+# tag przed force-recreate
+tag_line="$(grep -nE 'tag sha256:aaa' "${HM_DOCKER_LOG}" | head -1 | cut -d: -f1)"
+up_line="$(grep -nE 'force-recreate' "${HM_DOCKER_LOG}" | head -1 | cut -d: -f1)"
+if [[ -n "${tag_line}" && -n "${up_line}" && "${tag_line}" -lt "${up_line}" ]]; then
+  ok update-rollback-order
+else
+  bad update-rollback-order
+fi
 grep -q 'SECRET-DOCKER' "${root}/update.out" "${HM_DOCKER_LOG}" && bad update-secret || ok update-secret
 grep -qE 'compose -p app_staging' "${HM_DOCKER_LOG}" && ok update-project-flag || bad update-project-flag
 grep -qE '\-f docker-compose\.yml' "${HM_DOCKER_LOG}" && ok update-file-flag || bad update-file-flag

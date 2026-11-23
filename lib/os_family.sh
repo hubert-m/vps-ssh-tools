@@ -218,17 +218,66 @@ _hm_os_csf_whitelist_ip() {
   return 0
 }
 
-# Grupa procesu WWW (OLS preferuje żywą grupę procesu; fallback = rodzina OS)
+# Pierwsza nie-rootowa grupa z ps -C (worker, nie master).
+_hm_os_ps_nonroot_group() {
+  local proc="$1" g
+  while IFS= read -r g; do
+    g="$(printf '%s' "${g}" | tr -d '[:space:]')"
+    [[ -n "${g}" && "${g}" != "root" ]] || continue
+    printf '%s' "${g}"
+    return 0
+  done < <(ps -o group= -C "${proc}" 2>/dev/null || true)
+  return 1
+}
+
+# Grupa procesu WWW: OLS → nginx/apache (WEBSERVER / żywy proces) → fallback rodziny OS.
+# Nie zwracaj „nogroup/nobody” gdy działa nginx/apache (docroot 2750 → 403).
 hm_os_web_group() {
-  local g
-  g="$(ps -o group= -C lshttpd 2>/dev/null | head -1 | tr -d ' ')"
-  if [[ -z "${g}" ]]; then
-    g="$(ps -o group= -C openlitespeed 2>/dev/null | head -1 | tr -d ' ')"
-  fi
-  if [[ -n "${g}" && "${g}" != "root" ]]; then
+  local g kind=""
+  g="$(_hm_os_ps_nonroot_group lshttpd 2>/dev/null || true)"
+  [[ -z "${g}" ]] && g="$(_hm_os_ps_nonroot_group openlitespeed 2>/dev/null || true)"
+  [[ -z "${g}" ]] && g="$(_hm_os_ps_nonroot_group litespeed 2>/dev/null || true)"
+  if [[ -n "${g}" ]]; then
     printf '%s' "${g}"
     return 0
   fi
+
+  kind="${HM_SITE_WEBSERVER:-${WEBSERVER:-}}"
+  case "${kind}" in
+    nginx|openresty) kind="nginx" ;;
+    apache|apache2|httpd) kind="apache" ;;
+    ols|openlitespeed|litespeed) kind="ols" ;;
+    *) kind="" ;;
+  esac
+
+  # Żywy worker nginx/apache (grupa z ps) — także gdy WEBSERVER nieustawiony / OLS nie działa
+  if [[ -z "${kind}" || "${kind}" == "nginx" ]]; then
+    g="$(_hm_os_ps_nonroot_group nginx 2>/dev/null || true)"
+    if [[ -n "${g}" ]]; then
+      printf '%s' "${g}"
+      return 0
+    fi
+  fi
+  if [[ -z "${kind}" || "${kind}" == "apache" ]]; then
+    g="$(_hm_os_ps_nonroot_group apache2 2>/dev/null || true)"
+    [[ -z "${g}" ]] && g="$(_hm_os_ps_nonroot_group httpd 2>/dev/null || true)"
+    if [[ -n "${g}" ]]; then
+      printf '%s' "${g}"
+      return 0
+    fi
+  fi
+
+  # Stała grupa z adaptera OS (www-data / nginx / apache)
+  case "${kind}" in
+    nginx|apache)
+      g="$(hm_os_web_group_for "${kind}" 2>/dev/null || true)"
+      if [[ -n "${g}" ]]; then
+        printf '%s' "${g}"
+        return 0
+      fi
+      ;;
+  esac
+
   hm_os_bind || true
   _hm_os_do_web_group
 }

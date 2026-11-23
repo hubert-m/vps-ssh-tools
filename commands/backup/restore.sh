@@ -21,26 +21,20 @@ hm_backup_r_exists() {
   rclone cat "${path}" >/dev/null 2>&1
 }
 
-hm_backup_restore_files() {
-  local remote_base="$1" target_dir="$2"
-  local mode
+# Pobierz archiwum plików do lokalnego tmp i zweryfikuj gzip+tar (bez zmian na target).
+hm_backup_restore_fetch_files_archive() {
+  local remote_base="$1" out_tar="$2"
+  local mode part
+  local -a chunk_parts=()
   mode="$(hm_backup_detect_files_mode "${remote_base}")"
-  mkdir -p "${target_dir}"
-
-  # --no-same-owner: numeryczne UID z innego VPS nie „kradną” plików obcemu lokalnemu userowi;
-  # właściciela ustawiamy potem przez hm_backup_restore_fix_ownership.
   case "${mode}" in
     tar)
-      hm_info "Odtwarzanie plików (stream files.tar.gz) → ${target_dir}"
-      if ! hm_backup_r_cat "${remote_base}/files.tar.gz" | tar --no-same-owner -xzf - -C "${target_dir}"; then
-        hm_err "Rozpakowanie files.tar.gz nieudane."
+      if ! hm_backup_r_cat "${remote_base}/files.tar.gz" > "${out_tar}"; then
+        hm_err "Pobranie files.tar.gz nieudane."
         return 1
       fi
       ;;
     chunks)
-      hm_info "Odtwarzanie plików (chunks → stream) → ${target_dir}"
-      local part
-      local -a chunk_parts=()
       if [[ "${remote_base}" == /* ]]; then
         while IFS= read -r part; do
           [[ -n "${part}" ]] && chunk_parts+=("$(basename "${part}")")
@@ -50,26 +44,93 @@ hm_backup_restore_files() {
           [[ -n "${part}" ]] && chunk_parts+=("${part}")
         done < <(rclone lsf "${remote_base}/files.chunks/" 2>/dev/null | grep 'files\.tar\.gz\.part_' | sort)
       fi
-      local ctotal="${#chunk_parts[@]}"
-      [[ "${ctotal}" -gt 0 ]] || { hm_err "Brak plików part_* w files.chunks."; return 1; }
-      hm_status_line "Stream ${ctotal} chunków → tar (może potrwać)..."
-      if ! (
-        for part in "${chunk_parts[@]}"; do
-          hm_backup_r_cat "${remote_base}/files.chunks/${part}" || exit 1
-        done
-      ) | tar --no-same-owner -xzf - -C "${target_dir}"; then
-        hm_status_clear
-        hm_err "Rozpakowanie files.chunks nieudane."
-        return 1
-      fi
-      hm_status_clear
+      [[ "${#chunk_parts[@]}" -gt 0 ]] || { hm_err "Brak plików part_* w files.chunks."; return 1; }
+      : > "${out_tar}"
+      for part in "${chunk_parts[@]}"; do
+        hm_backup_r_cat "${remote_base}/files.chunks/${part}" >> "${out_tar}" || {
+          hm_err "Pobranie chunka ${part} nieudane."
+          return 1
+        }
+      done
       ;;
     *)
       hm_warn "Brak archiwum plików w snapshocie (ani files.tar.gz, ani files.chunks/)."
       return 1
       ;;
   esac
-  hm_ok "Pliki odtworzone."
+  if ! gzip -t "${out_tar}" 2>/dev/null; then
+    hm_err "Walidacja: files.tar.gz uszkodzony (gzip -t)."
+    return 1
+  fi
+  if ! tar -tzf "${out_tar}" >/dev/null 2>&1; then
+    hm_err "Walidacja: files.tar.gz uszkodzony (tar -t)."
+    return 1
+  fi
+  return 0
+}
+
+hm_backup_restore_files() {
+  local remote_base="$1" target_dir="$2"
+  local overwrite_files="${3:-${HM_BACKUP_OVERWRITE_FILES:-0}}"
+  local keep_extra="${HM_BACKUP_KEEP_EXTRA:-0}"
+  local staging pre_bak tarf parent stamp
+  mkdir -p "${target_dir}"
+
+  tarf="$(hm_mktemp .tar.gz)"
+  if ! hm_backup_restore_fetch_files_archive "${remote_base}" "${tarf}"; then
+    rm -f "${tarf}"
+    return 1
+  fi
+
+  # Staging na tym samym FS (parent target) — błąd ⇒ żywy katalog nietknięty
+  parent="$(dirname -- "${target_dir}")"
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  staging="${parent}/.hm-restore-${stamp}"
+  pre_bak="${parent}/.hm-pre-restore-${stamp}"
+  rm -rf -- "${staging}"
+  mkdir -p "${staging}" || { rm -f "${tarf}"; return 1; }
+
+  hm_info "Odtwarzanie plików (staging) → ${staging}"
+  if ! tar --no-same-owner -xzf "${tarf}" -C "${staging}"; then
+    hm_err "Rozpakowanie do staging nieudane — target nietknięty."
+    rm -rf -- "${staging}"
+    rm -f "${tarf}"
+    return 1
+  fi
+  rm -f "${tarf}"
+
+  # Podmiana: kopia bieżącego → rsync ze stagingu
+  if [[ -d "${target_dir}" ]] && find "${target_dir}" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
+    if [[ "${overwrite_files}" -eq 1 || "${keep_extra}" -eq 0 ]]; then
+      # Domyślnie przy pustym target bez overwrite — tylko extract; przy niepustym z overwrite — --delete
+      :
+    fi
+  fi
+
+  if hm_have_cmd rsync; then
+    local -a rsync_opts=(-aH --numeric-ids)
+    # --overwrite-files: usuń obce pliki nieobecne w snapshocie (anti-webshell)
+    if [[ "${overwrite_files}" -eq 1 && "${keep_extra}" -ne 1 ]]; then
+      rsync_opts+=(--delete)
+    fi
+    if ! rsync "${rsync_opts[@]}" "${staging}/" "${target_dir}/"; then
+      hm_err "rsync staging → target nieudany."
+      rm -rf -- "${staging}"
+      return 1
+    fi
+  else
+    # Fallback bez rsync: tar już w staging — mv zawartości (bez --delete obcych)
+    if [[ "${overwrite_files}" -eq 1 && "${keep_extra}" -ne 1 ]]; then
+      hm_warn "Brak rsync — nie usuwam obcych plików (--overwrite-files wymaga rsync)."
+    fi
+    if ! tar -C "${staging}" -cf - . | tar --no-same-owner -C "${target_dir}" -xf -; then
+      hm_err "Kopiowanie staging → target nieudane."
+      rm -rf -- "${staging}"
+      return 1
+    fi
+  fi
+  rm -rf -- "${staging}"
+  hm_ok "Pliki odtworzone${overwrite_files:+ (overwrite-files)}."
 }
 
 # Po restore: user:user wewnątrz, ale public_html/docroot zachowuje grupę WWW (nogroup/lsadm) — jak perms fix.
@@ -395,11 +456,29 @@ hm_backup_restore_dbs() {
     hm_progress_bar "${di}" "${dtotal}" "Import DB: ${db}"
     hm_status_clear
     hm_info "Import DB ${db} ← ${remote_base}/db/${db}.sql.gz"
+    # Walidacja dumpu przed CREATE/DROP (uszkodzony gzip nie kasuje tabel)
+    local db_tmp
+    db_tmp="$(hm_mktemp .sql.gz)"
+    if ! hm_backup_r_cat "${remote_base}/db/${db}.sql.gz" > "${db_tmp}" 2>/dev/null; then
+      # fallback rclone path
+      if ! rclone cat "${remote_base}/db/${db}.sql.gz" > "${db_tmp}" 2>/dev/null; then
+        rm -f "${db_tmp}"
+        hm_err "Pobranie dumpa ${db} nieudane."
+        return 1
+      fi
+    fi
+    if ! gzip -t "${db_tmp}" 2>/dev/null; then
+      rm -f "${db_tmp}"
+      hm_err "Walidacja: dump ${db}.sql.gz uszkodzony (gzip -t) — baza nietknięta."
+      return 1
+    fi
     "${cli}" "${sock_args[@]}" -e "CREATE DATABASE IF NOT EXISTS \`${db}\`;" 2>/dev/null || true
-    if ! rclone cat "${remote_base}/db/${db}.sql.gz" | gunzip -c | "${cli}" "${sock_args[@]}" "${db}"; then
+    if ! gunzip -c "${db_tmp}" | "${cli}" "${sock_args[@]}" "${db}"; then
+      rm -f "${db_tmp}"
       hm_err "Import DB ${db} nieudany."
       return 1
     fi
+    rm -f "${db_tmp}"
     hm_ok "DB ${db} OK."
   done
   hm_progress_done
@@ -411,6 +490,135 @@ hm_backup_ols_reload() {
   else
     hm_warn "Nie udało się przeładować OLS — zrób ręcznie: ols reload"
   fi
+  return 0
+}
+
+# Odtwórz webserver.tar.gz / php-fpm.tar.gz / meta.tar.gz (ścieżki absolutne od /).
+hm_backup_restore_tar_to_root() {
+  local remote_file="$1" tmp
+  tmp="$(hm_mktemp .tar.gz)"
+  if ! rclone cat "${remote_file}" > "${tmp}" 2>/dev/null; then
+    # lokalny mock (ścieżka absolutna)
+    if [[ "${remote_file}" == /* && -f "${remote_file}" ]]; then
+      cp -f "${remote_file}" "${tmp}" || { rm -f "${tmp}"; return 1; }
+    else
+      rm -f "${tmp}"
+      return 1
+    fi
+  fi
+  if ! tar -tzf "${tmp}" >/dev/null 2>&1; then
+    rm -f "${tmp}"
+    return 1
+  fi
+  tar -C / -xzf "${tmp}" 2>/dev/null || { rm -f "${tmp}"; return 1; }
+  rm -f "${tmp}"
+  return 0
+}
+
+hm_backup_restore_webstack_from_archive() {
+  local domain="$1" remote_base="$2" web="${3:-}"
+  local did=0 path en link ver pool
+  [[ -n "${web}" ]] || web="${HM_SITE_WEBSERVER:-${WEBSERVER:-nginx}}"
+  case "${web}" in
+    apache2|httpd) web="apache" ;;
+  esac
+
+  if rclone cat "${remote_base}/meta.tar.gz" >/dev/null 2>&1 \
+      || { [[ "${remote_base}" == /* && -f "${remote_base}/meta.tar.gz" ]]; }; then
+    if hm_backup_restore_tar_to_root "${remote_base}/meta.tar.gz"; then
+      hm_ok "Odtworzono meta kreatora (manifest/.dbs/resources)."
+      did=1
+    else
+      hm_err "Rozpakowanie meta.tar.gz nieudane."
+      return 1
+    fi
+  fi
+
+  if rclone cat "${remote_base}/webserver.tar.gz" >/dev/null 2>&1 \
+      || { [[ "${remote_base}" == /* && -f "${remote_base}/webserver.tar.gz" ]]; }; then
+    if ! hm_backup_restore_tar_to_root "${remote_base}/webserver.tar.gz"; then
+      hm_err "Rozpakowanie webserver.tar.gz nieudane."
+      return 1
+    fi
+    # Odtwórz symlink sites-enabled gdy brak (tar mógł nie zachować linku)
+    if [[ "${web}" == "nginx" ]] && declare -F hm_site_web_conf_path >/dev/null 2>&1; then
+      path="$(hm_site_web_conf_path nginx "${domain}" 2>/dev/null || true)"
+      if [[ -n "${path}" && -f "${path}" ]] && declare -F hm_site_web_nginx_enable >/dev/null 2>&1; then
+        link="$(hm_site_web_nginx_enable "${domain}" "${path}" 2>/dev/null || true)"
+        [[ -n "${link}" ]] && hm_info "sites-enabled: ${link}"
+      fi
+    fi
+    if declare -F hm_site_web_validate >/dev/null 2>&1; then
+      if ! hm_site_web_validate "${web}"; then
+        hm_err "Walidacja ${web} nieudana po restore vhost — bez reload."
+        return 1
+      fi
+    fi
+    hm_ok "Odtworzono vhost ${web}."
+    did=1
+  fi
+
+  if rclone cat "${remote_base}/php-fpm.tar.gz" >/dev/null 2>&1 \
+      || { [[ "${remote_base}" == /* && -f "${remote_base}/php-fpm.tar.gz" ]]; }; then
+    if ! hm_backup_restore_tar_to_root "${remote_base}/php-fpm.tar.gz"; then
+      hm_err "Rozpakowanie php-fpm.tar.gz nieudane."
+      return 1
+    fi
+    ver="${HM_SITE_PHP:-}"
+    if [[ -z "${ver}" ]]; then
+      for pool in /etc/php/*/fpm/pool.d/"${domain}".conf; do
+        [[ -f "${pool}" ]] || continue
+        [[ "${pool}" =~ /php/([0-9]+\.[0-9]+)/ ]] && ver="${BASH_REMATCH[1]}"
+        break
+      done
+    fi
+    if [[ -n "${ver}" ]] && declare -F hm_pkg_php_fpm_check >/dev/null 2>&1; then
+      pool=""
+      if declare -F hm_pkg_php_pool_dir >/dev/null 2>&1; then
+        pool="$(hm_pkg_php_pool_dir "${ver}" 2>/dev/null || true)/${domain}.conf"
+      fi
+      [[ -z "${pool}" || ! -f "${pool}" ]] && pool="/etc/php/${ver}/fpm/pool.d/${domain}.conf"
+      if [[ -f "${pool}" ]] && ! hm_pkg_php_fpm_check "${ver}" "${pool}"; then
+        hm_err "php-fpm -t nieudane dla ${pool}."
+        return 1
+      fi
+    fi
+    hm_ok "Odtworzono pulę php-fpm${ver:+ ${ver}}."
+    did=1
+  fi
+
+  [[ "${did}" -eq 1 ]] || return 0
+  return 0
+}
+
+# Reload właściwy dla webservera ze snapshota (nie zawsze OLS).
+hm_backup_reload_webstack() {
+  local web="${1:-}" ver="${2:-}"
+  [[ -n "${web}" ]] || web="${HM_SITE_WEBSERVER:-${WEBSERVER:-}}"
+  case "${web}" in
+    apache2|httpd) web="apache" ;;
+  esac
+  case "${web}" in
+    nginx|apache)
+      if declare -F hm_site_web_reload >/dev/null 2>&1; then
+        hm_site_web_reload "${web}"
+        hm_ok "${web} reload OK."
+      else
+        hm_warn "Brak hm_site_web_reload — przeładuj ${web} ręcznie."
+      fi
+      ver="${ver:-${HM_SITE_PHP:-}}"
+      if [[ -n "${ver}" ]] && declare -F hm_site_php_fpm_reload >/dev/null 2>&1; then
+        hm_site_php_fpm_reload "${ver}" || true
+        hm_ok "php-fpm ${ver} reload OK."
+      fi
+      ;;
+    ols|openlitespeed|litespeed|"")
+      hm_backup_ols_reload
+      ;;
+    *)
+      hm_backup_ols_reload
+      ;;
+  esac
   return 0
 }
 
@@ -1451,12 +1659,26 @@ _hm_backup_restore_body() {
     return 1
   fi
 
-  local remote_base target_dir
+  local remote_base target_dir from_full=0
   remote_base="$(hm_backup_dest_site "${domain}" "${stamp}")"
   if ! rclone lsd "${remote_base}" >/dev/null 2>&1 && ! rclone ls "${remote_base}" >/dev/null 2>&1; then
     if [[ -z "$(rclone lsf "${remote_base}" 2>/dev/null | head -1)" ]]; then
-      hm_err "Snapshot nie istnieje: ${remote_base}"
-      return 1
+      # Fallback: full/<stamp>/sites/<domena>/
+      local full_site
+      if declare -F hm_backup_dest_full >/dev/null 2>&1; then
+        full_site="$(hm_backup_dest_full "${stamp}")/sites/${domain}"
+      else
+        full_site="$(hm_rclone_dest "full/${stamp}/sites/${domain}")"
+      fi
+      if rclone lsf "${full_site}" 2>/dev/null | head -1 | grep -q . \
+          || [[ "${full_site}" == /* && -d "${full_site}" ]]; then
+        remote_base="${full_site}"
+        from_full=1
+        hm_info "Używam snapshota z full/${stamp}/sites/${domain}"
+      else
+        hm_err "Snapshot nie istnieje: ${remote_base} (ani full/${stamp}/sites/${domain})"
+        return 1
+      fi
     fi
   fi
 
@@ -1503,6 +1725,7 @@ _hm_backup_restore_body() {
 
   local -a plan_steps=()
   local restore_ols=0
+  local restore_webstack=0
   local restore_unix=0
   local restore_db_acc=0
   local restore_ssl=0
@@ -1513,13 +1736,16 @@ _hm_backup_restore_body() {
   local files_collision=0
   local db_list=""
   local snap_type=""
+  local snap_web=""
   local created_target=0
   local man_json
   local unix_peek="" unix_name="" unix_shared=0 unix_prot=0 unix_uid="" unix_home=""
   local man_docroot=""
   man_json="$(hm_backup_cat_manifest "${remote_base}")"
   snap_type="$(hm_backup_json_str "${man_json}" "type")"
+  snap_web="$(hm_backup_json_str "${man_json}" "webserver")"
   man_docroot="$(hm_backup_json_str "${man_json}" "docroot")"
+  [[ -n "${snap_web}" ]] || snap_web="${HM_SITE_WEBSERVER:-${WEBSERVER:-}}"
 
   if [[ "${files_only}" -eq 0 ]] && {
        rclone cat "${remote_base}/unix-account.meta" >/dev/null 2>&1 \
@@ -1598,6 +1824,12 @@ _hm_backup_restore_body() {
       restore_ols=1
       plan_steps+=("Odtworzenie vhosta OLS (katalog ${OLS_VHOSTS:-vhosts}/${domain}, blok virtualhost + map w ${OLS_CONF:-httpd_config.conf})")
     fi
+    if rclone cat "${remote_base}/webserver.tar.gz" >/dev/null 2>&1 \
+      || rclone cat "${remote_base}/php-fpm.tar.gz" >/dev/null 2>&1 \
+      || rclone cat "${remote_base}/meta.tar.gz" >/dev/null 2>&1; then
+      restore_webstack=1
+      plan_steps+=("Odtworzenie konfiguracji ${snap_web:-nginx/apache}: webserver.tar.gz / php-fpm.tar.gz / meta.tar.gz (walidacja przed reload)")
+    fi
     if [[ "${restore_ssl}" -eq 1 ]]; then
       plan_steps+=("Odtworzenie SSL z ssl.tar.gz (symlinki live/ → archive/ zachowane)")
     fi
@@ -1659,7 +1891,18 @@ _hm_backup_restore_body() {
       plan_steps+=("Odtworzenie kont MySQL z db-accounts.sql (istniejące: bez DROP/CREATE; tylko GRANT-y snapshotu; nowe: CREATE + GRANTS)")
     fi
   fi
-  plan_steps+=("Przeładowanie OpenLiteSpeed (ols reload)")
+  case "${snap_web}" in
+    nginx|apache|apache2|httpd)
+      plan_steps+=("Przeładowanie ${snap_web} (+ php-fpm gdy pula odtworzona)")
+      ;;
+    *)
+      if [[ "${restore_webstack}" -eq 1 ]]; then
+        plan_steps+=("Przeładowanie webservera ze snapshota (${snap_web:-nginx})")
+      else
+        plan_steps+=("Przeładowanie OpenLiteSpeed (ols reload)")
+      fi
+      ;;
+  esac
 
   local _ps
   if [[ "${unix_collision}" -eq 1 && "${adopt_user}" -ne 1 ]]; then
@@ -1706,32 +1949,33 @@ _hm_backup_restore_body() {
     created_target=1
   fi
 
-  # Unix PRZED plikami — chown i SSH działają od razu po rozpakowaniu
-  if [[ "${db_only}" -eq 0 && "${restore_unix}" -eq 1 ]]; then
-    # shared/protected: funkcja sama pominie mutacje; exclusive+collision wymaga adopt (już sprawdzone)
-    local unix_home_arg="${target_dir}"
-    if [[ "${skip_unix_shared}" -eq 1 ]]; then
-      unix_home_arg=""
-    fi
-    if ! hm_backup_restore_unix_account "${remote_base}" "${unix_home_arg}" "${adopt_user}"; then
-      hm_err "Odtworzenie konta Unix nieudane / kolizja — przerywam restore (pliki/DB nietknięte)."
-      if [[ "${created_target}" -eq 1 ]]; then
-        rmdir "${target_dir}" 2>/dev/null || true
-      fi
-      return 1
-    fi
-  fi
-
+  # Pliki NAJPIERW (walidacja+staging) — Unix/cron dopiero po udanym rozpakowaniu
   if [[ "${db_only}" -eq 0 ]]; then
-    if ! hm_backup_restore_files "${remote_base}" "${target_dir}"; then
+    if ! hm_backup_restore_files "${remote_base}" "${target_dir}" "${overwrite_files}"; then
       if [[ "${created_target}" -eq 1 ]]; then
         rmdir "${target_dir}" 2>/dev/null || true
       fi
       return 1
+    fi
+    if [[ "${restore_unix}" -eq 1 ]]; then
+      local unix_home_arg="${target_dir}"
+      if [[ "${skip_unix_shared}" -eq 1 ]]; then
+        unix_home_arg=""
+      fi
+      if ! hm_backup_restore_unix_account "${remote_base}" "${unix_home_arg}" "${adopt_user}"; then
+        hm_err "Odtworzenie konta Unix nieudane / kolizja — pliki już odtworzone."
+        return 1
+      fi
     fi
     if [[ "${restore_ols}" -eq 1 ]]; then
       hm_backup_restore_ols_from_archive "${domain}" "${remote_base}" || {
         hm_err "Restore OLS nieudany — pliki/DB mogą być już odtworzone; dokończ vhost ręcznie."
+        return 1
+      }
+    fi
+    if [[ "${restore_webstack}" -eq 1 ]]; then
+      hm_backup_restore_webstack_from_archive "${domain}" "${remote_base}" "${snap_web}" || {
+        hm_err "Restore vhost/php-fpm/meta nieudany — pliki mogą być już odtworzone; dokończ konfigurację ręcznie."
         return 1
       }
     fi
@@ -1766,7 +2010,7 @@ _hm_backup_restore_body() {
     fi
   fi
 
-  hm_backup_ols_reload
+  hm_backup_reload_webstack "${snap_web}" "${HM_SITE_PHP:-}"
   hm_ok "Restore ${domain} (${stamp}) zakończony."
 }
 
@@ -1783,24 +2027,25 @@ hm_backup_restore() {
 
 # Odtwórz snapshot full/<stamp>/ — system-configs + databases + sites/* + db-accounts.
 hm_backup_restore_full() {
-  local stamp="" do_system=0 a
-  # flagi przed stampem: restore-full --system [stamp]
+  local stamp="" do_system=0 overwrite_db=0 a
   for a in "$@"; do
     case "${a}" in
       --system) do_system=1 ;;
+      --overwrite-db) overwrite_db=1 ;;
       --help|-h)
         cat <<'EOF'
-Użycie: backup restore-full [stamp] [--system]
+Użycie: backup restore-full [stamp] [--system] [--overwrite-db]
 
 Odtwarza snapshot full/: bazy + db-accounts.
+Bez --overwrite-db istniejące niepuste bazy są POMIJANE (jak backup restore).
 --system — dodatkowo rozpakuj system-configs.tar.gz(.enc) do /
 Bez stampu — najnowszy snapshot full/.
-Pliki stron (sites/<domena>/) NIE są rozpakowywane tu — użyj backup restore <domena>.
+Pliki stron: backup restore <domena> <stamp> (szuka też full/<stamp>/sites/<domena>).
 EOF
         return 0
         ;;
       -*)
-        hm_err "Nieznana flaga: ${a} (backup restore-full [stamp] [--system])"
+        hm_err "Nieznana flaga: ${a} (backup restore-full [stamp] [--system] [--overwrite-db])"
         return 1
         ;;
       *)
@@ -1844,9 +2089,9 @@ EOF
 
   local -a plan=(
     "Opcjonalnie: system-configs.tar.gz(.enc) → / (OSTROŻNIE — nadpisze /etc bez shadow; tylko z --system)"
-    "Import wszystkich baz z ${remote_base}/databases/*.sql.gz"
+    "Import baz z ${remote_base}/databases/*.sql.gz$([[ "${overwrite_db}" -eq 1 ]] && echo ' (--overwrite-db)' || echo ' — istniejące niepuste POMINIĘTE')"
     "Odtworzenie kont MySQL z db-accounts.sql(.enc) jeśli obecne"
-    "Listing sites/<domena>/ w snapshocie — BEZ rozpakowania plików (użyj: backup restore <domena>)"
+    "Listing sites/<domena>/ — pliki: backup restore <domena> ${stamp}"
   )
   if ! hm_confirm_plan_critical "full" \
     "backup restore-full — ${stamp}" \
@@ -1870,8 +2115,7 @@ EOF
     hm_info "Pomijam system-configs (dodaj --system aby zastosować)."
   fi
 
-  # Bazy
-  local f name cli sock_args=()
+  local f name cli sock_args=() db_tmp fail_n=0 skip_n=0 ok_n=0
   cli="$(hm_mysql_cli)" || { hm_err "Brak mysql."; return 1; }
   [[ -n "${MYSQL_SOCKET:-}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
   while IFS= read -r f; do
@@ -1879,20 +2123,56 @@ EOF
     name="${f%.sql.gz}"
     name="${name##*/}"
     hm_is_valid_db_name "${name}" || continue
+    if declare -F hm_backup_db_is_nonempty >/dev/null 2>&1 && hm_backup_db_is_nonempty "${name}"; then
+      if [[ "${overwrite_db}" -ne 1 ]]; then
+        hm_warn "Pomijam istniejącą niepustą bazę \`${name}\` (użyj --overwrite-db)."
+        skip_n=$((skip_n + 1))
+        continue
+      fi
+      hm_warn "Nadpisuję niepustą bazę \`${name}\` (--overwrite-db)."
+    fi
+    db_tmp="$(hm_mktemp .sql.gz)"
+    if ! hm_backup_r_cat "${remote_base}/databases/${name}.sql.gz" > "${db_tmp}" 2>/dev/null \
+        && ! rclone cat "${remote_base}/databases/${name}.sql.gz" > "${db_tmp}" 2>/dev/null; then
+      rm -f "${db_tmp}"
+      hm_err "Pobranie dumpa ${name} nieudane."
+      fail_n=$((fail_n + 1))
+      continue
+    fi
+    if ! gzip -t "${db_tmp}" 2>/dev/null; then
+      rm -f "${db_tmp}"
+      hm_err "Dump ${name}.sql.gz uszkodzony (gzip -t) — baza nietknięta."
+      fail_n=$((fail_n + 1))
+      continue
+    fi
     hm_info "Import DB ${name}…"
     "${cli}" "${sock_args[@]}" -e "CREATE DATABASE IF NOT EXISTS \`${name}\`;" 2>/dev/null || true
-    rclone cat "${remote_base}/databases/${name}.sql.gz" | gunzip -c | "${cli}" "${sock_args[@]}" "${name}" \
-      || hm_warn "Import ${name} nieudany."
+    if ! gunzip -c "${db_tmp}" 2>/dev/null | "${cli}" "${sock_args[@]}" "${name}" >/dev/null 2>&1; then
+      rm -f "${db_tmp}"
+      hm_err "Import ${name} nieudany."
+      fail_n=$((fail_n + 1))
+      continue
+    fi
+    rm -f "${db_tmp}"
+    ok_n=$((ok_n + 1))
+    hm_ok "DB ${name} OK."
   done < <(rclone lsf "${remote_base}/databases/" 2>/dev/null | grep '\.sql\.gz$' || true)
 
-  hm_backup_restore_db_accounts "${remote_base}" || hm_warn "db-accounts restore nieudany."
+  if ! hm_backup_restore_db_accounts "${remote_base}"; then
+    hm_warn "db-accounts restore nieudany."
+    fail_n=$((fail_n + 1))
+  fi
 
-  hm_info "Strony: użyj backup restore <domena> dla poszczególnych vhostów albo rozpakuj sites/<domena>/ ręcznie."
+  hm_info "Strony: backup restore <domena> ${stamp} (full/${stamp}/sites/<domena>)."
   local site
   while IFS= read -r site; do
     [[ -n "${site}" ]] || continue
     hm_info "  dostępne w snapshocie: sites/${site}/"
   done < <(rclone lsd "${remote_base}/sites/" 2>/dev/null | awk '{print $NF}' || true)
 
-  hm_ok "restore-full ${stamp} — bazy/konta zakończone (pliki stron: per-domena)."
+  if [[ "${fail_n}" -gt 0 ]]; then
+    hm_err "restore-full ${stamp}: ${fail_n} błąd(ów), ${ok_n} OK, ${skip_n} pominiętych."
+    return 1
+  fi
+  hm_ok "restore-full ${stamp} — bazy/konta zakończone (${ok_n} OK, ${skip_n} pominiętych; pliki: per-domena)."
 }

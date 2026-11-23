@@ -109,11 +109,12 @@ now="$(umask)"
 home="${HM_SITE_HOME_BASE}/app.example.pl"
 [[ -d "${home}/public_html" && -d "${home}/shared" && -d "${home}/logs" && -d "${home}/releases" && -d "${home}/tmp" ]] \
   && ok "layout" || bad "layout"
-grep -q "own 2750 app:www-data ${home}/public_html" "${HM_SITE_OWN_LOG}" \
-  && grep -q "own 2750 app:www-data ${home}/releases ${home}/shared" "${HM_SITE_OWN_LOG}" \
-  && grep -q "own 0700 app:www-data ${home}/tmp" "${HM_SITE_OWN_LOG}" \
+# app.example.pl → appexamp (alfanum całej domeny, max 8 — jak CyberPanel)
+grep -q "own 2750 appexamp:www-data ${home}/public_html" "${HM_SITE_OWN_LOG}" \
+  && grep -q "own 2750 appexamp:www-data ${home}/releases ${home}/shared" "${HM_SITE_OWN_LOG}" \
+  && grep -q "own 0700 appexamp:www-data ${home}/tmp" "${HM_SITE_OWN_LOG}" \
   && ok "layout-owner" || { bad "layout-owner"; cat "${HM_SITE_OWN_LOG}" >&2; }
-grep -q '^user=app$' "${home}/.config/hmtools/site.env" && grep -q '^runtime=php$' "${home}/.config/hmtools/site.env" \
+grep -q '^user=appexamp$' "${home}/.config/hmtools/site.env" && grep -q '^runtime=php$' "${home}/.config/hmtools/site.env" \
   && grep -q '^user_created=true$' "${home}/.config/hmtools/site.env" \
   && grep -q '^shared=false$' "${home}/.config/hmtools/site.env" \
   && ok "preset-runtime" || bad "preset-runtime"
@@ -237,6 +238,49 @@ if hm_del_user_may_remove; then ok "created-remove"; else bad "created-remove"; 
 hm_site_manifest_write s2.test "${only_user}" static nginx "${home_o}/shared/.env" www >/dev/null
 hm_del_apply_wizard_user
 if hm_del_user_may_remove; then bad "other-site-kept"; else ok "other-site-kept"; fi
+
+# --- kolizja skróconego usera shop2tes (shop2.test vs shop2.testing) ---
+export HM_SITE_MANIFEST_DIR="${root}/sites"
+mkdir -p "${HM_SITE_MANIFEST_DIR}"
+# shop2.test → shop2tes (8 znaków z całej domeny)
+got_u="$(hm_site_base_resolve_user shop2.test "")"
+[[ "${got_u}" == "shop2tes" ]] && ok "resolve-shop2tes" || bad "resolve-shop2tes (${got_u})"
+got_u2="$(hm_site_base_resolve_user shop2.testing "")"
+[[ "${got_u2}" == "shop2tes" ]] && ok "resolve-shop2testing-same" || bad "resolve-shop2testing-same (${got_u2})"
+printf 'shop2tes:x:1001:1001::/home/shop2.test:/usr/sbin/nologin\n' >> "${HM_SITE_PASSWD_FILE}"
+hm_site_manifest_write shop2.test shop2tes php nginx "${HM_SITE_HOME_BASE}/shop2.test/shared/.env" www >/dev/null
+printf 'mysql\tshop2tes_app\tshop2tes_app\t127.0.0.1\t3306\n' > "${HM_SITE_MANIFEST_DIR}/.shop2.test.dbs"
+unset HM_SITE_BASE_USER HM_SITE_BASE_DOMAIN HM_SITE_USER_CREATED HM_SITE_USER_SHARED
+if hm_site_base_check shop2.testing "" nologin static "" >/dev/null 2>"${root}/collision.err"; then
+  if [[ "${HM_SITE_BASE_USER}" != "shop2tes" ]]; then
+    ok "short-user-collision-unique (${HM_SITE_BASE_USER})"
+  else
+    bad "short-user-collision-still-shop2tes"
+  fi
+else
+  grep -qi 'kolizja\|używa' "${root}/collision.err" && ok "short-user-collision-refuse" || bad "short-user-collision-refuse"
+fi
+
+# shellcheck disable=SC1091
+source lib/site/db.sh
+hm_mysql_db_exists() { [[ "$1" == "shop2tes_app" ]]; }
+hm_mysql_create() { return 1; }
+hm_site_db_ledger_add() { :; }
+hm_site_manifest_add_db() {
+  local d="$1" _t="$2" name="$3"
+  printf 'mysql\t%s\t%s\t127.0.0.1\t3306\n' "${name}" "${name}" >> "${HM_SITE_MANIFEST_DIR}/.${d}.dbs"
+}
+if hm_site_mysql_provision shop2.testing shop2tes_app shop2tes_app >/dev/null 2>&1; then
+  bad "mysql-foreign-refuse"
+else
+  ok "mysql-foreign-refuse"
+fi
+if [[ -f "${HM_SITE_MANIFEST_DIR}/.shop2.testing.dbs" ]] \
+  && grep -q 'shop2tes_app' "${HM_SITE_MANIFEST_DIR}/.shop2.testing.dbs" 2>/dev/null; then
+  bad "mysql-foreign-not-in-dbs"
+else
+  ok "mysql-foreign-not-in-dbs"
+fi
 
 if [[ "${fail}" -eq 0 ]]; then
   echo "ALL PASSED"

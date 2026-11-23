@@ -349,9 +349,12 @@ hm_site_base_resolve_user() {
     hm_sc_unix_name_for_domain "${domain}"
     return 0
   fi
-  user="${domain%%.*}"
-  user="$(printf '%s' "${user}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"
+  # Cała domena alfanum, max 8 (jak CyberPanel / hm_sc_unix_name_for_domain) —
+  # nie tylko label przed kropką (shop2.test i shop2.testing → shop2tes).
+  user="$(printf '%s' "${domain}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"
   user="${user:0:8}"
+  [[ -n "${user}" ]] || user="siteuser"
+  [[ "${user}" =~ ^[0-9] ]] && user="u${user:0:7}"
   printf '%s' "${user}"
 }
 
@@ -371,9 +374,51 @@ hm_site_base_parent_user() {
   hm_site_base_resolve_user "${parent}" ""
 }
 
+# Wolny wariant skróconego loginu (shop2tes → shop2t1 …) gdy auto-user zajęty.
+hm_site_base_unique_user() {
+  local base="$1" cand n=1
+  cand="${base}"
+  while hm_site_base_user_exists "${cand}"; do
+    cand="${base:0:6}${n}"
+    cand="$(printf '%s' "${cand}" | tr -cd 'a-z0-9_')"
+    n=$((n + 1))
+    if [[ "${n}" -gt 20 ]]; then
+      hm_err "Kolizja usera ${base} — nie udało się dobrać wolnej nazwy (użyj --user)."
+      return 1
+    fi
+  done
+  printf '%s' "${cand}"
+}
+
+# Czy login należy do innego serwisu (manifest *.json)?
+hm_site_base_user_owner_domain() {
+  local login="$1" skip="${2:-}" dir f u domain
+  if declare -F hm_site_manifest_dir >/dev/null 2>&1; then
+    dir="$(hm_site_manifest_dir)"
+  else
+    dir="${HM_SITE_MANIFEST_DIR:-/etc/hmtools/sites}"
+  fi
+  [[ -d "${dir}" ]] || return 1
+  for f in "${dir}"/*.json; do
+    [[ -f "${f}" && ! -L "${f}" ]] || continue
+    domain="$(basename "${f}" .json)"
+    [[ -n "${skip}" && "${domain}" == "${skip}" ]] && continue
+    if hm_have_cmd jq; then
+      u="$(jq -r '.user // empty' "${f}" 2>/dev/null || true)"
+    else
+      u="$(sed -n 's/.*"user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${f}" | head -1)"
+    fi
+    if [[ "${u}" == "${login}" ]]; then
+      printf '%s' "${domain}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 hm_site_base_check() {
-  local domain="$1" user="${2:-}" shell="${3:-nologin}" preset="${4:-}" child="${5:-}"
-  local puny runtime
+  local domain="$1" user_arg="${2:-}" shell="${3:-nologin}" preset="${4:-}" child="${5:-}"
+  local puny runtime user user_explicit=0 owner
   puny="$(hm_site_base_punycode "${domain}")" || return 1
   domain="${puny}"
   HM_SITE_BASE_DOMAIN="${domain}"
@@ -384,10 +429,12 @@ hm_site_base_check() {
     hm_err "Domena zajęta: ${domain}"
     return 1
   fi
-  if [[ -n "${child}" && -z "${user}" ]]; then
+  [[ -n "${user_arg}" ]] && user_explicit=1
+  if [[ -n "${child}" && -z "${user_arg}" ]]; then
     user="$(hm_site_base_parent_user "${child}")"
+    user_explicit=0
   else
-    user="$(hm_site_base_resolve_user "${domain}" "${user}")"
+    user="$(hm_site_base_resolve_user "${domain}" "${user_arg}")"
   fi
   HM_SITE_BASE_USER="${user}"
   hm_is_valid_unix_user "${user}" || { hm_err "Zła nazwa użytkownika: ${user}"; return 1; }
@@ -395,9 +442,28 @@ hm_site_base_check() {
     hm_err "Shell: nologin albo bash."
     return 1
   fi
-  # Istniejący user bez --child-of = tryb shared (bez useradd), nie błąd.
-  if [[ -z "${child}" ]] && hm_site_base_user_exists "${user}" && [[ "${HM_SITE_RESUME:-}" != "1" ]]; then
-    hm_info "User ${user} już jest — współdzielę konto (bez useradd)."
+  # Auto-user (bez --user / --child-of): kolizja skrótu → dobierz wolny wariant (nie przejmuj cudzego konta).
+  # Jawne --user przy istniejącym koncie = świadomy shared.
+  if [[ -z "${child}" && "${user_explicit}" -eq 0 ]] \
+      && hm_site_base_user_exists "${user}" && [[ "${HM_SITE_RESUME:-}" != "1" ]]; then
+    owner="$(hm_site_base_user_owner_domain "${user}" "${domain}" 2>/dev/null || true)"
+    local free
+    free="$(hm_site_base_unique_user "${user}")" || return 1
+    if [[ -n "${owner}" ]]; then
+      hm_warn "Kolizja skróconego usera ${user} (używa go serwis ${owner}) — używam ${free}."
+    else
+      hm_warn "Kolizja skróconego usera ${user} — używam ${free}."
+    fi
+    user="${free}"
+    HM_SITE_BASE_USER="${user}"
+  elif [[ -z "${child}" ]] && hm_site_base_user_exists "${user}" && [[ "${HM_SITE_RESUME:-}" != "1" ]]; then
+    # Jawne --user: współdzielenie (bez useradd)
+    owner="$(hm_site_base_user_owner_domain "${user}" "${domain}" 2>/dev/null || true)"
+    if [[ -n "${owner}" ]]; then
+      hm_info "User ${user} już jest (serwis ${owner}) — współdzielę konto (bez useradd)."
+    else
+      hm_info "User ${user} już jest — współdzielę konto (bez useradd)."
+    fi
   fi
   if [[ -n "${HM_SITE_DNS_A:-}" && -n "${HM_SITE_VPS_IP:-}" && "${HM_SITE_DNS_A}" != "${HM_SITE_VPS_IP}" ]]; then
     if [[ "${HM_SITE_SSL:-}" == "1" && "${HM_SITE_CONTINUE_WITHOUT_SSL:-}" != "1" ]]; then

@@ -314,6 +314,195 @@ hm_archive_write_ols_snippet() {
   ' "${conf}" > "${out_file}" 2>/dev/null || true
 }
 
+# Ścieżki vhost (nginx/apache) z resources.ndjson + fallback hm_site_web_conf_path.
+hm_archive_collect_web_paths() {
+  local domain="$1" web="${2:-}" res line path
+  [[ -n "${domain}" ]] || return 0
+  if declare -F hm_site_resources_path >/dev/null 2>&1; then
+    res="$(hm_site_resources_path "${domain}" 2>/dev/null || true)"
+    if [[ -n "${res}" && -f "${res}" && ! -L "${res}" ]]; then
+      while IFS= read -r line || [[ -n "${line}" ]]; do
+        [[ -n "${line}" ]] || continue
+        if declare -F hm_site_resource_read >/dev/null 2>&1; then
+          hm_site_resource_read "${line}" || continue
+          [[ "${HM_SITE_RES_KIND}" == "vhost" ]] || continue
+          path="${HM_SITE_RES_PATH}"
+        else
+          continue
+        fi
+        [[ -n "${path}" && -e "${path}" ]] || continue
+        printf '%s\n' "${path}"
+      done < "${res}"
+    fi
+  fi
+  [[ -n "${web}" ]] || web="${HM_DEL_WEB:-${HM_SITE_WEBSERVER:-${WEBSERVER:-}}}"
+  case "${web}" in
+    nginx|apache|apache2|httpd)
+      [[ "${web}" == "apache2" || "${web}" == "httpd" ]] && web="apache"
+      if declare -F hm_site_web_conf_path >/dev/null 2>&1; then
+        path="$(hm_site_web_conf_path "${web}" "${domain}" 2>/dev/null || true)"
+        if [[ -n "${path}" && -e "${path}" ]]; then
+          printf '%s\n' "${path}"
+        fi
+      fi
+      ;;
+  esac
+}
+
+# Pule php-fpm z resources + pool.d/<domain>.conf.
+hm_archive_collect_fpm_paths() {
+  local domain="$1" ver="${2:-}" res line path dir
+  [[ -n "${domain}" ]] || return 0
+  if declare -F hm_site_resources_path >/dev/null 2>&1; then
+    res="$(hm_site_resources_path "${domain}" 2>/dev/null || true)"
+    if [[ -n "${res}" && -f "${res}" && ! -L "${res}" ]]; then
+      while IFS= read -r line || [[ -n "${line}" ]]; do
+        [[ -n "${line}" ]] || continue
+        if declare -F hm_site_resource_read >/dev/null 2>&1; then
+          hm_site_resource_read "${line}" || continue
+          [[ "${HM_SITE_RES_KIND}" == "fpm" ]] || continue
+          path="${HM_SITE_RES_PATH}"
+        else
+          continue
+        fi
+        [[ -n "${path}" && -f "${path}" ]] || continue
+        printf '%s\n' "${path}"
+      done < "${res}"
+    fi
+  fi
+  [[ -n "${ver}" ]] || ver="${HM_SITE_PHP:-}"
+  if [[ -n "${ver}" ]] && declare -F hm_pkg_php_pool_dir >/dev/null 2>&1; then
+    dir="$(hm_pkg_php_pool_dir "${ver}" 2>/dev/null || true)"
+    if [[ -n "${dir}" && -f "${dir}/${domain}.conf" ]]; then
+      printf '%s\n' "${dir}/${domain}.conf"
+    fi
+  fi
+  # Heurystyka Debian bez znanej wersji
+  shopt -s nullglob
+  for path in /etc/php/*/fpm/pool.d/"${domain}".conf; do
+    [[ -f "${path}" ]] && printf '%s\n' "${path}"
+  done
+  shopt -u nullglob
+}
+
+# Spakuj ścieżki absolutne do tar.gz (ścieżki względne od /).
+hm_archive_tar_abs_paths() {
+  local out_tar="$1"
+  shift
+  local -a rels=()
+  local p seen="|"
+  [[ "$#" -gt 0 ]] || return 1
+  for p in "$@"; do
+    [[ -n "${p}" && "${p}" == /* && -e "${p}" ]] || continue
+    [[ "${seen}" == *"|${p}|"* ]] && continue
+    seen="${seen}${p}|"
+    rels+=("${p#/}")
+  done
+  [[ "${#rels[@]}" -gt 0 ]] || return 1
+  tar -C / -czf "${out_tar}" "${rels[@]}" 2>/dev/null
+}
+
+# Meta kreatora: .json / .dbs / resources.ndjson (+ logrotate z resources).
+hm_archive_pack_site_meta() {
+  local domain="$1" out_tar="$2" dir man dbs res lr
+  local -a files=()
+  if declare -F hm_site_manifest_dir >/dev/null 2>&1; then
+    dir="$(hm_site_manifest_dir)"
+  else
+    dir="${HM_SITE_MANIFEST_DIR:-/etc/hmtools/sites}"
+  fi
+  man="${dir}/${domain}.json"
+  dbs="${dir}/.${domain}.dbs"
+  res="${dir}/${domain}.resources.ndjson"
+  [[ -f "${man}" && ! -L "${man}" ]] && files+=("${man}")
+  [[ -f "${dbs}" && ! -L "${dbs}" ]] && files+=("${dbs}")
+  [[ -f "${res}" && ! -L "${res}" ]] && files+=("${res}")
+  if [[ -f "${res}" && ! -L "${res}" ]]; then
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+      hm_site_resource_read "${line}" 2>/dev/null || continue
+      [[ "${HM_SITE_RES_KIND}" == "logrotate" ]] || continue
+      lr="${HM_SITE_RES_PATH}"
+      [[ -n "${lr}" && -f "${lr}" && ! -L "${lr}" ]] && files+=("${lr}")
+    done < "${res}"
+  fi
+  [[ "${#files[@]}" -gt 0 ]] || return 1
+  hm_archive_tar_abs_paths "${out_tar}" "${files[@]}"
+}
+
+# Upload webserver.tar.gz + php-fpm.tar.gz + meta.tar.gz (nginx/apache; OLS ma osobną ścieżkę).
+hm_archive_upload_webstack() {
+  local domain="$1" remote_base="$2"
+  local web="${HM_DEL_WEB:-${HM_SITE_WEBSERVER:-${WEBSERVER:-}}}"
+  local tarf path
+  local -a webs=() fpms=()
+  local seen="|"
+
+  case "${web}" in
+    ols|openlitespeed|litespeed) return 0 ;;
+  esac
+
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    [[ "${seen}" == *"|${path}|"* ]] && continue
+    seen="${seen}${path}|"
+    webs+=("${path}")
+  done < <(hm_archive_collect_web_paths "${domain}" "${web}" | sort -u)
+
+  seen="|"
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    [[ "${seen}" == *"|${path}|"* ]] && continue
+    seen="${seen}${path}|"
+    fpms+=("${path}")
+  done < <(hm_archive_collect_fpm_paths "${domain}" "${HM_SITE_PHP:-}" | sort -u)
+
+  if [[ "${#webs[@]}" -gt 0 ]]; then
+    tarf="$(hm_mktemp .tar.gz)"
+    if hm_archive_tar_abs_paths "${tarf}" "${webs[@]}"; then
+      hm_rclone_copyto "${tarf}" "${remote_base}/webserver.tar.gz" || {
+        rm -f "${tarf}"
+        hm_archive_abort "Upload webserver.tar.gz nieudany. Nic nie usunięto z VPS." "${remote_base}"
+        return 1
+      }
+      hm_ok "Zarchiwizowano vhost (${#webs[@]} plik(ów))."
+    else
+      hm_warn "Nie spakowano vhostów nginx/apache."
+    fi
+    rm -f "${tarf}"
+  else
+    case "${web}" in
+      nginx|apache|apache2|httpd)
+        hm_warn "Brak plików vhost ${web} dla ${domain} — archive bez webserver.tar.gz."
+        ;;
+    esac
+  fi
+
+  if [[ "${#fpms[@]}" -gt 0 ]]; then
+    tarf="$(hm_mktemp .tar.gz)"
+    if hm_archive_tar_abs_paths "${tarf}" "${fpms[@]}"; then
+      hm_rclone_copyto "${tarf}" "${remote_base}/php-fpm.tar.gz" || {
+        rm -f "${tarf}"
+        hm_archive_abort "Upload php-fpm.tar.gz nieudany. Nic nie usunięto z VPS." "${remote_base}"
+        return 1
+      }
+      hm_ok "Zarchiwizowano php-fpm (${#fpms[@]} plik(ów))."
+    fi
+    rm -f "${tarf}"
+  fi
+
+  tarf="$(hm_mktemp .tar.gz)"
+  if hm_archive_pack_site_meta "${domain}" "${tarf}"; then
+    hm_rclone_copyto "${tarf}" "${remote_base}/meta.tar.gz" || {
+      rm -f "${tarf}"
+      hm_archive_abort "Upload meta.tar.gz nieudany. Nic nie usunięto z VPS." "${remote_base}"
+      return 1
+    }
+    hm_ok "Zarchiwizowano meta kreatora (manifest/.dbs/resources)."
+  fi
+  rm -f "${tarf}"
+  return 0
+}
+
 hm_archive_pack_ssl() {
   local domain="$1"
   local out_tar="$2"
@@ -915,6 +1104,11 @@ _hm_backup_archive_site_body() {
   fi
   rm -f "${snip}"
 
+  # nginx/apache vhost + php-fpm + meta kreatora (OLS ma osobną ścieżkę powyżej)
+  if ! hm_archive_upload_webstack "${domain}" "${remote_base}"; then
+    return 1
+  fi
+
   # SSL (symlinki live/ zachowane)
   local ssl_tar
   ssl_tar="$(hm_mktemp .tar.gz)"
@@ -1018,7 +1212,8 @@ _hm_backup_archive_site_body() {
 
   local manifest
   manifest="$(hm_mktemp .json)"
-  local _j_domain _j_host _j_root _j_doc _j_user _j_php _j_remote _j_uhome
+  local _j_domain _j_host _j_root _j_doc _j_user _j_php _j_remote _j_uhome _j_web
+  local _has_web=0 _has_fpm=0 _has_meta=0
   _j_domain="$(hm_json_escape_str "${domain}")"
   _j_host="$(hm_json_escape_str "${BACKUP_HOST_LABEL:-}")"
   _j_root="$(hm_json_escape_str "${backup_root}")"
@@ -1026,7 +1221,11 @@ _hm_backup_archive_site_body() {
   _j_user="$(hm_json_escape_str "${HM_DEL_USER}")"
   _j_uhome="$(hm_json_escape_str "$(getent passwd "${HM_DEL_USER}" 2>/dev/null | cut -d: -f6 || true)")"
   _j_php="$(hm_json_escape_str "${HM_SITE_PHP:-}")"
+  _j_web="$(hm_json_escape_str "${HM_DEL_WEB:-${HM_SITE_WEBSERVER:-${WEBSERVER:-}}}")"
   _j_remote="$(hm_json_escape_str "${remote_base}")"
+  hm_rclone_file_nonempty "${remote_base}/webserver.tar.gz" 2>/dev/null && _has_web=1
+  hm_rclone_file_nonempty "${remote_base}/php-fpm.tar.gz" 2>/dev/null && _has_fpm=1
+  hm_rclone_file_nonempty "${remote_base}/meta.tar.gz" 2>/dev/null && _has_meta=1
   cat > "${manifest}" <<EOF
 {
   "type": "archive",
@@ -1039,6 +1238,10 @@ _hm_backup_archive_site_body() {
   "site_user": "${_j_user}",
   "unix_home": "${_j_uhome}",
   "php": "${_j_php}",
+  "webserver": "${_j_web}",
+  "has_webserver_tar": ${_has_web},
+  "has_php_fpm_tar": ${_has_fpm},
+  "has_meta_tar": ${_has_meta},
   "databases": [${db_json}],
   "databases_from_site_config": [${dbs_cfg_json}],
   "db_users": [${dbu_json}],

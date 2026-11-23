@@ -264,14 +264,80 @@ hm_site_db_ensure_redis() {
   hm_site_db_offer_install "Redis" "${yes}" redis-server redis || return 1
 }
 
+# Czy dbname jest już w .{domena}.dbs / manifeście tej domeny? (resume)
+hm_site_mysql_db_in_own_manifest() {
+  local domain="$1" dbname="$2" dir dbfile man
+  if declare -F hm_site_manifest_dir >/dev/null 2>&1; then
+    dir="$(hm_site_manifest_dir)"
+  else
+    dir="${HM_SITE_MANIFEST_DIR:-/etc/hmtools/sites}"
+  fi
+  dbfile="${dir}/.${domain}.dbs"
+  if [[ -f "${dbfile}" && ! -L "${dbfile}" ]]; then
+    while IFS=$'\t' read -r _typ name _ || [[ -n "${_typ:-}" ]]; do
+      [[ "${name}" == "${dbname}" ]] && return 0
+    done < "${dbfile}"
+  fi
+  man="${dir}/${domain}.json"
+  if [[ -f "${man}" && ! -L "${man}" ]]; then
+    if hm_have_cmd jq; then
+      jq -e --arg n "${dbname}" '.databases[]? | select(.name==$n)' "${man}" >/dev/null 2>&1 && return 0
+    elif grep -q "\"name\":\"${dbname}\"" "${man}" 2>/dev/null; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
+# Czy dbname należy do innego serwisu (cudzy .dbs)?
+hm_site_mysql_db_owned_elsewhere() {
+  local domain="$1" dbname="$2" dir f other typ name
+  if declare -F hm_site_manifest_dir >/dev/null 2>&1; then
+    dir="$(hm_site_manifest_dir)"
+  else
+    dir="${HM_SITE_MANIFEST_DIR:-/etc/hmtools/sites}"
+  fi
+  [[ -d "${dir}" ]] || return 1
+  for f in "${dir}"/.*.dbs; do
+    [[ -f "${f}" && ! -L "${f}" ]] || continue
+    other="$(basename "${f}")"
+    other="${other#.}"
+    other="${other%.dbs}"
+    [[ "${other}" != "${domain}" ]] || continue
+    while IFS=$'\t' read -r typ name _ || [[ -n "${typ:-}" ]]; do
+      [[ "${name}" == "${dbname}" ]] || continue
+      case "${typ}" in
+        mysql|mariadb|"") printf '%s' "${other}"; return 0 ;;
+      esac
+    done < "${f}"
+  done
+  return 1
+}
+
 hm_site_mysql_provision() {
   local domain="$1" dbname="$2" dbuser="$3"
-  local prev="${HM_MYSQL_CREATE_QUIET:-}"
-  # Resume / ponowny krok: baza już jest → pomijam (idempotencja), bez nowego undo.
+  local prev="${HM_MYSQL_CREATE_QUIET:-}" other
+  # Resume tej samej domeny: baza już w manifeście → pomijam (idempotencja).
   if declare -F hm_mysql_db_exists >/dev/null 2>&1 && hm_mysql_db_exists "${dbname}"; then
-    hm_info "pomijam — już jest (mysql ${dbname})"
-    hm_site_manifest_add_db "${domain}" mysql "${dbname}" "${dbuser}" "127.0.0.1" "3306" || true
-    return 0
+    if hm_site_mysql_db_in_own_manifest "${domain}" "${dbname}"; then
+      hm_info "pomijam — już jest (mysql ${dbname})"
+      hm_site_manifest_add_db "${domain}" mysql "${dbname}" "${dbuser}" "127.0.0.1" "3306" || true
+      return 0
+    fi
+    other="$(hm_site_mysql_db_owned_elsewhere "${domain}" "${dbname}" 2>/dev/null || true)"
+    if [[ -n "${other}" ]]; then
+      hm_err "Odmowa: baza ${dbname} należy do serwisu ${other} — nie dopisuję do ${domain}."
+      hm_err "Użyj innej nazwy (--db-name) albo usuń kolizję."
+      return 1
+    fi
+    # Istnieje poza manifestami — też odmowa (nie przejmuj cudzej bazy)
+    hm_err "Odmowa: baza ${dbname} już istnieje (nie w manifeście ${domain}). Podaj wolną nazwę."
+    return 1
+  fi
+  other="$(hm_site_mysql_db_owned_elsewhere "${domain}" "${dbname}" 2>/dev/null || true)"
+  if [[ -n "${other}" ]]; then
+    hm_err "Odmowa: --db-name/${dbname} należy do serwisu ${other}."
+    return 1
   fi
   HM_MYSQL_CREATE_QUIET=1
   HM_MYSQL_CREATE_PASS=""

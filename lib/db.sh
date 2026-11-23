@@ -182,7 +182,7 @@ hm_manifest_dbs_for_site() {
   if declare -F hm_site_manifest_dir >/dev/null 2>&1; then
     dir="$(hm_site_manifest_dir)"
   else
-    dir="${HMTOOLS_CONF_DIR:-/etc/hmtools}/sites"
+    dir="${HM_SITE_MANIFEST_DIR:-${HMTOOLS_CONF_DIR:-/etc/hmtools}/sites}"
   fi
   dbfile="${dir}/.${domain}.dbs"
   if [[ -f "${dbfile}" && ! -L "${dbfile}" ]]; then

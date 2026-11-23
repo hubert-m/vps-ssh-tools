@@ -250,6 +250,14 @@ hm_del_db_owned_by_other() {
   local dbname="$1" skip_domain="$2"
   local q other
   hm_is_valid_db_name "${dbname}" || return 1
+  # Cudzy .{domena}.dbs / manifest kreatora (panel-agnostic)
+  if declare -F hm_site_mysql_db_owned_elsewhere >/dev/null 2>&1; then
+    other="$(hm_site_mysql_db_owned_elsewhere "${skip_domain}" "${dbname}" 2>/dev/null || true)"
+    if [[ -n "${other}" ]]; then
+      hm_del_is_nested_child "${other}" 2>/dev/null && return 1
+      return 0
+    fi
+  fi
   q="$(hm_sql_quote "${dbname}")"
   if [[ "${PANEL:-}" == "cyberpanel" ]]; then
     other="$(hm_mysql_exec cyberpanel -e "
@@ -277,7 +285,7 @@ LIMIT 1;
     while IFS=$'\t' read -r name _u _s origin; do
       [[ "${name}" == "${dbname}" ]] || continue
       case "${origin}" in
-        confirmed|user-match|wp-config|.env|.env-url|configuration.php) return 0 ;;
+        confirmed|user-match|wp-config|.env|.env-url|configuration.php|manifest|manifest.dbs|manifest.json) return 0 ;;
       esac
     done < <(hm_dbs_for_site "${d}" "${doc}" "${root}" "${user}" 2>/dev/null || true)
   done
