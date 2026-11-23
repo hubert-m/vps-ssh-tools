@@ -3,7 +3,7 @@
 
 _hm_cmd_help clone <<'EOF'
 Użycie (globalnie):
-  clone <źródło> <cel> [--db-only|--files-only] [--no-index] [--basic-auth] [--secret-file plik] [--yes]
+  clone <źródło> <cel> [--db-only|--files-only] [--no-index] [--basic-auth] [--secret-file plik] [--overwrite] [--yes]
   clone help
 
 Użycie (kontekst [domena]>):
@@ -401,7 +401,7 @@ hm_clone_ensure_target_site() {
 hm_clone_run() {
   local src="$1" dst="$2"
   shift 2 || true
-  local files=1 db=1 noindex=0 basic=0 yes=0 a secret_file=""
+  local files=1 db=1 noindex=0 basic=0 yes=0 overwrite=0 a secret_file=""
   # staging.* domyślnie noindex
   hm_clone_is_staging_name "${src}" "${dst}" && noindex=1
 
@@ -412,6 +412,7 @@ hm_clone_run() {
       --files-only) files=1; db=0 ;;
       --no-index) noindex=1 ;;
       --basic-auth) basic=1 ;;
+      --overwrite) overwrite=1 ;;
       --secret-file)
         secret_file="${1:-}"
         shift || true
@@ -446,9 +447,33 @@ hm_clone_run() {
   fi
   hm_site_context_pop
 
+  local dst_exists=0 dst_marker_src="" dst_is_own_clone=0
+  if hm_find_site_by_arg_exact "${dst}" >/dev/null 2>&1; then
+    dst_exists=1
+    hm_site_context_push "${dst}" 2>/dev/null || true
+    dst_marker_src="$(hm_clone_read_prod_from_marker "${HM_SITE_ROOT:-}" 2>/dev/null || true)"
+    hm_site_context_pop 2>/dev/null || true
+    if [[ -n "${dst_marker_src}" && "${dst_marker_src}" == "${src}" ]]; then
+      dst_is_own_clone=1
+    fi
+    # staging.<prod> uznaj za własny staging źródła (nawet bez markera — pierwsze odświeżenie)
+    if hm_clone_is_staging_name "${src}" "${dst}"; then
+      dst_is_own_clone=1
+    fi
+    if [[ "${dst_is_own_clone}" -eq 0 && "${overwrite}" -ne 1 ]]; then
+      hm_err "Cel ${dst} już istnieje i nie jest klonem/stagingiem źródła ${src}."
+      hm_err "Odmowa rsync --delete (ochrona produkcji). Użyj --overwrite + potwierdzenie krytyczne."
+      return 1
+    fi
+  fi
+
   local -a plan=(
-    "Cel: ${dst} (utworzenie jeśli brak — child gdy staging.*)"
+    "Cel: ${dst}$([[ "${dst_exists}" -eq 1 ]] && echo ' (ISTNIEJE)' || echo ' (utworzenie jeśli brak — child gdy staging.*)')"
   )
+  if [[ "${dst_exists}" -eq 1 && "${files}" -eq 1 ]]; then
+    plan+=("UWAGA: rsync --delete zastąpi zawartość docroot celu ${dst}")
+    plan+=("Snapshot lokalny celu przed rsync → $(hm_clone_snap_root "${dst}")/")
+  fi
   [[ "${files}" -eq 1 ]] && plan+=("rsync docroot ${src} → ${dst} (excludes BACKUP_EXCLUDES)")
   if [[ "${db}" -eq 1 ]]; then
     plan+=("Dump ${src_db} → nowa baza + user dla ${dst}")
@@ -458,10 +483,16 @@ hm_clone_run() {
   [[ "${basic}" -eq 1 ]] && plan+=("HTTP basic auth (.htaccess + htpasswd)")
   plan+=("chown właściciela docelowego (grupa WWW na public_html)")
 
-  if [[ "${yes}" -eq 1 ]]; then
-    hm_confirm_plan "clone ${src} → ${dst}" "Produkcja ${src} nie jest nadpisywana." --yes "${plan[@]}" || return 1
+  local warn_msg="Źródło ${src} nie jest nadpisywane."
+  if [[ "${dst_exists}" -eq 1 && "${files}" -eq 1 ]]; then
+    warn_msg="Cel ${dst} ZOSTANIE NADPISANY (rsync --delete). ${warn_msg}"
+    # --yes nie pomija krytycznego potwierdzenia bez --overwrite (już wymuszone wyżej)
+    HM_CONFIRM_CRITICAL_NOUN="ej domeny docelowej" \
+      hm_confirm_plan_critical "${dst}" "${warn_msg}" "${plan[@]}" || return 1
+  elif [[ "${yes}" -eq 1 ]]; then
+    hm_confirm_plan "clone ${src} → ${dst}" "${warn_msg}" --yes "${plan[@]}" || return 1
   else
-    hm_confirm_plan "clone ${src} → ${dst}" "Produkcja ${src} nie jest nadpisywana." "${plan[@]}" || return 1
+    hm_confirm_plan "clone ${src} → ${dst}" "${warn_msg}" "${plan[@]}" || return 1
   fi
 
   hm_clone_ensure_target_site "${src}" "${dst}" "${src_php}" || return 1
@@ -479,8 +510,20 @@ hm_clone_run() {
     return 1
   }
 
+  local dst_snap=""
+  if [[ "${dst_exists}" -eq 1 && "${files}" -eq 1 ]]; then
+    dst_snap="$(hm_clone_snap_prod "${dst}")" || {
+      hm_err "Snapshot celu ${dst} nieudany — przerywam (bez rsync)."
+      return 1
+    }
+    hm_ok "Snapshot celu przed nadpisaniem: $(hm_clone_snap_root "${dst}")/${dst_snap}"
+  fi
+
   if [[ "${files}" -eq 1 ]]; then
-    hm_clone_rsync_docroot "${src_doc}" "${dst_doc}" || return 1
+    hm_clone_rsync_docroot "${src_doc}" "${dst_doc}" || {
+      hm_err "rsync nieudany.${dst_snap:+ Snapshot celu: $(hm_clone_snap_root "${dst}")/${dst_snap}}"
+      return 1
+    }
   fi
 
   local new_db="" new_user="" passfile=""

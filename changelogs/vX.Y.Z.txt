@@ -4,3 +4,11 @@
 - Fix: test-memory — `HM_MEM_VIRT=none` (hermetycznie; bez `systemd-detect-virt` w kontenerze)
 - Fix: test-site-wizard-secrets — `lib-test-site.sh` + mocki Node (index/nvm); `site-new-rc` PASS
 - Fix: test-site-wizard-fixtures — snap `nginx-proxy` z domyślnym aliasem `www.app.example`
+- Fix: backup prune — `partial` z payloadem pod keep_min; błąd odczytu manifestu ⇒ pomiń domenę; `type=archive` bez auto-purge; test-backup-prune-safety
+- Fix: archive — weryfikacja SHA256 + gzip/tar przed Fazą II; tar archive bez `--ignore-failed-read`/rc=1; artefakty restore bez cichego warn; test-archive-verify-integrity
+- Fix: SECURITY restore — authorized_keys bez follow symlinków `~/.ssh`; `--files-only` nie rusza konta Unix; test-restore-ssh-symlink
+- Fix: `hm_dbs_for_site` — bez prefix-match short*; źródło `.dbs`/manifest; restore odmawia cudzej DB (panel-agnostic); `--force-foreign-db`; test-backup-db-ownership
+- Fix: archive — bazy z `.{domena}.dbs` zawsze w dumpie; guard DROP⊆dump; odmowa PG bez pg_dump; sha256 w raporcie uploadu; test-archive-wizard-db
+- Fix: SECURITY users del — UID_MIN/konta usług/właściciele serwisów; `userdel -r` tylko dla czystego `/home/<login>`; test-users-del-protect
+- Fix: clone — odmowa nadpisania istniejącego celu bez `--overwrite`; confirm_critical + snapshot; test-clone-staging
+- Fix: mysql default DB — bez prefix-match (wspólne `hm_dbs_for_site`); test-mysql-default-db

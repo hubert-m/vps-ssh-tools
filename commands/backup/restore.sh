@@ -222,12 +222,74 @@ hm_backup_snap_site_config_dbs() {
   fi
 }
 
+# Czy dbname jest w manifeście/heurystyce plików innego serwisu? (0=tak→cudza)
+hm_backup_db_owned_by_other_manifest() {
+  local dbname="$1" skip_domain="$2"
+  local dir f other typ name
+  if declare -F hm_site_manifest_dir >/dev/null 2>&1; then
+    dir="$(hm_site_manifest_dir)"
+  else
+    dir="${HM_SITE_MANIFEST_DIR:-/etc/hmtools/sites}"
+  fi
+  [[ -d "${dir}" ]] || return 1
+  for f in "${dir}"/.*.dbs; do
+    [[ -f "${f}" && ! -L "${f}" ]] || continue
+    other="$(basename "${f}")"
+    other="${other#.}"
+    other="${other%.dbs}"
+    [[ -n "${other}" && "${other}" != "${skip_domain}" ]] || continue
+    while IFS=$'\t' read -r typ name _ || [[ -n "${typ:-}" ]]; do
+      [[ "${name}" == "${dbname}" ]] || continue
+      case "${typ}" in
+        mysql|mariadb|"") return 0 ;;
+      esac
+    done < "${f}"
+  done
+  # .env / wp-config innych żywych domen (gdy brak .dbs)
+  local row root doc hname
+  if declare -F hm_discover_sites >/dev/null 2>&1; then
+    hm_discover_sites >/dev/null 2>&1 || true
+  fi
+  for other in "${HM_SITES_LIST[@]:-}"; do
+    [[ -n "${other}" && "${other}" != "${skip_domain}" ]] || continue
+    row="$(hm_resolve_site_paths "${other}" 2>/dev/null || true)"
+    [[ -n "${row}" ]] || continue
+    IFS=$'\t' read -r _ root doc _ _ _ <<<"${row}"
+    if declare -F hm_tsv_unfield >/dev/null 2>&1; then
+      root="$(hm_tsv_unfield "${root}")"
+      doc="$(hm_tsv_unfield "${doc}")"
+    fi
+    [[ -z "${doc}" || ! -d "${doc}" ]] && doc="${root}"
+    [[ -n "${doc}" && -d "${doc}" ]] || continue
+    while IFS=$'\t' read -r hname _; do
+      [[ "${hname}" == "${dbname}" ]] && return 0
+    done < <(
+      {
+        hm_extract_db_from_file "${doc}/wp-config.php" wp
+        hm_extract_db_from_file "${doc}/.env" env
+        hm_extract_db_from_file "${doc}/configuration.php" joomla
+      } 2>/dev/null | awk -F'\t' 'NF && !seen[$1]++ { print $1 "\t" $2 }'
+    )
+  done
+  return 1
+}
+
 # return 0 = odmowa (cudza DB); return 1 = OK do importu
 # opcjonalnie $3 = remote_base snapshota (wyjątek child: DB z wp-config w archiwum)
+# HM_BACKUP_FORCE_FOREIGN_DB=1 → pozwól (jawne --force-foreign-db)
 hm_backup_db_belongs_to_other_domain() {
   local dbname="$1" skip_domain="$2" remote_base="${3:-}" other q row root doc hname horigin is_child
   [[ -n "${dbname}" && -n "${skip_domain}" ]] || return 1
   hm_is_valid_db_name "${dbname}" || return 1
+  if [[ "${HM_BACKUP_FORCE_FOREIGN_DB:-0}" == "1" ]]; then
+    return 1
+  fi
+
+  # Manifesty / .env innych serwisów — na wszystkich panelach (nie tylko CyberPanel)
+  if hm_backup_db_owned_by_other_manifest "${dbname}" "${skip_domain}"; then
+    return 0
+  fi
+
   [[ "${PANEL:-}" == "cyberpanel" ]] || return 1
   q="$(hm_sql_quote "${dbname}")"
   other="$(hm_mysql_exec cyberpanel -e "
@@ -320,7 +382,7 @@ hm_backup_restore_dbs() {
     hm_is_valid_db_name "${db}" || { hm_warn "Pominięto nieprawidłową nazwę bazy: ${db}"; continue; }
     di=$((di + 1))
     if [[ -n "${for_domain}" ]] && hm_backup_db_belongs_to_other_domain "${db}" "${for_domain}" "${remote_base}"; then
-      hm_err "ODMOWA: baza \`${db}\` należy w CyberPanel do innej żywej domeny niż ${for_domain} — nie nadpisuję (nawet z --overwrite-db)."
+      hm_err "ODMOWA: baza \`${db}\` należy do innej żywej domeny niż ${for_domain} — nie nadpisuję (nawet z --overwrite-db; użyj --force-foreign-db tylko świadomie)."
       return 1
     fi
     if hm_backup_db_is_nonempty "${db}"; then
@@ -450,6 +512,116 @@ hm_backup_peek_unix_meta() {
   done < "${meta_tmp}"
   rm -f "${meta_tmp}"
   printf '%s|%s|%s|%s|%s\n' "${name}" "${shared:-0}" "${protected:-0}" "${uid}" "${home}"
+}
+
+# Bezpieczny zapis authorized_keys: bez podążania za symlinkiem ~/.ssh / pliku;
+# home musi być zwykłym katalogiem usera; symlinki usuwane i zastępowane.
+hm_backup_restore_authorized_keys_safe() {
+  local user="$1" group="$2" home="$3" keys_src="$4"
+  local sshdir keysf home_rp ssh_rp owner merged kline
+  [[ -n "${user}" && -n "${home}" && -f "${keys_src}" ]] || return 1
+
+  if [[ -L "${home}" ]]; then
+    hm_err "Odmowa: home ${home} jest symlinkiem (ryzyko eskalacji)."
+    return 1
+  fi
+  [[ -d "${home}" ]] || {
+    hm_err "Odmowa: home ${home} nie jest katalogiem."
+    return 1
+  }
+  owner="$(stat -c '%U' "${home}" 2>/dev/null || stat -f '%Su' "${home}" 2>/dev/null || true)"
+  if [[ -n "${owner}" && "${owner}" != "${user}" ]]; then
+    hm_err "Odmowa: home ${home} należy do „${owner}”, nie „${user}”."
+    return 1
+  fi
+  home_rp="$(realpath -m "${home}" 2>/dev/null || echo "${home}")"
+  home_rp="${home_rp%/}"
+
+  sshdir="${home}/.ssh"
+  keysf="${sshdir}/authorized_keys"
+
+  # Symlink katalogu/pliku → usuń (nie rozwijaj) i zbuduj od zera
+  if [[ -L "${sshdir}" ]]; then
+    hm_warn "Usuwam symlink ${sshdir} (zapis kluczy tylko do zwykłego katalogu usera)."
+    rm -f "${sshdir}"
+  fi
+  if [[ -e "${sshdir}" && ! -d "${sshdir}" ]]; then
+    hm_err "Odmowa: ${sshdir} istnieje i nie jest katalogiem."
+    return 1
+  fi
+  if [[ ! -d "${sshdir}" ]]; then
+    if hm_have_cmd install; then
+      install -d -o "${user}" -g "${group:-${user}}" -m 700 "${sshdir}" || return 1
+    else
+      mkdir -m 700 "${sshdir}" || return 1
+      chown -h "${user}:${group:-${user}}" "${sshdir}" 2>/dev/null || chown -h "${user}" "${sshdir}"
+    fi
+  fi
+  if [[ -L "${sshdir}" ]]; then
+    hm_err "Odmowa: ${sshdir} jest symlinkiem po utworzeniu."
+    return 1
+  fi
+  ssh_rp="$(realpath "${sshdir}" 2>/dev/null || realpath -m "${sshdir}" 2>/dev/null || echo "${sshdir}")"
+  ssh_rp="${ssh_rp%/}"
+  if [[ "${ssh_rp}" != "${home_rp}" && "${ssh_rp}" != "${home_rp}"/* ]]; then
+    hm_err "Odmowa: ${sshdir} poza home ${home_rp} (→ ${ssh_rp})."
+    return 1
+  fi
+  owner="$(stat -c '%U' "${sshdir}" 2>/dev/null || true)"
+  if [[ -n "${owner}" && "${owner}" != "${user}" ]]; then
+    hm_err "Odmowa: ${sshdir} należy do „${owner}”."
+    return 1
+  fi
+
+  if [[ -L "${keysf}" ]]; then
+    hm_warn "Usuwam symlink ${keysf}."
+    rm -f "${keysf}"
+  fi
+
+  merged="$(mktemp "${TMP_DIR:-/tmp}/hmtools-keys-merge.XXXXXX")"
+  chmod 600 "${merged}"
+  if [[ -f "${keysf}" && ! -L "${keysf}" ]]; then
+    # odczyt bez podążania za nowym linkiem: -f && ! -L już sprawdzone
+    cat "${keysf}" > "${merged}" 2>/dev/null || : > "${merged}"
+  else
+    : > "${merged}"
+  fi
+  while IFS= read -r kline || [[ -n "${kline}" ]]; do
+    [[ -n "${kline}" ]] || continue
+    [[ "${kline}" =~ ^[[:space:]]*# ]] && continue
+    if ! grep -Fqx "${kline}" "${merged}" 2>/dev/null; then
+      printf '%s\n' "${kline}" >> "${merged}"
+    fi
+  done < "${keys_src}"
+
+  # zapis: plik tymczasowy w .ssh + mv -T (atomic, bez follow)
+  local tmp_in_ssh
+  tmp_in_ssh="$(mktemp "${sshdir}/.authorized_keys.XXXXXX")"
+  chmod 600 "${tmp_in_ssh}"
+  cat "${merged}" > "${tmp_in_ssh}" || {
+    rm -f "${merged}" "${tmp_in_ssh}"
+    return 1
+  }
+  rm -f "${merged}"
+  if [[ -L "${keysf}" ]]; then
+    rm -f "${keysf}"
+  fi
+  if ! mv -T "${tmp_in_ssh}" "${keysf}" 2>/dev/null; then
+    # Git Bash / BusyBox bez -T
+    mv -f "${tmp_in_ssh}" "${keysf}" || {
+      rm -f "${tmp_in_ssh}"
+      return 1
+    }
+  fi
+  if [[ -L "${keysf}" ]]; then
+    hm_err "Odmowa: ${keysf} stał się symlinkiem po zapisie."
+    return 1
+  fi
+  chmod 600 "${keysf}"
+  chown -h "${user}:${group:-${user}}" "${sshdir}" "${keysf}" 2>/dev/null \
+    || chown -h "${user}" "${sshdir}" "${keysf}" 2>/dev/null || true
+  hm_ok "Przywrócono authorized_keys → ${keysf} (bez follow symlinków)"
+  return 0
 }
 
 # $3 = adopt (0/1) — świadome nadpisanie istniejącego konta (--adopt-existing-user)
@@ -583,23 +755,11 @@ hm_backup_restore_unix_account() {
   keys_tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-unix-keys.XXXXXX")"
   chmod 600 "${keys_tmp}"
   if rclone cat "${remote_base}/unix-authorized_keys" > "${keys_tmp}" 2>/dev/null && [[ -s "${keys_tmp}" ]]; then
-    mkdir -p "${home}/.ssh"
-    chmod 700 "${home}/.ssh"
-    if [[ -f "${home}/.ssh/authorized_keys" ]]; then
-      local kline
-      while IFS= read -r kline || [[ -n "${kline}" ]]; do
-        [[ -n "${kline}" ]] || continue
-        [[ "${kline}" =~ ^[[:space:]]*# ]] && continue
-        if ! grep -Fqx "${kline}" "${home}/.ssh/authorized_keys" 2>/dev/null; then
-          printf '%s\n' "${kline}" >> "${home}/.ssh/authorized_keys"
-        fi
-      done < "${keys_tmp}"
-    else
-      cp -f "${keys_tmp}" "${home}/.ssh/authorized_keys"
+    if ! hm_backup_restore_authorized_keys_safe "${name}" "${group}" "${home}" "${keys_tmp}"; then
+      rm -f "${keys_tmp}"
+      hm_err "Bezpieczny zapis authorized_keys nieudany — przerywam (ryzyko symlink/TOCTOU)."
+      return 1
     fi
-    chmod 600 "${home}/.ssh/authorized_keys"
-    chown -R "${name}:${group}" "${home}/.ssh" 2>/dev/null || chown -R "${name}:${name}" "${home}/.ssh" 2>/dev/null || true
-    hm_ok "Przywrócono authorized_keys → ${home}/.ssh/authorized_keys"
   fi
   rm -f "${keys_tmp}"
 
@@ -1207,7 +1367,7 @@ hm_backup_restore_ols_from_archive() {
 _hm_backup_restore_body() {
   local domain="${1:-}"
   shift || true
-  local stamp="" files_only=0 db_only=0 overwrite_db=0 adopt_user=0 overwrite_files=0
+  local stamp="" files_only=0 db_only=0 overwrite_db=0 adopt_user=0 overwrite_files=0 force_foreign_db=0
   local a
   for a in "$@"; do
     case "${a}" in
@@ -1216,6 +1376,7 @@ _hm_backup_restore_body() {
       --overwrite-db) overwrite_db=1 ;;
       --adopt-existing-user) adopt_user=1 ;;
       --overwrite-files) overwrite_files=1 ;;
+      --force-foreign-db) force_foreign_db=1 ;;
       -*)
         hm_err "Nieznana flaga: ${a}"
         return 1
@@ -1240,9 +1401,11 @@ _hm_backup_restore_body() {
     domain="${HM_SITE_DOMAIN:-}"
   fi
   [[ -n "${domain}" ]] || {
-    hm_err "Użycie: backup restore <domena> [stamp] [--files-only|--db-only] [--overwrite-db] [--overwrite-files] [--adopt-existing-user]"
+    hm_err "Użycie: backup restore <domena> [stamp] [--files-only|--db-only] [--overwrite-db] [--overwrite-files] [--adopt-existing-user] [--force-foreign-db]"
     return 1
   }
+  HM_BACKUP_FORCE_FOREIGN_DB="${force_foreign_db}"
+  export HM_BACKUP_FORCE_FOREIGN_DB
 
   hm_load_config
   hm_detect_all
@@ -1358,8 +1521,10 @@ _hm_backup_restore_body() {
   snap_type="$(hm_backup_json_str "${man_json}" "type")"
   man_docroot="$(hm_backup_json_str "${man_json}" "docroot")"
 
-  if rclone cat "${remote_base}/unix-account.meta" >/dev/null 2>&1 \
-    || rclone cat "${remote_base}/unix-account.meta.enc" >/dev/null 2>&1; then
+  if [[ "${files_only}" -eq 0 ]] && {
+       rclone cat "${remote_base}/unix-account.meta" >/dev/null 2>&1 \
+    || rclone cat "${remote_base}/unix-account.meta.enc" >/dev/null 2>&1
+    }; then
     restore_unix=1
     unix_peek="$(hm_backup_peek_unix_meta "${remote_base}" 2>/dev/null || true)"
     if [[ -n "${unix_peek}" ]]; then

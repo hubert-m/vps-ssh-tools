@@ -4,8 +4,37 @@
 hm_rclone_file_nonempty() {
   local remote_file="$1"
   local sz
+  if [[ "${remote_file}" == /* ]]; then
+    [[ -f "${remote_file}" && -s "${remote_file}" ]]
+    return $?
+  fi
   sz="$(rclone size "${remote_file}" --json 2>/dev/null | sed -n 's/.*"bytes"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)"
   [[ -n "${sz}" && "${sz}" =~ ^[0-9]+$ && "${sz}" -gt 0 ]]
+}
+
+# gzip -t (+ opcjonalnie tar -tzf) na obiekcie zdalnym / lokalnym.
+hm_backup_gzip_tar_ok() {
+  local remote_file="$1"
+  local check_tar="${2:-0}"
+  local tmp rc=0
+  if [[ "${remote_file}" == /* ]]; then
+    gzip -t "${remote_file}" 2>/dev/null || return 1
+    if [[ "${check_tar}" -eq 1 ]]; then
+      tar -tzf "${remote_file}" >/dev/null 2>&1 || return 1
+    fi
+    return 0
+  fi
+  tmp="$(mktemp "${TMP_DIR:-/tmp}/hm-gzcheck.XXXXXX")"
+  if ! rclone cat "${remote_file}" > "${tmp}" 2>/dev/null; then
+    rm -f "${tmp}"
+    return 1
+  fi
+  gzip -t "${tmp}" 2>/dev/null || rc=1
+  if [[ "${rc}" -eq 0 && "${check_tar}" -eq 1 ]]; then
+    tar -tzf "${tmp}" >/dev/null 2>&1 || rc=1
+  fi
+  rm -f "${tmp}"
+  return "${rc}"
 }
 
 # Usuń niepełny/osierocony katalog snapshotu z Drive (po przerwanej archiwizacji).
@@ -35,74 +64,201 @@ hm_backup_verify_remote_archive() {
   local expected_chunks="${3:-0}"
   shift 3 || true
   local -a dbs=("$@")
+  local man want got sums_line sum path remote_parts i part_path
 
-  hm_info "Weryfikacja integralności kopii archiwalnej na Drive: ${remote_base}"
+  hm_info "Weryfikacja integralności kopii archiwalnej: ${remote_base}"
 
   if ! hm_rclone_file_nonempty "${remote_base}/manifest.json"; then
-    hm_err "WERYFIKACJA NIEUDANA: brak lub pusty plik manifest.json na Drive!"
+    hm_err "WERYFIKACJA NIEUDANA: brak lub pusty plik manifest.json!"
     return 1
   fi
 
+  man=""
+  if [[ "${remote_base}" == /* ]]; then
+    man="$(cat "${remote_base}/manifest.json" 2>/dev/null || true)"
+  else
+    man="$(rclone cat "${remote_base}/manifest.json" 2>/dev/null || true)"
+  fi
+  want="$(hm_backup_json_str "${man}" "sha256_files")"
+
   if [[ "${files_mode}" == "tar" ]]; then
     if ! hm_rclone_file_nonempty "${remote_base}/files.tar.gz"; then
-      hm_err "WERYFIKACJA NIEUDANA: brak lub pusty plik files.tar.gz na Drive!"
+      hm_err "WERYFIKACJA NIEUDANA: brak lub pusty plik files.tar.gz!"
+      return 1
+    fi
+    if ! hm_backup_gzip_tar_ok "${remote_base}/files.tar.gz" 1; then
+      hm_err "WERYFIKACJA NIEUDANA: files.tar.gz uszkodzony (gzip/tar)!"
+      return 1
+    fi
+    if [[ -n "${want}" ]]; then
+      got="$(hm_rclone_sha256_any "${remote_base}/files.tar.gz" || true)"
+      if [[ -z "${got}" || "${got}" != "${want}" ]]; then
+        hm_err "WERYFIKACJA NIEUDANA: SHA256 files.tar.gz lokalnie≠remote (${want:0:12}… ≠ ${got:0:12}…)."
+        return 1
+      fi
+    else
+      hm_err "WERYFIKACJA NIEUDANA: brak sha256_files w manifeście!"
       return 1
     fi
   elif [[ "${files_mode}" == "chunks" ]]; then
-    local remote_parts
-    remote_parts="$(rclone lsf "${remote_base}/files.chunks/" 2>/dev/null | grep -c '^files\.tar\.gz\.part_' || echo 0)"
-    remote_parts="$(echo "${remote_parts}" | tr -d '[:space:]')"
+    if [[ "${remote_base}" == /* ]]; then
+      remote_parts="$(find "${remote_base}/files.chunks" -maxdepth 1 -name 'files.tar.gz.part_*' 2>/dev/null | wc -l | tr -d ' ')"
+    else
+      remote_parts="$(rclone lsf "${remote_base}/files.chunks/" 2>/dev/null | grep -c '^files\.tar\.gz\.part_' || echo 0)"
+      remote_parts="$(echo "${remote_parts}" | tr -d '[:space:]')"
+    fi
     [[ "${remote_parts}" =~ ^[0-9]+$ ]] || remote_parts=0
     if [[ "${remote_parts}" -ne "${expected_chunks}" || "${expected_chunks}" -le 0 ]]; then
-      hm_err "WERYFIKACJA NIEUDANA: liczba chunków na Drive (${remote_parts}) != oczekiwanej (${expected_chunks})!"
+      hm_err "WERYFIKACJA NIEUDANA: liczba chunków (${remote_parts}) != oczekiwanej (${expected_chunks})!"
       return 1
     fi
     if ! hm_rclone_file_nonempty "${remote_base}/files.chunks/files.tar.gz.part_0000"; then
       hm_err "WERYFIKACJA NIEUDANA: chunk part_0000 jest pusty lub niedostępny!"
       return 1
     fi
+    # SHA256SUMS (jeśli jest) — każdy chunk
+    local sums_blob=""
+    if [[ "${remote_base}" == /* && -f "${remote_base}/SHA256SUMS" ]]; then
+      sums_blob="$(cat "${remote_base}/SHA256SUMS")"
+    elif [[ "${remote_base}" != /* ]]; then
+      sums_blob="$(rclone cat "${remote_base}/SHA256SUMS" 2>/dev/null || true)"
+    fi
+    if [[ -n "${sums_blob}" ]]; then
+      while read -r sums_line || [[ -n "${sums_line}" ]]; do
+        sum="$(printf '%s' "${sums_line}" | awk '{print $1}')"
+        path="$(printf '%s' "${sums_line}" | awk '{print $2}')"
+        [[ "${sum}" =~ ^[0-9a-fA-F]{64}$ && -n "${path}" ]] || continue
+        got="$(hm_rclone_sha256_any "${remote_base}/${path}" || true)"
+        if [[ -z "${got}" || "${got}" != "${sum}" ]]; then
+          hm_err "WERYFIKACJA NIEUDANA: SHA256 ${path} niezgodny."
+          return 1
+        fi
+      done <<< "${sums_blob}"
+    fi
+    # sklej chunki lokalnie → gzip -t / tar -tzf (+ opcjonalnie sha256_files)
+    local join_tmp
+    join_tmp="$(mktemp "${TMP_DIR:-/tmp}/hm-chunks.XXXXXX.tar.gz")"
+    : > "${join_tmp}"
+    i=0
+    while [[ "${i}" -lt "${expected_chunks}" ]]; do
+      part_path="$(printf '%s/files.chunks/files.tar.gz.part_%04d' "${remote_base}" "${i}")"
+      if [[ "${remote_base}" == /* ]]; then
+        cat "${part_path}" >> "${join_tmp}" || {
+          rm -f "${join_tmp}"
+          hm_err "WERYFIKACJA NIEUDANA: brak chunka part_$(printf '%04d' "${i}")"
+          return 1
+        }
+      else
+        rclone cat "${part_path}" >> "${join_tmp}" 2>/dev/null || {
+          rm -f "${join_tmp}"
+          hm_err "WERYFIKACJA NIEUDANA: brak chunka part_$(printf '%04d' "${i}")"
+          return 1
+        }
+      fi
+      i=$((i + 1))
+    done
+    if ! gzip -t "${join_tmp}" 2>/dev/null || ! tar -tzf "${join_tmp}" >/dev/null 2>&1; then
+      rm -f "${join_tmp}"
+      hm_err "WERYFIKACJA NIEUDANA: sklejone chunki uszkodzone (gzip/tar)!"
+      return 1
+    fi
+    if [[ -n "${want}" ]]; then
+      got="$(hm_backup_sha256_file "${join_tmp}" || true)"
+      if [[ -z "${got}" || "${got}" != "${want}" ]]; then
+        rm -f "${join_tmp}"
+        hm_err "WERYFIKACJA NIEUDANA: SHA256 sklejonych chunków ≠ sha256_files."
+        return 1
+      fi
+    fi
+    rm -f "${join_tmp}"
   else
     hm_err "WERYFIKACJA NIEUDANA: nieznany tryb archiwum plików (${files_mode})!"
     return 1
   fi
 
-  local db sz
+  local db sz dump_path dump_want
   for db in "${dbs[@]}"; do
     [[ -n "${db}" ]] || continue
-    sz="$(rclone size "${remote_base}/db/${db}.sql.gz" --json 2>/dev/null | sed -n 's/.*"bytes"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)"
+    dump_path="${remote_base}/db/${db}.sql.gz"
+    if [[ "${remote_base}" == /* ]]; then
+      sz="$(stat -c%s "${dump_path}" 2>/dev/null || echo 0)"
+    else
+      sz="$(rclone size "${dump_path}" --json 2>/dev/null | sed -n 's/.*"bytes"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)"
+    fi
     if [[ -z "${sz}" || ! "${sz}" =~ ^[0-9]+$ || "${sz}" -le 20 ]]; then
       hm_err "WERYFIKACJA NIEUDANA: zrzut bazy db/${db}.sql.gz nie istnieje lub jest pusty (${sz:-0} B)!"
       return 1
     fi
+    if ! hm_backup_gzip_tar_ok "${dump_path}" 0; then
+      hm_err "WERYFIKACJA NIEUDANA: db/${db}.sql.gz uszkodzony (gzip -t)!"
+      return 1
+    fi
+    dump_want="$(printf '%s' "${man}" | sed -n "s/.*\"sha256_db_${db}\"[[:space:]]*:[[:space:]]*\"\\([0-9a-fA-F]\\{64\\}\\)\".*/\\1/p" | head -1)"
+    if [[ -n "${dump_want}" ]]; then
+      got="$(hm_rclone_sha256_any "${dump_path}" || true)"
+      if [[ -z "${got}" || "${got}" != "${dump_want}" ]]; then
+        hm_err "WERYFIKACJA NIEUDANA: SHA256 db/${db}.sql.gz niezgodny."
+        return 1
+      fi
+    fi
   done
 
-  hm_ok "Weryfikacja kopii w chmurze zakończona sukcesem (wszystkie pliki i bazy potwierdzone)."
+  hm_ok "Weryfikacja kopii zakończona sukcesem (rozmiar + SHA256 + gzip/tar)."
   return 0
 }
 
 hm_archive_upload_site_files() {
-  # stdout: files_mode<TAB>chunks_count
+  # stdout: files_mode<TAB>chunks_count; ustawia HM_BACKUP_LAST_SHA256 (+ SUMS)
   local src_dir="$1"
   local remote_base="$2"
-  local size_b threshold_b
+  local size_b threshold_b sums_tmp
   size_b="$(hm_dir_size_bytes "${src_dir}")"
   threshold_b=$((CHUNK_THRESHOLD_MB * 1024 * 1024))
+  HM_BACKUP_LAST_SHA256=""
+  HM_BACKUP_LAST_SHA256SUMS=""
 
   if [[ "${size_b}" -ge "${threshold_b}" ]]; then
     # hm_info/hm_ok idą na stdout — przekieruj, żeby report=$((...)) dostał tylko printf
     # archive = pełny dump (ARCHIVE_EXCLUDES, domyślnie puste) — potem kasujemy VPS
     hm_chunked_tar_upload "${src_dir}" "${remote_base}/files.chunks" "archive" >&2 || return 1
     local marker n
-    marker="$(rclone cat "${remote_base}/files.chunks/files.tar.gz.chunks.txt" 2>/dev/null || true)"
+    if [[ "${remote_base}" == /* ]]; then
+      marker="$(cat "${remote_base}/files.chunks/files.tar.gz.chunks.txt" 2>/dev/null || true)"
+    else
+      marker="$(rclone cat "${remote_base}/files.chunks/files.tar.gz.chunks.txt" 2>/dev/null || true)"
+    fi
+    [[ -n "${marker}" ]] || { hm_err "Brak markera chunków po uploadzie."; return 1; }
     n="$(printf '%s' "${marker}" | sed -n 's/^chunks=//p' | tr -d '[:space:]')"
     if [[ -z "${n}" || ! "${n}" =~ ^[0-9]+$ ]]; then
-      n="$(rclone lsf "${remote_base}/files.chunks/" 2>/dev/null | grep -c '^files\.tar\.gz\.part_' || echo 0)"
-      n="$(echo "${n}" | tr -d '[:space:]')"
+      hm_err "Niepoprawny marker chunków: ${marker}"
+      return 1
     fi
-    printf 'chunks\t%s\n' "${n:-0}"
+    if [[ -n "${HM_BACKUP_LAST_SHA256SUMS:-}" ]]; then
+      sums_tmp="$(hm_mktemp .sums)"
+      printf '%s' "${HM_BACKUP_LAST_SHA256SUMS}" > "${sums_tmp}"
+      if [[ -n "${HM_BACKUP_LAST_SHA256:-}" ]]; then
+        printf '%s  files.tar.gz (joined)\n' "${HM_BACKUP_LAST_SHA256}" >> "${sums_tmp}"
+      fi
+      hm_rclone_copyto "${sums_tmp}" "${remote_base}/SHA256SUMS" \
+        || cat "${sums_tmp}" | hm_rclone_rcat "${remote_base}/SHA256SUMS" \
+        || { rm -f "${sums_tmp}"; hm_err "Upload SHA256SUMS nieudany."; return 1; }
+      rm -f "${sums_tmp}"
+    fi
+    # 3. pole: sha256 (command substitution gubi zmienne eksportowane w funkcji)
+    printf 'chunks\t%s\t%s\n' "${n}" "${HM_BACKUP_LAST_SHA256:-}"
   else
     hm_stream_tar_rcat "${src_dir}" "${remote_base}/files.tar.gz" "archive" >&2 || return 1
-    printf 'tar\t0\n'
+    [[ -n "${HM_BACKUP_LAST_SHA256:-}" ]] || {
+      hm_err "Brak SHA256 po stream uploadzie files.tar.gz."
+      return 1
+    }
+    sums_tmp="$(hm_mktemp .sums)"
+    printf '%s  files.tar.gz\n' "${HM_BACKUP_LAST_SHA256}" > "${sums_tmp}"
+    hm_rclone_copyto "${sums_tmp}" "${remote_base}/SHA256SUMS" \
+      || cat "${sums_tmp}" | hm_rclone_rcat "${remote_base}/SHA256SUMS" \
+      || { rm -f "${sums_tmp}"; hm_err "Upload SHA256SUMS nieudany."; return 1; }
+    rm -f "${sums_tmp}"
+    printf 'tar\t0\t%s\n' "${HM_BACKUP_LAST_SHA256}"
   fi
 }
 
@@ -443,7 +599,7 @@ _hm_backup_archive_site_body() {
   local -a archive_dbs=()
   local -a archive_db_users=()
   local -a archive_dbs_from_config=()
-  local dline dname dorigin dreason seen_adb="|" seen_cfg="|"
+  local dline dname dorigin dreason seen_adb="|" seen_cfg="|" seen_adu="|"
   for dline in "${HM_DEL_DBS[@]}"; do
     [[ -n "${dline}" ]] || continue
     IFS='|' read -r dname _ <<<"${dline}"
@@ -452,6 +608,39 @@ _hm_backup_archive_site_body() {
       seen_adb="${seen_adb}${dname}|"
     fi
   done
+  # Manifest kreatora (.{domena}.dbs) — zawsze dump + user; Faza II i tak robi DROP z .dbs
+  local _mdb_typ _mdb_name _mdb_user _mdb_dir _mdb_file
+  if declare -F hm_site_manifest_dir >/dev/null 2>&1; then
+    _mdb_dir="$(hm_site_manifest_dir)"
+  else
+    _mdb_dir="${HM_SITE_MANIFEST_DIR:-/etc/hmtools/sites}"
+  fi
+  _mdb_file="${_mdb_dir}/.${domain}.dbs"
+  if [[ -f "${_mdb_file}" && ! -L "${_mdb_file}" ]]; then
+    while IFS=$'\t' read -r _mdb_typ _mdb_name _mdb_user _ || [[ -n "${_mdb_typ:-}" ]]; do
+      [[ -n "${_mdb_name}" ]] || continue
+      case "${_mdb_typ}" in
+        postgres|postgresql|pg)
+          hm_err "Manifest zawiera bazę PostgreSQL (${_mdb_name}) — archive nie ma jeszcze pg_dump."
+          hm_err "Odmowa archiwizacji (uniknięcie DROP bez kopii). Usuń PG z .dbs albo dodaj wsparcie dump."
+          return 1
+          ;;
+        mysql|mariadb|"")
+          hm_is_valid_db_name "${_mdb_name}" || continue
+          if [[ "${seen_adb}" != *"|${_mdb_name}|"* ]]; then
+            archive_dbs+=("${_mdb_name}")
+            seen_adb="${seen_adb}${_mdb_name}|"
+            hm_info "Archive dump DB ${_mdb_name} (manifest .dbs — confirmed)."
+          fi
+          if [[ -n "${_mdb_user}" && "${seen_adu}" != *"|${_mdb_user}|"* ]]; then
+            hm_is_valid_db_name "${_mdb_user}" || continue
+            archive_db_users+=("${_mdb_user}")
+            seen_adu="${seen_adu}${_mdb_user}|"
+          fi
+          ;;
+      esac
+    done < "${_mdb_file}"
+  fi
   # Child: DB z wp-config childa bywa w CP pod masterem → HM_DEL_SKIP (współdzielona).
   # Dump TYLKO z configu DOCROOT childa — nie confirmed/user-match baz mastera (utrata danych przy restore --overwrite-db).
   if [[ "${HM_DEL_CHILD_OF_SHARED:-0}" -eq 1 ]]; then
@@ -491,7 +680,9 @@ _hm_backup_archive_site_body() {
   for _du in "${HM_DEL_DB_USERS[@]}"; do
     [[ -n "${_du}" ]] || continue
     hm_is_valid_db_name "${_du}" || continue
+    [[ "${seen_adu}" == *"|${_du}|"* ]] && continue
     archive_db_users+=("${_du}")
+    seen_adu="${seen_adu}${_du}|"
   done
 
   local db_desc="brak"
@@ -632,7 +823,11 @@ _hm_backup_archive_site_body() {
       if [[ -s "${unix_keys}" ]]; then
         hm_rclone_copyto "${unix_keys}" "${remote_base}/unix-authorized_keys" \
           || cat "${unix_keys}" | hm_rclone_rcat "${remote_base}/unix-authorized_keys" \
-          || hm_warn "Nie wysłano unix-authorized_keys (kontynuuję)."
+          || {
+            rm -f "${unix_meta}" "${unix_keys}" "${unix_meta}.enc"
+            hm_archive_abort "Upload unix-authorized_keys nieudany. Nic nie usunięto z VPS." "${remote_base}"
+            return 1
+          }
       fi
     else
       hm_warn "Nie udało się zbudować snapshota konta Unix ${HM_DEL_USER}."
@@ -661,14 +856,15 @@ _hm_backup_archive_site_body() {
   fi
   hm_info "Archiwizacja plików z katalogu: ${backup_root}"
 
-  local files_mode="none" chunks_count=0 report
+  local files_mode="none" chunks_count=0 report files_sha256=""
   report="$(hm_archive_upload_site_files "${backup_root}" "${remote_base}")" || {
     hm_archive_abort "Archiwizacja przerwana — błąd wysyłki plików. Nic nie usunięto z VPS." "${remote_base}"
     return 1
   }
-  # ostatnia linia = tryb (tar|chunks); ignoruj ewentualne śmieci na stdout
-  IFS=$'\t' read -r files_mode chunks_count < <(printf '%s\n' "${report}" | tail -n 1)
+  # ostatnia linia = tryb (tar|chunks) + sha256; ignoruj śmieci na stdout
+  IFS=$'\t' read -r files_mode chunks_count files_sha256 < <(printf '%s\n' "${report}" | tail -n 1)
   [[ -n "${chunks_count}" ]] || chunks_count=0
+  [[ -n "${files_sha256}" ]] || files_sha256="${HM_BACKUP_LAST_SHA256:-}"
   case "${files_mode}" in
     tar|chunks) ;;
     *)
@@ -676,6 +872,12 @@ _hm_backup_archive_site_body() {
       return 1
       ;;
   esac
+  if [[ -z "${files_sha256}" ]]; then
+    hm_archive_abort "Brak SHA256 plików po uploadzie — przerwano przed usunięciem z VPS." "${remote_base}"
+    return 1
+  fi
+  HM_BACKUP_LAST_SHA256="${files_sha256}"
+  export HM_BACKUP_LAST_SHA256
 
   # vhost + cały katalog OLS vhost
   if [[ -n "${HM_SITE_VHOST:-}" && -f "${HM_SITE_VHOST}" ]]; then
@@ -695,7 +897,8 @@ _hm_backup_archive_site_body() {
       rm -f "${vtar}"
     else
       rm -f "${vtar}"
-      hm_warn "Nie spakowano katalogu vhost OLS (kontynuuję)."
+      hm_archive_abort "Nie spakowano katalogu vhost OLS. Nic nie usunięto z VPS." "${remote_base}"
+      return 1
     fi
   fi
   local snip
@@ -704,7 +907,11 @@ _hm_backup_archive_site_body() {
   if [[ -s "${snip}" ]]; then
     hm_rclone_copyto "${snip}" "${remote_base}/ols-httpd-snippet.conf" \
       || cat "${snip}" | hm_rclone_rcat "${remote_base}/ols-httpd-snippet.conf" \
-      || hm_warn "Nie wysłano ols-httpd-snippet.conf"
+      || {
+        rm -f "${snip}"
+        hm_archive_abort "Upload ols-httpd-snippet.conf nieudany. Nic nie usunięto z VPS." "${remote_base}"
+        return 1
+      }
   fi
   rm -f "${snip}"
 
@@ -734,7 +941,12 @@ _hm_backup_archive_site_body() {
       crontab -u "${HM_DEL_USER}" -l > "${cron_txt}" 2>/dev/null || true
       if [[ -s "${cron_txt}" ]]; then
         hm_rclone_copyto "${cron_txt}" "${remote_base}/crontab.txt" \
-          || cat "${cron_txt}" | hm_rclone_rcat "${remote_base}/crontab.txt" || true
+          || cat "${cron_txt}" | hm_rclone_rcat "${remote_base}/crontab.txt" \
+          || {
+            rm -f "${cron_txt}"
+            hm_archive_abort "Upload crontab.txt nieudany. Nic nie usunięto z VPS." "${remote_base}"
+            return 1
+          }
       fi
       rm -f "${cron_txt}"
     fi
@@ -753,9 +965,14 @@ _hm_backup_archive_site_body() {
     printf '%s\n' "${jlist}" > "${pm2_json}"
     hm_site_context_pop
   fi
-  if [[ -s "${pm2_json}" ]]; then
+  if [[ -s "${pm2_json}" && "$(cat "${pm2_json}")" != "[]" ]]; then
     hm_rclone_copyto "${pm2_json}" "${remote_base}/pm2-processes.json" \
-      || cat "${pm2_json}" | hm_rclone_rcat "${remote_base}/pm2-processes.json" || true
+      || cat "${pm2_json}" | hm_rclone_rcat "${remote_base}/pm2-processes.json" \
+      || {
+        rm -f "${pm2_json}"
+        hm_archive_abort "Upload pm2-processes.json nieudany. Nic nie usunięto z VPS." "${remote_base}"
+        return 1
+      }
   fi
   rm -f "${pm2_json}"
 
@@ -769,7 +986,9 @@ _hm_backup_archive_site_body() {
       has_cp=1
       hm_ok "Wysłano cyberpanel-site.sql"
     else
-      hm_warn "Upload cyberpanel-site.sql nieudany (kontynuuję)."
+      rm -f "${cp_sql}"
+      hm_archive_abort "Upload cyberpanel-site.sql nieudany. Nic nie usunięto z VPS." "${remote_base}"
+      return 1
     fi
   else
     hm_info "Brak wierszy CyberPanel do eksportu (lub nie-CP)."
@@ -827,6 +1046,7 @@ _hm_backup_archive_site_body() {
   "unix_account": ${has_unix_account},
   "sha256_db_accounts": "$(hm_json_escape_str "${db_acc_sha}")",
   "sha256_unix_account": "$(hm_json_escape_str "${unix_meta_sha}")",
+  "sha256_files": "$(hm_json_escape_str "${files_sha256}")",
   "excludes": "$(hm_json_escape_str "$(hm_backup_excludes_list archive)")",
   "cyberpanel_site": ${has_cp:-0},
   "files_mode": "${files_mode}",
@@ -875,6 +1095,36 @@ EOF
       hm_archive_abort "WERYFIKACJA NIEUDANA: SHA256 ${_ux_remote} lokalnie≠Drive. Nic nie usunięto z VPS." "${remote_base}"
       return 1
     fi
+  fi
+
+  # Guard: każda baza do DROP (HM_DEL_DBS + .dbs) musi mieć zweryfikowany dump
+  local _guard_name _guard_missing=0
+  for dline in "${HM_DEL_DBS[@]}"; do
+    [[ -n "${dline}" ]] || continue
+    IFS='|' read -r _guard_name _ <<<"${dline}"
+    [[ -n "${_guard_name}" ]] || continue
+    if [[ "${seen_adb}" != *"|${_guard_name}|"* ]] \
+      || ! hm_rclone_file_nonempty "${remote_base}/db/${_guard_name}.sql.gz"; then
+      hm_err "Brak zweryfikowanego zrzutu dla DB ${_guard_name} (plan DROP bez kopii)."
+      _guard_missing=1
+    fi
+  done
+  if [[ -f "${_mdb_file:-}" && ! -L "${_mdb_file}" ]]; then
+    while IFS=$'\t' read -r _mdb_typ _mdb_name _ || [[ -n "${_mdb_typ:-}" ]]; do
+      [[ -n "${_mdb_name}" ]] || continue
+      case "${_mdb_typ}" in
+        mysql|mariadb|"")
+          if ! hm_rclone_file_nonempty "${remote_base}/db/${_mdb_name}.sql.gz"; then
+            hm_err "Manifest .dbs: brak zrzutu db/${_mdb_name}.sql.gz przed DROP."
+            _guard_missing=1
+          fi
+          ;;
+      esac
+    done < "${_mdb_file}"
+  fi
+  if [[ "${_guard_missing}" -eq 1 ]]; then
+    hm_archive_abort "Archiwizacja przerwana: DROP bez kompletnego dumpa. Nic nie usunięto z VPS." "${remote_base}"
+    return 1
   fi
 
   # --- Faza II: usunięcie ---

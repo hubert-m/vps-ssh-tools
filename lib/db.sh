@@ -141,11 +141,16 @@ hm_heuristic_dbs_for_site() {
   local -a search_dirs=()
   [[ -n "${docroot}" && -d "${docroot}" ]] && search_dirs+=("${docroot}")
   [[ -n "${site_root}" && -d "${site_root}" ]] && search_dirs+=("${site_root}")
+  # shared/.env (deploy releases) — potwierdzone źródło
+  if [[ -n "${site_root}" && -d "${site_root}/shared" ]]; then
+    search_dirs+=("${site_root}/shared")
+  fi
   if [[ -n "${docroot}" && -d "${docroot}" ]]; then
     search_dirs+=("$(dirname "${docroot}")")
   fi
   if [[ -n "${domain}" && -d "/home/${domain}" ]]; then
     search_dirs+=("/home/${domain}")
+    [[ -d "/home/${domain}/shared" ]] && search_dirs+=("/home/${domain}/shared")
   fi
 
   local dir parent
@@ -165,20 +170,38 @@ hm_heuristic_dbs_for_site() {
       hm_extract_db_from_file "${dir}/${sub}/wp-config.php" wp
     done
   done | awk -F'\t' 'NF && !seen[$1]++ {print $1 "\t" $2}'
+  # UWAGA: bez short*/ *prefix* — łapało cudze bazy (shop → shop2*).
+  # Prefiks domeny tylko w planie/sugestii, nigdy automatycznie w dump/restore/delete.
+}
 
-  # Prefiks domeny w nazwach DB (CyberPanel: example_com)
-  local prefix short
-  prefix="$(echo "${domain}" | tr '.' '_' | tr '-' '_')"
-  short="$(echo "${domain}" | cut -d. -f1 | tr '-' '_')"
-  local alldb
-  while IFS= read -r alldb; do
-    [[ -n "${alldb}" ]] || continue
-    if [[ "${alldb}" == "${prefix}"* ]] || [[ "${alldb}" == *"${prefix}"* ]]; then
-      printf '%s\tprefix-match\n' "${alldb}"
-    elif [[ -n "${short}" && ${#short} -ge 4 && "${alldb}" == "${short}"* ]]; then
-      printf '%s\tprefix-match\n' "${alldb}"
+# Bazy z manifestu kreatora: .{domena}.dbs oraz /etc/hmtools/sites/<d>.json
+hm_manifest_dbs_for_site() {
+  local domain="$1"
+  local dir dbfile man name
+  [[ -n "${domain}" ]] || return 0
+  if declare -F hm_site_manifest_dir >/dev/null 2>&1; then
+    dir="$(hm_site_manifest_dir)"
+  else
+    dir="${HMTOOLS_CONF_DIR:-/etc/hmtools}/sites"
+  fi
+  dbfile="${dir}/.${domain}.dbs"
+  if [[ -f "${dbfile}" && ! -L "${dbfile}" ]]; then
+    while IFS=$'\t' read -r _typ name _rest || [[ -n "${_typ:-}" ]]; do
+      [[ -n "${name}" ]] || continue
+      case "${_typ}" in
+        mysql|mariadb|"") printf '%s\tmanifest.dbs\n' "${name}" ;;
+      esac
+    done < "${dbfile}"
+  fi
+  man="${dir}/${domain}.json"
+  if [[ -f "${man}" && ! -L "${man}" ]]; then
+    if hm_have_cmd jq; then
+      jq -r '.databases[]? | select(.type=="mysql" or .type=="mariadb" or .type==null or .type=="") | .name // empty' "${man}" 2>/dev/null \
+        | awk 'NF{print $0 "\tmanifest.json"}'
+    else
+      sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1\tmanifest.json/p' "${man}" 2>/dev/null || true
     fi
-  done < <(hm_list_all_databases)
+  fi
 }
 
 # Zwraca linie: name<TAB>user_or_source<TAB>size_bytes<TAB>origin
@@ -218,10 +241,19 @@ hm_dbs_for_site() {
     done < <(hm_cyberpanel_dbs_for_domain "${domain}")
   fi
 
+  # Manifest kreatora (potwierdzone) — przed heurystyką plików
+  local mname morigin
+  while IFS=$'\t' read -r mname morigin; do
+    [[ -n "${mname}" ]] || continue
+    _hm_dbs_emit "${mname}" "" "${morigin:-manifest}"
+  done < <(hm_manifest_dbs_for_site "${domain}")
+
   # Heurystyki PRZED user-match — child docroot (wp-config) wygrywa z szerokim skanem dbUser mastera
   local hname origin
   while IFS=$'\t' read -r hname origin; do
     [[ -n "${hname}" ]] || continue
+    # prefix-match usunięty z heurystyki — odrzuć gdyby stare mocki/gałęzie jeszcze emitowały
+    [[ "${origin}" == "prefix-match" ]] && continue
     _hm_dbs_emit "${hname}" "" "${origin:-detected}"
   done < <(hm_heuristic_dbs_for_site "${docroot}" "${domain}" "${site_root}")
 
@@ -413,18 +445,31 @@ hm_mysql_db_exists() {
 }
 
 hm_mysql_default_db_for_site() {
-  # pierwsza baza powiązana ze stroną (confirmed → reszta)
+  # pierwsza baza powiązana ze stroną (manifest/confirmed/.env — bez prefix-match)
   local domain="${1:-${HM_SITE_DOMAIN:-}}"
   local docroot="${2:-${HM_SITE_DOCROOT:-}}"
   local root="${3:-${HM_SITE_ROOT:-}}"
   local user="${4:-${HM_SITE_USER:-}}"
   [[ -n "${domain}" ]] || return 1
-  local name
-  name="$(hm_dbs_for_site "${domain}" "${docroot}" "${root}" "${user}" \
-    | sort -t$'\t' -k4,4 -k3,3nr \
-    | head -1 | cut -f1)"
-  [[ -n "${name}" ]] || return 1
-  printf '%s' "${name}"
+  local name origin line
+  # preferuj manifest / confirmed / pliki app
+  while IFS=$'\t' read -r name _ _ origin; do
+    [[ -n "${name}" ]] || continue
+    case "${origin}" in
+      manifest*|confirmed|wp-config|.env|.env-url|configuration.php|detected)
+        printf '%s' "${name}"
+        return 0
+        ;;
+      prefix-match) continue ;;
+      *)
+        printf '%s' "${name}"
+        return 0
+        ;;
+    esac
+  done < <(hm_dbs_for_site "${domain}" "${docroot}" "${root}" "${user}" \
+    | sort -t$'\t' -k4,4 -k3,3nr)
+  hm_err "Brak potwierdzonej bazy dla ${domain} (manifest/.env). Podaj: mysql … <db>"
+  return 1
 }
 
 hm_mysql_resolve_db_arg() {

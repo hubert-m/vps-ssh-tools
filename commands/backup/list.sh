@@ -39,13 +39,56 @@ hm_rclone_remote_size_bytes() {
   printf '%s' "${out}" | sed -n 's/.*(\([0-9][0-9]*\) Byte).*/\1/p' | head -1
 }
 
+# stdout = treść JSON; rc: 0=ok, 1=błąd odczytu, 2=brak pliku
 hm_backup_cat_manifest() {
-  local remote_base="$1"
+  local remote_base="$1" out errf rc=0
   if [[ "${remote_base}" == /* ]]; then
-    [[ -f "${remote_base}/manifest.json" ]] && cat "${remote_base}/manifest.json" 2>/dev/null || true
+    if [[ ! -f "${remote_base}/manifest.json" ]]; then
+      return 2
+    fi
+    out="$(cat "${remote_base}/manifest.json" 2>/dev/null)" || return 1
+    printf '%s' "${out}"
     return 0
   fi
-  rclone cat "${remote_base}/manifest.json" 2>/dev/null || true
+  errf="$(mktemp "${TMPDIR:-/tmp}/hm-man.XXXXXX")"
+  out="$(rclone cat "${remote_base}/manifest.json" 2>"${errf}")" || rc=$?
+  if [[ "${rc}" -eq 0 ]]; then
+    rm -f "${errf}"
+    printf '%s' "${out}"
+    return 0
+  fi
+  # Plik istnieje, ale cat się wyłożył (403, timeout, …) ≠ „nie ma snapshotu”.
+  if rclone lsf "${remote_base}/" 2>/dev/null | grep -qxF 'manifest.json' \
+    || rclone lsf "${remote_base}/manifest.json" >/dev/null 2>&1; then
+    hm_err "Błąd odczytu manifestu: ${remote_base}/manifest.json ($(tr '\n' ' ' < "${errf}"))"
+    rm -f "${errf}"
+    return 1
+  fi
+  rm -f "${errf}"
+  return 2
+}
+
+# Czy snapshot ma pliki/dumpy (nawet przy status=partial).
+hm_backup_snapshot_has_payload() {
+  local remote_base="$1" mode
+  mode="$(hm_backup_detect_files_mode "${remote_base}")"
+  [[ "${mode}" != "none" ]] && return 0
+  if [[ "${remote_base}" == /* ]]; then
+    if find "${remote_base}/db" "${remote_base}/databases" -type f \( -name '*.sql.gz' -o -name '*.sql.gz.enc' \) 2>/dev/null | grep -q .; then
+      return 0
+    fi
+    [[ -f "${remote_base}/db-accounts.sql" || -f "${remote_base}/db-accounts.sql.enc" ]] && return 0
+    return 1
+  fi
+  if rclone lsf "${remote_base}/db/" 2>/dev/null | grep -qE '\.sql'; then
+    return 0
+  fi
+  if rclone lsf "${remote_base}/databases/" 2>/dev/null | grep -qE '\.sql'; then
+    return 0
+  fi
+  rclone ls "${remote_base}/db-accounts.sql" >/dev/null 2>&1 && return 0
+  rclone ls "${remote_base}/db-accounts.sql.enc" >/dev/null 2>&1 && return 0
+  return 1
 }
 
 hm_backup_detect_files_mode() {
@@ -85,25 +128,41 @@ hm_backup_list_stamps() {
   hm_rclone_lsd_names "${base}" | grep -E '^[0-9]{8}-[0-9]{6}$' | sort -r
 }
 
-# 0 = kompletny (ma manifest, status≠partial/failed, ma files*); 1 = niepełny/osierocony
+# 0 = osierocony/pusty (do BAD / orphan-purge); 1 = użyteczny (także partial z payloadem)
+# rc cat=1 (błąd API) → traktuj jako incomplete (ostrożnie: nie restore bez sprawdzenia)
 hm_backup_snapshot_is_incomplete() {
   local remote_base="$1"
-  local json status type mode
-  json="$(hm_backup_cat_manifest "${remote_base}")"
-  if [[ -z "${json}" ]]; then
+  local json status type mode rc=0
+  json="$(hm_backup_cat_manifest "${remote_base}")" || rc=$?
+  if [[ "${rc}" -eq 1 ]]; then
+    return 0
+  fi
+  if [[ "${rc}" -eq 2 || -z "${json}" ]]; then
+    # Brak manifestu: orphan tylko gdy brak też plików/dumpów
+    hm_backup_snapshot_has_payload "${remote_base}" && return 1
     return 0
   fi
   status="$(hm_backup_json_str "${json}" "status")"
   case "${status}" in
-    partial|failed) return 0 ;;
+    failed)
+      hm_backup_snapshot_has_payload "${remote_base}" && return 1
+      return 0
+      ;;
+    partial)
+      # partial z danymi to nadal użyteczna kopia (keep_min / restore)
+      hm_backup_snapshot_has_payload "${remote_base}" && return 1
+      return 0
+      ;;
   esac
   type="$(hm_backup_json_str "${json}" "type")"
   [[ -z "${type}" ]] && return 0
-  # site/archive bez files.tar.gz / files.chunks → BAD (sam manifest)
+  # site/archive bez files.tar.gz / files.chunks i bez dumpów → BAD
   case "${type}" in
     site|archive)
-      mode="$(hm_backup_detect_files_mode "${remote_base}")"
-      [[ "${mode}" == "none" ]] && return 0
+      if hm_backup_snapshot_has_payload "${remote_base}"; then
+        return 1
+      fi
+      return 0
       ;;
   esac
   return 1

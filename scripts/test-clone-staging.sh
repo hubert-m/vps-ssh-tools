@@ -273,6 +273,58 @@ else
 fi
 rm -f "${passf2}"
 
+# --- clone do istniejącego celu bez markera → odmowa; pliki nienaruszone ---
+mkdir -p "${FAKE_HOME}/blog.test/public_html" "${FAKE_HOME}/other.test/public_html"
+printf 'BLOG\n' > "${FAKE_HOME}/blog.test/public_html/index.html"
+printf 'OTHER_KEEP\n' > "${FAKE_HOME}/other.test/public_html/index.html"
+export HMTOOLS_STATE_DIR="${tmpdir}/state"
+mkdir -p "${HMTOOLS_STATE_DIR}"
+# przywróć prawdziwy snap (wcześniej zmockowany fail)
+unset -f hm_clone_snap_prod 2>/dev/null || true
+# hm_clone_snap_prod jest w main.sh — już załadowany; nadpisz sukcesem jeśli było mockiem
+if ! declare -F hm_clone_snap_prod >/dev/null 2>&1 || [[ "$(type -t hm_clone_snap_prod)" == "function" ]]; then
+  :
+fi
+# re-source snap z oryginału jeśli mock — prosta implementacja testowa
+hm_clone_snap_prod() {
+  local prod="$1" stamp dir
+  stamp="20200101-120000"
+  dir="$(hm_clone_snap_root "${prod}")/${stamp}"
+  mkdir -p "${dir}"
+  echo "domain=${prod}" > "${dir}/meta.txt"
+  printf '%s\n' "${stamp}"
+}
+if hm_clone_run blog.test other.test --files-only --yes >/dev/null 2>&1; then
+  echo "FAIL clone-existing-refuse"
+  fail=1
+else
+  echo "OK   clone-existing-refuse"
+fi
+if grep -q 'OTHER_KEEP' "${FAKE_HOME}/other.test/public_html/index.html"; then
+  echo "OK   clone-target-untouched"
+else
+  echo "FAIL clone-target-untouched"
+  fail=1
+fi
+# z --overwrite → snapshot przed rsync
+if hm_clone_run blog.test other.test --files-only --overwrite >/dev/null 2>&1; then
+  if [[ -d "$(hm_clone_snap_root other.test)/20200101-120000" ]]; then
+    echo "OK   clone-overwrite-snap"
+  else
+    echo "FAIL clone-overwrite-snap missing"
+    fail=1
+  fi
+  if grep -q 'BLOG' "${FAKE_HOME}/other.test/public_html/index.html"; then
+    echo "OK   clone-overwrite-rsync"
+  else
+    echo "FAIL clone-overwrite-rsync"
+    fail=1
+  fi
+else
+  echo "FAIL clone-overwrite-should-run"
+  fail=1
+fi
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED=${fail}"
   exit 1

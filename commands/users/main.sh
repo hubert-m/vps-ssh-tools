@@ -26,14 +26,145 @@ hm_users_session_login() {
   printf '%s' "${u}"
 }
 
+hm_users_uid_min() {
+  local v
+  v="$(awk '/^UID_MIN/{print $2; exit}' /etc/login.defs 2>/dev/null || true)"
+  [[ "${v}" =~ ^[0-9]+$ ]] || v=1000
+  printf '%s' "${v}"
+}
+
+# Konta usług — nigdy nie kasuj przez users del (nawet z --force).
+hm_users_is_service_login() {
+  local login="$1"
+  case "${login}" in
+    root|daemon|bin|sys|sync|games|man|lp|mail|news|uucp|proxy|www-data|backup|list|irc|gnats|nobody|\
+    systemd-*|messagebus|syslog|_apt|tss|uuidd|tcpdump|landscape|pollinate|sshd|mysql|mariadb|\
+    postgres|redis|nginx|apache|httpd|ftp|postfix|dovecot|named|bind|memcache|memcached|\
+    elasticsearch|mongodb|mongo|rabbitmq|docker|lxd|lightdm|gdm|colord|cups-pk-helper|\
+    geoclue|pulse|rtkit|saned|speech-dispatcher|usbmux|dnsmasq|libvirt*|qemu)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+# Czy login jest właścicielem serwisu (manifest / discover)? stdout = domena gdy tak.
+hm_users_site_owner_domain() {
+  local login="$1" dir f domain user
+  if declare -F hm_site_manifest_dir >/dev/null 2>&1; then
+    dir="$(hm_site_manifest_dir)"
+  else
+    dir="${HM_SITE_MANIFEST_DIR:-/etc/hmtools/sites}"
+  fi
+  if [[ -d "${dir}" ]]; then
+    for f in "${dir}"/*.json; do
+      [[ -f "${f}" && ! -L "${f}" ]] || continue
+      if hm_have_cmd jq; then
+        user="$(jq -r '.user // empty' "${f}" 2>/dev/null || true)"
+      else
+        user="$(sed -n 's/.*"user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${f}" | head -1)"
+      fi
+      [[ "${user}" == "${login}" ]] || continue
+      domain="$(basename "${f}" .json)"
+      printf '%s' "${domain}"
+      return 0
+    done
+  fi
+  if declare -F hm_discover_sites >/dev/null 2>&1; then
+    hm_discover_sites >/dev/null 2>&1 || true
+    local other row ou
+    for other in "${HM_SITES_LIST[@]:-}"; do
+      [[ -n "${other}" ]] || continue
+      row="$(hm_resolve_site_paths "${other}" 2>/dev/null || true)"
+      [[ -n "${row}" ]] || continue
+      ou="$(printf '%s\n' "${row}" | awk -F'\t' '{print $7}' | cut -d'|' -f1)"
+      if declare -F hm_tsv_unfield >/dev/null 2>&1; then
+        ou="$(hm_tsv_unfield "${ou}")"
+      elif [[ "${ou}" == "-" ]]; then
+        ou=""
+      fi
+      if [[ -n "${ou}" && "${ou}" == "${login}" ]]; then
+        printf '%s' "${other}"
+        return 0
+      fi
+    done
+  fi
+  return 1
+}
+
 hm_users_protected_target() {
   local login="$1" force="${2:-0}"
-  local me
+  local me uid uid_min site_dom shell home
   me="$(hm_users_session_login)"
   if [[ "${login}" == "root" || "${login}" == "${me}" ]]; then
     if [[ "${force}" != "1" ]]; then
       hm_err "Odmowa: ${login} (root/sesja) — użyj --force i potwierdź."
       return 1
+    fi
+  fi
+  if hm_users_is_service_login "${login}"; then
+    hm_err "Odmowa: ${login} to konto systemowe/usługowe — nie usuwa się przez users del."
+    return 1
+  fi
+  uid="$(getent passwd "${login}" 2>/dev/null | cut -d: -f3)"
+  if [[ -z "${uid}" && -f "$(hm_users_passwd_file)" ]]; then
+    uid="$(awk -F: -v u="${login}" '$1==u{print $3; exit}' "$(hm_users_passwd_file)")"
+  fi
+  uid_min="$(hm_users_uid_min)"
+  if [[ "${uid}" =~ ^[0-9]+$ && "${uid}" -lt "${uid_min}" && "${login}" != "root" ]]; then
+    if [[ "${force}" != "1" ]]; then
+      hm_err "Odmowa: ${login} ma UID ${uid} < UID_MIN=${uid_min} (konto systemowe) — użyj --force tylko świadomie."
+      return 1
+    fi
+  fi
+  shell="$(getent passwd "${login}" 2>/dev/null | cut -d: -f7)"
+  if [[ -z "${shell}" && -f "$(hm_users_passwd_file)" ]]; then
+    shell="$(awk -F: -v u="${login}" '$1==u{print $7; exit}' "$(hm_users_passwd_file)")"
+  fi
+  case "${shell}" in
+    */nologin|*/false)
+      if [[ "${force}" != "1" && "${uid}" =~ ^[0-9]+$ && "${uid}" -lt "${uid_min}" ]]; then
+        hm_err "Odmowa: ${login} (shell ${shell}, UID systemowy) — użyj --force tylko świadomie."
+        return 1
+      fi
+      ;;
+  esac
+  site_dom="$(hm_users_site_owner_domain "${login}" 2>/dev/null || true)"
+  if [[ -n "${site_dom}" ]]; then
+    hm_err "Odmowa: konto ${login} należy do serwisu ${site_dom} — użyj: webs delete ${site_dom}"
+    return 1
+  fi
+  return 0
+}
+
+# Czy wolno userdel -r? home musi być /home/<login>, nie docroot serwisu.
+hm_users_del_may_remove_home() {
+  local login="$1" home home_rp want
+  home="$(getent passwd "${login}" 2>/dev/null | cut -d: -f6)"
+  if [[ -z "${home}" && -f "$(hm_users_passwd_file)" ]]; then
+    home="$(awk -F: -v u="${login}" '$1==u{print $6; exit}' "$(hm_users_passwd_file)")"
+  fi
+  [[ -n "${home}" ]] || return 1
+  home_rp="$(realpath -m "${home}" 2>/dev/null || echo "${home}")"
+  want="$(realpath -m "$(hm_users_home_base)/${login}" 2>/dev/null || echo "$(hm_users_home_base)/${login}")"
+  [[ "${home_rp}" == "${want}" ]] || return 1
+  # nie usuwaj jeśli home = root domeny (/home/shop.test ≠ /home/shopuser)
+  if [[ -d "${home_rp}" ]]; then
+    local other row root
+    if declare -F hm_discover_sites >/dev/null 2>&1; then
+      hm_discover_sites >/dev/null 2>&1 || true
+      for other in "${HM_SITES_LIST[@]:-}"; do
+        row="$(hm_resolve_site_paths "${other}" 2>/dev/null || true)"
+        [[ -n "${row}" ]] || continue
+        root="$(printf '%s\n' "${row}" | awk -F'\t' '{print $2}')"
+        if declare -F hm_tsv_unfield >/dev/null 2>&1; then
+          root="$(hm_tsv_unfield "${root}")"
+        fi
+        root="$(realpath -m "${root}" 2>/dev/null || echo "${root}")"
+        if [[ -n "${root}" && "${root}" == "${home_rp}" ]]; then
+          return 1
+        fi
+      done
     fi
   fi
   return 0
@@ -336,27 +467,39 @@ cmd_users_expire() {
 }
 
 cmd_users_del() {
-  local login="${1:-}" force=0
+  local login="${1:-}" force=0 rm_home=0
   shift || true
   [[ "${1:-}" == "--force" ]] && force=1
   [[ -n "${login}" ]] || { hm_err "Użycie: users del <login> [--force]"; return 1; }
   hm_users_protected_target "${login}" "${force}" || return 1
+  if hm_users_del_may_remove_home "${login}"; then
+    rm_home=1
+  else
+    hm_info "Home nie jest czystym /home/${login} (lub to katalog serwisu) — userdel bez -r."
+  fi
+  local del_cmd="userdel"
+  [[ "${rm_home}" -eq 1 ]] && del_cmd="userdel -r"
   if [[ "${force}" -eq 1 ]]; then
     HM_CONFIRM_CRITICAL_NOUN="ego użytkownika" \
-      hm_confirm_plan_critical "${login}" "Usunięcie konta chronionego." "userdel -r ${login}" || return 0
+      hm_confirm_plan_critical "${login}" "Usunięcie konta chronionego (${del_cmd})." "${del_cmd} ${login}" || return 0
   else
-    hm_confirm_plan "users del ${login}" "Usuwa konto i home." "userdel -r ${login}" || return 0
+    hm_confirm_plan "users del ${login}" "Usuwa konto$([[ "${rm_home}" -eq 1 ]] && echo ' i home' || echo ' (bez -r)')." \
+      "${del_cmd} ${login}" || return 0
   fi
   cmd_users_sudo revoke "${login}" 2>/dev/null || true
   if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
     local pf
     pf="$(hm_users_passwd_file)"
     grep -v "^${login}:" "${pf}" > "${pf}.tmp" && mv -f "${pf}.tmp" "${pf}"
-    printf 'deleted %s\n' "${login}" >> "${HM_USERS_ACTION_LOG:-/dev/null}"
-    hm_ok "Usunięto ${login} (test)"
+    printf 'deleted %s rm_home=%s\n' "${login}" "${rm_home}" >> "${HM_USERS_ACTION_LOG:-/dev/null}"
+    hm_ok "Usunięto ${login} (test, rm_home=${rm_home})"
     return 0
   fi
-  userdel -r "${login}" && hm_ok "Usunięto ${login}"
+  if [[ "${rm_home}" -eq 1 ]]; then
+    userdel -r "${login}" && hm_ok "Usunięto ${login} (z home)"
+  else
+    userdel "${login}" && hm_ok "Usunięto ${login} (home pozostawiony)"
+  fi
 }
 
 hm_users_sudoers_write() {

@@ -15,8 +15,16 @@ hm_backup_stamp_epoch() {
     || echo 0
 }
 
+hm_backup_prune_is_archive() {
+  local json="$1" type archived
+  type="$(hm_backup_json_str "${json}" "type")"
+  archived="$(hm_backup_json_str "${json}" "archived")"
+  [[ "${type}" == "archive" || "${archived}" == "true" ]]
+}
+
 hm_backup_prune_scope() {
-  # prune jednej ścieżki względnej (domena|full): wypisuje remote_base do usunięcia
+  # prune jednej ścieżki względnej (domena|full): wypisuje remote_base do usunięcia.
+  # rc≠0 gdy błąd odczytu manifestu — caller pomija całą domenę (żadnego purge).
   local rel="$1" days="$2" keep_min="$3" now cutoff
   now="$(date +%s)"
   cutoff=$((now - days * 86400))
@@ -28,47 +36,83 @@ hm_backup_prune_scope() {
   done < <(hm_backup_list_stamps "${rel}")
 
   local total="${#stamps[@]}"
-  local i=0 epoch remote_base grace_h grace_cut
-  local -a complete=()
+  local i=0 epoch remote_base grace_h grace_cut json rc type
+  local -a keepable=()
+  local -a keepable_json=()
   grace_h="${BACKUP_ORPHAN_GRACE_HOURS:-24}"
   [[ "${grace_h}" =~ ^[0-9]+$ ]] || grace_h=24
   grace_cut=$((now - grace_h * 3600))
-  # 1) niepełne/osierocone — do purge TYLKO gdy starsze niż grace (trwający backup ma świeży stamp bez manifestu)
+
   for s in "${stamps[@]}"; do
     remote_base="$(hm_rclone_dest "${rel}/${s}")"
-    if hm_backup_snapshot_is_incomplete "${remote_base}"; then
-      epoch="$(hm_backup_stamp_epoch "${s}")"
-      if [[ "${epoch}" -gt 0 && "${epoch}" -ge "${grace_cut}" ]]; then
-        hm_warn "Pomijam świeży niepełny snapshot (<${grace_h}h, możliwy trwający backup): ${rel}/${s}"
-        continue
-      fi
-      hm_warn "Niepełny/osierocony snapshot → do usunięcia: ${rel}/${s}"
-      printf '%s\n' "${remote_base}"
+    rc=0
+    json="$(hm_backup_cat_manifest "${remote_base}")" || rc=$?
+    if [[ "${rc}" -eq 1 ]]; then
+      hm_err "Przerywam prune dla ${rel}: błąd odczytu manifestu (${s}) — nic nie kasuję w tej domenie."
+      return 1
+    fi
+    # type=archive: nigdy automatycznie
+    if [[ "${rc}" -eq 0 && -n "${json}" ]] && hm_backup_prune_is_archive "${json}"; then
+      keepable+=("${s}")
+      keepable_json+=("${json}")
       continue
     fi
-    complete+=("${s}")
+    # Orphan: brak manifestu i brak payloadu — purge po grace (nie dotyczy archive)
+    if [[ "${rc}" -eq 2 || -z "${json}" ]]; then
+      if ! hm_backup_snapshot_has_payload "${remote_base}"; then
+        epoch="$(hm_backup_stamp_epoch "${s}")"
+        if [[ "${epoch}" -gt 0 && "${epoch}" -ge "${grace_cut}" ]]; then
+          hm_warn "Pomijam świeży orphan (<${grace_h}h, możliwy trwający backup): ${rel}/${s}"
+          continue
+        fi
+        hm_warn "Osierocony snapshot (brak manifestu i danych) → do usunięcia: ${rel}/${s}"
+        printf '%s\n' "${remote_base}"
+        continue
+      fi
+      # brak manifestu, ale są dane — zostaw pod keep_min
+      keepable+=("${s}")
+      keepable_json+=("")
+      continue
+    fi
+    # partial/ok/failed z payloadem lub samym manifestem typu full — w puli keep_min
+    keepable+=("${s}")
+    keepable_json+=("${json}")
   done
-  # 2) kompletne: keep_min najnowszych + retencja dni; archive chronione
-  for s in "${complete[@]}"; do
+
+  # keep_min najnowszych (stamps już sort -r) + retencja dni; archive już w keepable bez purge wyżej
+  i=0
+  for s in "${keepable[@]}"; do
+    json="${keepable_json[$i]}"
     i=$((i + 1))
     if [[ "${i}" -le "${keep_min}" ]]; then
       continue
     fi
-    epoch="$(hm_backup_stamp_epoch "${s}")"
-    if [[ "${epoch}" -gt 0 && "${epoch}" -lt "${cutoff}" ]]; then
+    if [[ -n "${json}" ]] && hm_backup_prune_is_archive "${json}"; then
+      hm_warn "Pomijam chroniony snapshot archive: ${rel}/${s}"
+      continue
+    fi
+    # Ponowne sprawdzenie archive gdy json był pusty przy pierwszym przejściu
+    if [[ -z "${json}" ]]; then
       remote_base="$(hm_rclone_dest "${rel}/${s}")"
-      local json type archived
-      json="$(hm_backup_cat_manifest "${remote_base}")"
-      type="$(hm_backup_json_str "${json}" "type")"
-      archived="$(hm_backup_json_str "${json}" "archived")"
-      if [[ "${type}" == "archive" || "${archived}" == "true" ]]; then
+      rc=0
+      json="$(hm_backup_cat_manifest "${remote_base}")" || rc=$?
+      if [[ "${rc}" -eq 1 ]]; then
+        hm_err "Przerywam prune dla ${rel}: błąd odczytu manifestu (${s})."
+        return 1
+      fi
+      if [[ "${rc}" -eq 0 && -n "${json}" ]] && hm_backup_prune_is_archive "${json}"; then
         hm_warn "Pomijam chroniony snapshot archive: ${rel}/${s}"
         continue
       fi
+    fi
+    epoch="$(hm_backup_stamp_epoch "${s}")"
+    if [[ "${epoch}" -gt 0 && "${epoch}" -lt "${cutoff}" ]]; then
+      remote_base="$(hm_rclone_dest "${rel}/${s}")"
       printf '%s\n' "${remote_base}"
     fi
   done
   : "${total}"
+  return 0
 }
 
 hm_backup_prune() {
@@ -115,14 +159,23 @@ hm_backup_prune() {
   echo
 
   local -a to_purge=()
-  local name path
+  local name path scope_tmp scope_rc
+  scope_tmp="$(mktemp "${TMPDIR:-/tmp}/hm-prune.XXXXXX")"
   while IFS= read -r name; do
     [[ -n "${name}" ]] || continue
     [[ "${name}" == "db-dumps" ]] && continue
+    : > "${scope_tmp}"
+    scope_rc=0
+    hm_backup_prune_scope "${name}" "${days}" "${keep_min}" > "${scope_tmp}" || scope_rc=$?
+    if [[ "${scope_rc}" -ne 0 ]]; then
+      hm_warn "Pomijam katalog ${name} (błąd odczytu — bez purge)."
+      continue
+    fi
     while IFS= read -r path; do
       [[ -n "${path}" ]] && to_purge+=("${path}")
-    done < <(hm_backup_prune_scope "${name}" "${days}" "${keep_min}")
+    done < "${scope_tmp}"
   done < <(hm_rclone_lsd_names "${RCLONE_REMOTE}")
+  rm -f "${scope_tmp}"
 
   if [[ "${#to_purge[@]}" -eq 0 ]]; then
     hm_ok "Nic do usunięcia."

@@ -95,7 +95,30 @@ hm_backup_sha256_file() {
 # SHA256 pliku na Drive (gdy remote wspiera hashsum); inaczej pusty string.
 hm_rclone_remote_sha256() {
   local remote="$1"
+  if [[ "${remote}" == /* ]]; then
+    hm_backup_sha256_file "${remote}" 2>/dev/null || true
+    return 0
+  fi
   rclone hashsum SHA256 "${remote}" 2>/dev/null | awk '{print $1}' | head -1
+}
+
+# SHA256 zdalnego obiektu: hashsum → lokalny plik → rclone cat | sha256sum.
+hm_rclone_sha256_any() {
+  local remote="$1" h
+  h="$(hm_rclone_remote_sha256 "${remote}" 2>/dev/null || true)"
+  if [[ -n "${h}" && "${h}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    printf '%s\n' "${h}"
+    return 0
+  fi
+  if [[ "${remote}" == /* ]]; then
+    hm_backup_sha256_file "${remote}"
+    return $?
+  fi
+  if hm_have_cmd sha256sum; then
+    rclone cat "${remote}" 2>/dev/null | sha256sum | awk '{print $1}'
+    return 0
+  fi
+  return 1
 }
 
 # Czy Unix user jest używany przez inną domenę niż $domain (live na VPS)?
@@ -306,10 +329,16 @@ hm_stream_mysqldump() {
 }
 
 # tar exit 1 = ostrzeżenie (file changed); 2 = błąd krytyczny
+# strict=1 (archive): tylko rc=0
 hm_tar_pipe_ok() {
   local tar_rc="$1"
+  local strict="${2:-0}"
   if [[ "${tar_rc}" -eq 0 ]]; then
     return 0
+  fi
+  if [[ "${strict}" -eq 1 ]]; then
+    hm_err "tar: kod ${tar_rc} niedopuszczalny w trybie archive (wymagane 0)."
+    return 1
   fi
   if [[ "${tar_rc}" -eq 1 ]]; then
     hm_warn "tar: pliki zmieniły się podczas odczytu (kod 1) — traktuję jako ostrzeżenie."
@@ -322,22 +351,31 @@ hm_stream_tar_rcat() {
   local src_dir="$1"
   local dest="$2"
   local exclude_mode="${3:-backup}"
-  local excludes tar_err tar_rc gzip_rc rcat_rc
+  local excludes tar_err tar_rc gzip_rc rcat_rc tee_rc hash_file
+  local strict=0 tar_opts="--warning=no-file-changed --ignore-failed-read"
   excludes="$(hm_backup_tar_excludes "${exclude_mode}")"
   tar_err="$(mktemp "${TMP_DIR:-/tmp}/hmtools-tar.XXXXXX.err")"
+  hash_file="$(mktemp "${TMP_DIR:-/tmp}/hmtools-tar.XXXXXX.sha")"
+  HM_BACKUP_LAST_SHA256=""
+  if [[ "${exclude_mode}" == "archive" ]]; then
+    strict=1
+    tar_opts="--warning=no-file-changed"
+  fi
 
   hm_info "Archiwum (stream) ${src_dir} → ${dest} [excludes=${exclude_mode}: $(hm_backup_excludes_list "${exclude_mode}")]"
   hm_status_line "tar|gzip|rclone ${src_dir}..."
   set +e
   set +o pipefail
   # shellcheck disable=SC2086
-  tar -C "${src_dir}" --warning=no-file-changed --ignore-failed-read ${excludes} -cf - . 2>"${tar_err}" \
+  tar -C "${src_dir}" ${tar_opts} ${excludes} -cf - . 2>"${tar_err}" \
     | gzip -c \
+    | tee >(sha256sum 2>/dev/null | awk '{print $1}' > "${hash_file}") \
     | hm_rclone_rcat "${dest}"
   local -a _ps=( "${PIPESTATUS[@]}" )
   tar_rc=${_ps[0]:-1}
   gzip_rc=${_ps[1]:-1}
-  rcat_rc=${_ps[2]:-1}
+  tee_rc=${_ps[2]:-1}
+  rcat_rc=${_ps[3]:-1}
   set -o pipefail
   set -e
   hm_status_clear
@@ -347,15 +385,20 @@ hm_stream_tar_rcat() {
   fi
   rm -f "${tar_err}"
 
-  if [[ "${gzip_rc}" -ne 0 || "${rcat_rc}" -ne 0 ]]; then
-    hm_err "Stream tar nieudany dla ${src_dir} (gzip=${gzip_rc} rcat=${rcat_rc})."
+  if [[ "${gzip_rc}" -ne 0 || "${rcat_rc}" -ne 0 || "${tee_rc}" -ne 0 ]]; then
+    hm_err "Stream tar nieudany dla ${src_dir} (gzip=${gzip_rc} tee=${tee_rc} rcat=${rcat_rc})."
+    rm -f "${hash_file}"
     return 1
   fi
-  if ! hm_tar_pipe_ok "${tar_rc}"; then
+  if ! hm_tar_pipe_ok "${tar_rc}" "${strict}"; then
     hm_err "tar błąd krytyczny (kod ${tar_rc}) dla ${src_dir}."
+    rm -f "${hash_file}"
     return 1
   fi
-  hm_ok "Pliki ${src_dir} OK (stream)."
+  HM_BACKUP_LAST_SHA256="$(tr -d '[:space:]' < "${hash_file}" 2>/dev/null || true)"
+  rm -f "${hash_file}"
+  export HM_BACKUP_LAST_SHA256
+  hm_ok "Pliki ${src_dir} OK (stream${HM_BACKUP_LAST_SHA256:+, sha256=${HM_BACKUP_LAST_SHA256:0:12}…})."
 }
 
 hm_chunked_tar_upload() {
@@ -366,10 +409,18 @@ hm_chunked_tar_upload() {
   local chunk_bytes=$((CHUNK_SIZE_MB * 1024 * 1024))
   local work="${TMP_DIR}/$$"
   local excludes tar_err tar_rc gzip_rc split_rc
+  local strict=0 tar_opts="--warning=no-file-changed --ignore-failed-read"
   excludes="$(hm_backup_tar_excludes "${exclude_mode}")"
+  HM_BACKUP_LAST_SHA256=""
+  HM_BACKUP_LAST_SHA256SUMS=""
+  if [[ "${exclude_mode}" == "archive" ]]; then
+    strict=1
+    tar_opts="--warning=no-file-changed"
+  fi
 
   mkdir -p "${work}"
   tar_err="$(mktemp "${work}/tar.XXXXXX.err")"
+  local whole_gz="${work}/files.tar.gz"
 
   hm_info "Tryb chunk (${CHUNK_SIZE_MB} MB): ${src_dir} → ${remote_dir} [excludes=${exclude_mode}: $(hm_backup_excludes_list "${exclude_mode}")]"
   hm_rclone_mkdir "${remote_dir}"
@@ -377,13 +428,15 @@ hm_chunked_tar_upload() {
   set +e
   set +o pipefail
   # shellcheck disable=SC2086
-  tar -C "${src_dir}" --warning=no-file-changed --ignore-failed-read ${excludes} -cf - . 2>"${tar_err}" \
+  tar -C "${src_dir}" ${tar_opts} ${excludes} -cf - . 2>"${tar_err}" \
     | gzip -c \
+    | tee "${whole_gz}" \
     | split -b "${chunk_bytes}" -d -a 4 - "${work}/part_"
   local -a _ps=( "${PIPESTATUS[@]}" )
   tar_rc=${_ps[0]:-1}
   gzip_rc=${_ps[1]:-1}
-  split_rc=${_ps[2]:-1}
+  local tee_rc=${_ps[2]:-1}
+  split_rc=${_ps[3]:-1}
   set -o pipefail
   set -e
 
@@ -392,16 +445,18 @@ hm_chunked_tar_upload() {
   fi
   rm -f "${tar_err}"
 
-  if [[ "${gzip_rc}" -ne 0 || "${split_rc}" -ne 0 ]] || ! hm_tar_pipe_ok "${tar_rc}"; then
-    if [[ "${gzip_rc}" -ne 0 || "${split_rc}" -ne 0 ]] || [[ "${tar_rc}" -ge 2 ]]; then
-      hm_err "Błąd tworzenia chunków (tar=${tar_rc} gzip=${gzip_rc} split=${split_rc})."
-      rm -rf "${work}"
-      return 1
-    fi
+  if [[ "${gzip_rc}" -ne 0 || "${split_rc}" -ne 0 || "${tee_rc}" -ne 0 ]] || ! hm_tar_pipe_ok "${tar_rc}" "${strict}"; then
+    hm_err "Błąd tworzenia chunków (tar=${tar_rc} gzip=${gzip_rc} tee=${tee_rc} split=${split_rc})."
+    rm -rf "${work}"
+    return 1
+  fi
+
+  if [[ -f "${whole_gz}" ]]; then
+    HM_BACKUP_LAST_SHA256="$(hm_backup_sha256_file "${whole_gz}" || true)"
   fi
 
   local -a parts=()
-  local part dest_file n=0 total_parts=0 part_sz
+  local part dest_file n=0 total_parts=0 part_sz part_sha sums=""
   for part in "${work}"/part_*; do
     [[ -f "${part}" ]] && parts+=("${part}")
   done
@@ -416,6 +471,10 @@ hm_chunked_tar_upload() {
     n=$((n + 1))
     part_sz="$(hm_human_size "$(stat -c%s "${part}" 2>/dev/null || echo 0)")"
     dest_file="${remote_dir}/files.tar.gz.$(basename "${part}")"
+    part_sha="$(hm_backup_sha256_file "${part}" || true)"
+    if [[ -n "${part_sha}" ]]; then
+      sums+="${part_sha}  files.chunks/files.tar.gz.$(basename "${part}")"$'\n'
+    fi
     hm_progress_bar "${n}" "${total_parts}" "Upload $(basename "${part}") (${part_sz})"
     if ! hm_rclone_copyto "${part}" "${dest_file}"; then
       hm_progress_done
@@ -427,8 +486,14 @@ hm_chunked_tar_upload() {
   done
   hm_progress_done "Chunki wysłane (${total_parts}/${total_parts})."
 
-  # marker
-  echo "chunks=${total_parts}" | hm_rclone_rcat "${remote_dir}/files.tar.gz.chunks.txt" || true
+  # marker — bez || true (archive wymaga markera)
+  if ! echo "chunks=${total_parts}" | hm_rclone_rcat "${remote_dir}/files.tar.gz.chunks.txt"; then
+    hm_err "Nie udało się zapisać markera chunków."
+    rm -rf "${work}"
+    return 1
+  fi
+  HM_BACKUP_LAST_SHA256SUMS="${sums}"
+  export HM_BACKUP_LAST_SHA256 HM_BACKUP_LAST_SHA256SUMS
   rm -rf "${work}"
 }
 
