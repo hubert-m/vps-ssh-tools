@@ -160,17 +160,17 @@ hm_dns_parse_expiry_date() {
   if [[ -z "${date}" ]]; then
     date="$(awk '
       function date_from(s,   m) {
-        if (match(s, /"eventDate"[[:space:]]*:[[:space:]]*"[0-9]{4}-[0-9]{2}-[0-9]{2}/)) {
+        if (match(s, /"eventDate"[[:space:]]*:[[:space:]]*"[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) {
           m = substr(s, RSTART, RLENGTH)
-          if (match(m, /[0-9]{4}-[0-9]{2}-[0-9]{2}/)) return substr(m, RSTART, 10)
+          if (match(m, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) return substr(m, RSTART, 10)
         }
         return ""
       }
       function last_date_from(s,   tmp, m, last) {
         tmp = s; last = ""
-        while (match(tmp, /"eventDate"[[:space:]]*:[[:space:]]*"[0-9]{4}-[0-9]{2}-[0-9]{2}/)) {
+        while (match(tmp, /"eventDate"[[:space:]]*:[[:space:]]*"[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) {
           m = substr(tmp, RSTART, RLENGTH)
-          if (match(m, /[0-9]{4}-[0-9]{2}-[0-9]{2}/)) last = substr(m, RSTART, 10)
+          if (match(m, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) last = substr(m, RSTART, 10)
           tmp = substr(tmp, RSTART + RLENGTH)
         }
         return last
@@ -196,18 +196,18 @@ hm_dns_parse_expiry_date() {
           rest = after
         }
         # WHOIS
-        if (match(data, /[Rr]egistry [Ee]xpiry [Dd]ate:[[:space:]]*[0-9]{4}-[0-9]{2}-[0-9]{2}/)) {
+        if (match(data, /[Rr]egistry [Ee]xpiry [Dd]ate:[[:space:]]*[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) {
           m = substr(data, RSTART, RLENGTH)
-          if (match(m, /[0-9]{4}-[0-9]{2}-[0-9]{2}/)) { print substr(m, RSTART, 10); exit }
+          if (match(m, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) { print substr(m, RSTART, 10); exit }
         }
-        if (match(data, /[Ee]xpiry [Dd]ate:[[:space:]]*[0-9]{4}-[0-9]{2}-[0-9]{2}/)) {
+        if (match(data, /[Ee]xpiry [Dd]ate:[[:space:]]*[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) {
           m = substr(data, RSTART, RLENGTH)
-          if (match(m, /[0-9]{4}-[0-9]{2}-[0-9]{2}/)) { print substr(m, RSTART, 10); exit }
+          if (match(m, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) { print substr(m, RSTART, 10); exit }
         }
         # .pl style
-        if (match(data, /renewal date:[[:space:]]*[0-9]{4}[.-][0-9]{2}[.-][0-9]{2}/)) {
+        if (match(data, /renewal date:[[:space:]]*[0-9][0-9][0-9][0-9][.-][0-9][0-9][.-][0-9][0-9]/)) {
           m = substr(data, RSTART, RLENGTH)
-          if (match(m, /[0-9]{4}[.-][0-9]{2}[.-][0-9]{2}/)) {
+          if (match(m, /[0-9][0-9][0-9][0-9][.-][0-9][0-9][.-][0-9][0-9]/)) {
             d = substr(m, RSTART, 10); gsub(/\./, "-", d); print d; exit
           }
         }

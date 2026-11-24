@@ -354,6 +354,48 @@ hm_site_delete keep.example --archive >/dev/null
 [[ "${archived}" -eq 1 ]] && grep -q 'keep.example' "${root}/archived" && ok "archive-reuse" || bad "archive-reuse"
 [[ -d "${home2}" ]] && ok "archive-no-direct-delete" || bad "archive-no-direct-delete"
 
+# Manifest + .dbs BEZ resources.ndjson → klucz planu „meta” + DROP + sprzątanie
+dom_meta="metaonly.example"
+home_meta="${HM_SITE_HOME_BASE}/${dom_meta}"
+state_meta="$(hm_site_state_dir "${dom_meta}")"
+mkdir -p "${home_meta}/public_html" "${state_meta}" "$(hm_site_manifest_dir)"
+man_meta="$(hm_site_manifest_path "${dom_meta}")"
+dbs_meta="$(hm_site_manifest_dir)/.${dom_meta}.dbs"
+printf '%s\n' "{\"schema\":1,\"domain\":\"${dom_meta}\",\"user\":\"metaonly\",\"runtime\":{\"type\":\"php\",\"version\":\"8.3\",\"manager\":\"\"},\"databases\":[{\"type\":\"mysql\",\"name\":\"metaonly_app\",\"user\":\"metaonly_app\"}]}" > "${man_meta}"
+printf 'mysql\tmetaonly_app\tmetaonly_app\tlocalhost\t3306\n' > "${dbs_meta}"
+rm -f "$(hm_site_resources_path "${dom_meta}")" 2>/dev/null || true
+export HM_SITE_LIFECYCLE_LOG="${root}/metaonly.log"
+: > "${HM_SITE_LIFECYCLE_LOG}"
+DROP_LOG="${root}/drop.log"
+: > "${DROP_LOG}"
+hm_mysql_exec() {
+  printf '%s\n' "$*" >> "${DROP_LOG}"
+  return 0
+}
+hm_del_db_owned_by_other() { return 1; }
+hm_site_mysql_db_owned_elsewhere() { return 0; }
+HM_DEL_DOMAIN="${dom_meta}"
+HM_DEL_WIZARD=()
+HM_DEL_DBS=("metaonly_app|metaonly_app|0|manifest.dbs")
+HM_DEL_SKIP_DBS=()
+HM_DEL_KEEP_DB=0
+HM_DEL_KEEP_FILES=0
+HM_DEL_PLAN_STEPS=()
+HM_DEL_PLAN_KEYS=()
+hm_site_lifecycle_collect_delete
+[[ "${#HM_DEL_WIZARD[@]}" -eq 0 ]] && ok "metaonly-no-resources" || bad "metaonly-no-resources"
+hm_site_lifecycle_has_meta "${dom_meta}" && ok "metaonly-has-meta" || bad "metaonly-has-meta"
+hm_site_lifecycle_plan_delete
+printf '%s\n' "${HM_DEL_PLAN_KEYS[*]}" | grep -qw meta && ok "metaonly-plan-key" || bad "metaonly-plan-key ${HM_DEL_PLAN_KEYS[*]-}"
+# egzekucja jak w delete.sh case meta
+hm_site_lifecycle_drop_manifest_dbs "${dom_meta}"
+hm_site_lifecycle_cleanup_meta "${dom_meta}"
+grep -q 'DROP DATABASE' "${DROP_LOG}" && ok "metaonly-drop-db" || bad "metaonly-drop-db"
+[[ ! -f "${man_meta}" ]] && ok "metaonly-manifest-gone" || bad "metaonly-manifest-gone"
+[[ ! -f "${dbs_meta}" ]] && ok "metaonly-dbs-gone" || bad "metaonly-dbs-gone"
+[[ ! -d "${state_meta}" ]] && ok "metaonly-state-gone" || bad "metaonly-state-gone"
+grep -q $'^meta\t'"${dom_meta}"'$' "${HM_SITE_LIFECYCLE_LOG}" && ok "metaonly-meta-log" || bad "metaonly-meta-log"
+
 if [[ "${fail}" -ne 0 ]]; then
   echo FAILED
   exit 1

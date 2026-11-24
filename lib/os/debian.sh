@@ -356,8 +356,25 @@ _hm_os_do_firewall_remove() {
 # Usuń z ufw tylko reguły ALLOW oznaczone komentarzem hmtools.
 # $1=port|from  $2=port/proto albo IP
 # Dopasowanie portu: dokładny token To (nie podciąg 80 ⊂ 8080).
+# Dopasowanie from: dokładna kolumna From (nie podciąg 1.2.3.4 ⊂ 11.2.3.45).
+_hm_os_ufw_from_field() {
+  # Ostatni token przed # (kolumna From w „ufw status numbered”).
+  local rest="$1" body
+  body="${rest%%#*}"
+  body="$(printf '%s' "${body}" | sed 's/[[:space:]]*$//')"
+  printf '%s' "${body}" | awk '{print $NF}'
+}
+
+_hm_os_ufw_from_matches() {
+  local from="$1" ip="$2"
+  [[ -n "${from}" && -n "${ip}" ]] || return 1
+  [[ "${from}" == "${ip}" \
+    || "${from}" == "${ip}/32" \
+    || "${from}" == "${ip}/128" ]]
+}
+
 _hm_os_ufw_delete_ours_matching() {
-  local mode="${1:-}" needle="${2:-}" line num rest cmt to_field
+  local mode="${1:-}" needle="${2:-}" line num rest cmt to_field from_field
   local -a nums=()
   [[ -n "${mode}" && -n "${needle}" ]] || return 1
   while IFS= read -r line || [[ -n "${line}" ]]; do
@@ -373,8 +390,8 @@ _hm_os_ufw_delete_ours_matching() {
       case "${cmt}" in *hmtools*|*hm:*) ;; *) continue ;; esac
     fi
     if [[ "${mode}" == "from" ]]; then
-      # IP w kolumnie From (nie słowo „from”)
-      [[ "${rest}" == *"${needle}"* ]] || continue
+      from_field="$(_hm_os_ufw_from_field "${rest}")"
+      _hm_os_ufw_from_matches "${from_field}" "${needle}" || continue
       nums+=("${num}")
       continue
     fi

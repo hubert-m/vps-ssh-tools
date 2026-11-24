@@ -223,7 +223,7 @@ EOF
         hm_info "(--yes: pomijam potwierdzenie backup full)"
       else
         if [[ ! -t 0 ]]; then
-          hm_err "Brak TTY — odmowa backup full bez --yes (cron: użyj „backup full --yes”)."
+          hm_err "Brak TTY — odmowa backup full bez --yes (cron: użyj 'backup full --yes')."
           return 1
         fi
         if ! hm_confirm "Uruchomić pełny backup serwera"; then

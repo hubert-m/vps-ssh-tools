@@ -282,6 +282,18 @@ else
   ok "mysql-foreign-not-in-dbs"
 fi
 
+# Stale manifest (brak HOME) → rc≠0 zamiast „pomijam — już jest”
+stale_dom="stale.example"
+printf '%s\n' "{\"schema\":1,\"domain\":\"${stale_dom}\",\"user\":\"staleusr\",\"runtime\":{\"type\":\"php\",\"version\":\"8.3\",\"manager\":\"\"},\"databases\":[]}" \
+  > "$(hm_site_manifest_path "${stale_dom}")"
+rm -rf "${HM_SITE_HOME_BASE}/${stale_dom}"
+if cmd_site_new "${stale_dom}" --runtime php --db none --yes >"${root}/stale.out" 2>&1; then
+  bad "stale-manifest-rc"
+else
+  ok "stale-manifest-rc"
+fi
+grep -qi 'Stale manifest' "${root}/stale.out" && ok "stale-manifest-msg" || { bad "stale-manifest-msg"; cat "${root}/stale.out" >&2; }
+
 if [[ "${fail}" -eq 0 ]]; then
   echo "ALL PASSED"
 else

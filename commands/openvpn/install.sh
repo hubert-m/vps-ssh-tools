@@ -390,17 +390,71 @@ hm_ovpn_export_dir_safe() {
   return 1
 }
 
-hm_ovpn_fw_cleanup() {
-  local fw="$1" port="$2" proto="$3" iface="${4:-eth0}" cidr="${5:-}"
-  [[ -n "${port}" && -n "${proto}" ]] || return 0
+# 0 = reguła/masq dodane przez nas (wolno usunąć); 1 = istniały przed instalacją.
+# Brak klucza w starym state → konserwatywnie 1 (nie ruszaj cudzych).
+hm_ovpn_fw_had_flag() {
+  local key="$1" v
+  v="$(hm_ovpn_state_get "${key}" 2>/dev/null || true)"
+  [[ -z "${v}" ]] && v=1
+  printf '%s' "${v}"
+}
+
+hm_ovpn_fw_probe_port() {
+  local fw="$1" port="$2" proto="$3"
+  if [[ -n "${HM_OVPN_FW_HAD_PORT_RULE:-}" ]]; then
+    [[ "${HM_OVPN_FW_HAD_PORT_RULE}" == "1" ]]
+    return $?
+  fi
   case "${fw}" in
     ufw)
-      hm_ovpn_fw_exec ufw delete allow "${port}/${proto}" || true
+      hm_have_cmd ufw || return 1
+      ufw status 2>/dev/null | grep -Eq "^${port}/${proto}[[:space:]]+ALLOW" && return 0
+      return 1
+      ;;
+    firewalld)
+      hm_have_cmd firewall-cmd || return 1
+      firewall-cmd --query-port="${port}/${proto}" >/dev/null 2>&1
+      return $?
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+hm_ovpn_fw_probe_masq() {
+  local fw="$1"
+  if [[ -n "${HM_OVPN_FW_HAD_MASQ:-}" ]]; then
+    [[ "${HM_OVPN_FW_HAD_MASQ}" == "1" ]]
+    return $?
+  fi
+  case "${fw}" in
+    firewalld)
+      hm_have_cmd firewall-cmd || return 1
+      firewall-cmd --query-masquerade >/dev/null 2>&1
+      return $?
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+hm_ovpn_fw_cleanup() {
+  local fw="$1" port="$2" proto="$3" iface="${4:-eth0}" cidr="${5:-}"
+  local had_port had_masq
+  [[ -n "${port}" && -n "${proto}" ]] || return 0
+  had_port="$(hm_ovpn_fw_had_flag FW_HAD_PORT_RULE)"
+  had_masq="$(hm_ovpn_fw_had_flag FW_HAD_MASQ)"
+  case "${fw}" in
+    ufw)
+      # Nie: surowe `ufw delete allow` — usuwa też reguły sprzed instalacji.
+      # Port: tylko reguły z komentarzem hmtools (hm_os_firewall_remove).
       hm_ovpn_fw_exec ufw delete route allow in on tun0 out on "${iface}" || true
       ;;
     firewalld)
-      hm_ovpn_fw_exec firewall-cmd --permanent --remove-masquerade || true
-      hm_ovpn_fw_exec firewall-cmd --permanent --remove-port="${port}/${proto}" || true
+      if [[ "${had_masq}" != "1" ]]; then
+        hm_ovpn_fw_exec firewall-cmd --permanent --remove-masquerade || true
+      fi
+      if [[ "${had_port}" != "1" ]]; then
+        hm_ovpn_fw_exec firewall-cmd --permanent --remove-port="${port}/${proto}" || true
+      fi
       hm_ovpn_fw_exec firewall-cmd --permanent --zone=trusted --remove-interface=tun0 || true
       hm_ovpn_fw_exec firewall-cmd --reload || true
       ;;
@@ -410,7 +464,10 @@ hm_ovpn_fw_cleanup() {
       fi
       ;;
   esac
-  if declare -F hm_os_firewall_remove >/dev/null 2>&1 && [[ "${HMTOOLS_TEST:-}" != "1" ]]; then
+  # ufw/firewalld: zdejmij wyłącznie ALLOW z komentarzem hmtools (nie deny / nie cudze)
+  if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+    hm_ovpn_fw_exec hm_os_firewall_remove "${port}/${proto}" || true
+  elif declare -F hm_os_firewall_remove >/dev/null 2>&1; then
     hm_os_firewall_remove "${port}/${proto}" || true
   fi
 }
@@ -622,7 +679,7 @@ hm_ovpn_rollback() {
 
 hm_ovpn_nat_apply() {
   local fw="${HM_OVPN_FW:-iptables}" cidr="$1" iface="${2:-eth0}" port="$3" proto="$4"
-  local rules log unit script
+  local rules log unit script had_port=0 had_masq=0
   log="${HM_OVPN_CALL_LOG:-}"
   case "${fw}" in
     ufw)
@@ -639,11 +696,24 @@ COMMIT
 EOF
       fi
       hm_ovpn_fw_exec ufw route allow in on tun0 out on "${iface}" || true
-      hm_ovpn_fw_exec ufw allow "${port}/${proto}" || true
+      if hm_ovpn_fw_probe_port ufw "${port}" "${proto}"; then
+        had_port=1
+      else
+        # komentarz hmtools — uninstall zdejmie tylko tę regułę
+        hm_ovpn_fw_exec ufw allow "${port}/${proto}" comment "hmtools-openvpn" || true
+      fi
       ;;
     firewalld)
-      hm_ovpn_fw_exec firewall-cmd --permanent --add-masquerade || true
-      hm_ovpn_fw_exec firewall-cmd --permanent --add-port="${port}/${proto}" || true
+      if hm_ovpn_fw_probe_masq firewalld; then
+        had_masq=1
+      else
+        hm_ovpn_fw_exec firewall-cmd --permanent --add-masquerade || true
+      fi
+      if hm_ovpn_fw_probe_port firewalld "${port}" "${proto}"; then
+        had_port=1
+      else
+        hm_ovpn_fw_exec firewall-cmd --permanent --add-port="${port}/${proto}" || true
+      fi
       hm_ovpn_fw_exec firewall-cmd --permanent --zone=trusted --add-interface=tun0 || true
       hm_ovpn_fw_exec firewall-cmd --reload || true
       ;;
@@ -690,6 +760,8 @@ EOF
       [[ -n "${log}" ]] && printf 'iptables MASQUERADE %s via %s\n' "${cidr}" "${iface}" >> "${log}"
       ;;
   esac
+  HM_OVPN_FW_HAD_PORT_RULE="${had_port}"
+  HM_OVPN_FW_HAD_MASQ="${had_masq}"
 }
 
 hm_ovpn_write_state() {
@@ -901,6 +973,8 @@ hm_ovpn_install() {
   {
     printf 'FW=%s\n' "${fw}"
     printf 'IFACE=%s\n' "${iface}"
+    printf 'FW_HAD_PORT_RULE=%s\n' "${HM_OVPN_FW_HAD_PORT_RULE:-0}"
+    printf 'FW_HAD_MASQ=%s\n' "${HM_OVPN_FW_HAD_MASQ:-0}"
     if [[ "${packages_installed}" -eq 1 ]]; then
       printf 'PACKAGES=yes\n'
     else

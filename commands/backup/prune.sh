@@ -4,7 +4,7 @@
 hm_backup_stamp_epoch() {
   local stamp="$1"
   # YYYYMMDD-HHMMSS → epoch
-  if [[ ! "${stamp}" =~ ^[0-9]{8}-[0-9]{6}$ ]]; then
+  if [[ ! "${stamp}" =~ ^[0-9]{8}-[0-9]{6}(-[0-9]+)?$ ]]; then
     echo 0
     return
   fi

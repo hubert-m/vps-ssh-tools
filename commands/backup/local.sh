@@ -34,7 +34,7 @@ hm_backup_local_prune_domain() {
   for d in "${base}"/*; do
     [[ -d "${d}" ]] || continue
     bn="$(basename "${d}")"
-    [[ "${bn}" =~ ^[0-9]{8}-[0-9]{6}$ ]] || continue
+    [[ "${bn}" =~ ^[0-9]{8}-[0-9]{6}(-[0-9]+)?$ ]] || continue
     stamps+=("${bn}")
   done
   [[ "${#stamps[@]}" -gt 0 ]] || return 0
@@ -81,7 +81,7 @@ hm_backup_local_prune_domain() {
   # 1) usuń uszkodzone (nie zajmują miejsca w N)
   for s in "${damaged[@]+"${damaged[@]}"}"; do
     [[ -n "${s}" ]] || continue
-    [[ "${s}" =~ ^[0-9]{8}-[0-9]{6}$ ]] || continue
+    [[ "${s}" =~ ^[0-9]{8}-[0-9]{6}(-[0-9]+)?$ ]] || continue
     hm_info "local prune: usuwam uszkodzony ${base}/${s}"
     rm -rf -- "${base:?}/${s:?}"
   done
@@ -90,7 +90,7 @@ hm_backup_local_prune_domain() {
   local i=0
   for s in "${complete[@]+"${complete[@]}"}"; do
     [[ -n "${s}" ]] || continue
-    [[ "${s}" =~ ^[0-9]{8}-[0-9]{6}$ ]] || continue
+    [[ "${s}" =~ ^[0-9]{8}-[0-9]{6}(-[0-9]+)?$ ]] || continue
     i=$((i + 1))
     if [[ "${i}" -gt "${keep}" ]]; then
       hm_info "local prune: usuwam ${base}/${s} (poza keep=${keep})"

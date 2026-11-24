@@ -317,11 +317,16 @@ hm_site_mysql_db_owned_elsewhere() {
 hm_site_mysql_provision() {
   local domain="$1" dbname="$2" dbuser="$3"
   local prev="${HM_MYSQL_CREATE_QUIET:-}" other
+  HM_MYSQL_CREATE_RESUMED=0
+  HM_MYSQL_CREATE_PASS=""
   # Resume tej samej domeny: baza już w manifeście → pomijam (idempotencja).
   if declare -F hm_mysql_db_exists >/dev/null 2>&1 && hm_mysql_db_exists "${dbname}"; then
     if hm_site_mysql_db_in_own_manifest "${domain}" "${dbname}"; then
       hm_info "pomijam — już jest (mysql ${dbname})"
       hm_site_manifest_add_db "${domain}" mysql "${dbname}" "${dbuser}" "127.0.0.1" "3306" || true
+      # Hasła nie znamy — caller nie wolno zapisać pustego DB_PASSWORD.
+      HM_MYSQL_CREATE_RESUMED=1
+      HM_MYSQL_CREATE_PASS=""
       return 0
     fi
     other="$(hm_site_mysql_db_owned_elsewhere "${domain}" "${dbname}" 2>/dev/null || true)"
@@ -346,7 +351,7 @@ hm_site_mysql_provision() {
     return 1
   fi
   HM_MYSQL_CREATE_QUIET="${prev}"
-  [[ -n "${HM_MYSQL_CREATE_PASS}" ]] || { hm_err "MySQL: brak hasła po utworzeniu."; return 1; }
+  [[ -n "${HM_MYSQL_CREATE_PASS:-}" ]] || { hm_err "MySQL: brak hasła po utworzeniu."; return 1; }
   hm_site_db_ledger_add "${domain}" mysql "${dbname}" "${dbuser}" "127.0.0.1"
   hm_site_manifest_add_db "${domain}" mysql "${dbname}" "${dbuser}" "127.0.0.1" "3306"
   if declare -F hm_tx_note_undo >/dev/null 2>&1; then
@@ -699,16 +704,26 @@ hm_site_db_provision() {
       hm_site_db_ensure_mysql "${yes}" || return 1
       ident="${db_name:-$(hm_site_db_ident "${user}" app)}" || { hm_err "Nieprawidłowa nazwa bazy."; return 1; }
       hm_site_mysql_provision "${domain}" "${ident}" "${ident}" || return 1
-      pass="${HM_MYSQL_CREATE_PASS}"
-      hm_site_env_apply_database "${domain}" "${fw}" mysql "${ident}" "${ident}" "${pass}" "127.0.0.1" "3306" || return 1
-      shown="${pass}"
-      HM_MYSQL_CREATE_PASS=""
+      pass="${HM_MYSQL_CREATE_PASS:-}"
+      if [[ "${HM_MYSQL_CREATE_RESUMED:-0}" == "1" ]]; then
+        # Resume: baza i .env już były — nie nadpisuj pustym hasłem.
+        HM_MYSQL_CREATE_RESUMED=0
+        HM_MYSQL_CREATE_PASS=""
+      elif [[ -z "${pass}" ]]; then
+        hm_err "MySQL: brak hasła po provision — odmowa zapisu pustego DB_PASSWORD."
+        return 1
+      else
+        hm_site_env_apply_database "${domain}" "${fw}" mysql "${ident}" "${ident}" "${pass}" "127.0.0.1" "3306" || return 1
+        shown="${pass}"
+        HM_MYSQL_CREATE_PASS=""
+      fi
       ;;
     postgres|postgresql)
       hm_site_db_ensure_postgres "${pg_ver}" "${yes}" || return 1
       ident="${db_name:-$(hm_site_db_ident "${user}" app)}" || { hm_err "Nieprawidłowa nazwa bazy."; return 1; }
       hm_site_pg_provision "${domain}" "${ident}" "${ident}" || return 1
-      pass="${HM_SITE_DB_PASS}"
+      pass="${HM_SITE_DB_PASS:-}"
+      [[ -n "${pass}" ]] || { hm_err "PostgreSQL: brak hasła po provision."; return 1; }
       hm_site_env_apply_database "${domain}" "${fw}" postgres "${ident}" "${ident}" "${pass}" "127.0.0.1" "5432" || return 1
       shown="${pass}"
       HM_SITE_DB_PASS=""
@@ -729,8 +744,8 @@ hm_site_db_provision() {
   for role in "${redis_roles[@]+"${redis_roles[@]}"}"; do
     [[ -n "${role}" ]] || continue
     hm_site_redis_provision "${domain}" "${role}" || return 1
-    pass="${HM_SITE_DB_PASS}"
-    dbn="${HM_SITE_REDIS_DB}"
+    pass="${HM_SITE_DB_PASS:-}"
+    dbn="${HM_SITE_REDIS_DB:-}"
     hm_site_env_apply_redis "${domain}" "${pass}" "${dbn}" "127.0.0.1" "6379" "${role}" || return 1
     if [[ -z "${shown}" && -n "${pass}" ]]; then
       shown="${pass}"

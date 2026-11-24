@@ -145,21 +145,22 @@ hm_mail_senders() {
     }
     # Syslog: "Mon DD HH:MM:SS …" → YYYYMMDDHHMMSS; bez daty → "" (nie filtruj).
     function syslog_cmp(s,   a, mo, dd, t, hh, mi, ss) {
-      if (!match(s, /^[A-Z][a-z][a-z][ \t]+[0-9]+[ \t]+[0-9]{2}:[0-9]{2}:[0-9]{2}/)) return ""
+      if (!match(s, /^[A-Z][a-z][a-z][ \t]+[0-9]+[ \t]+[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/)) return ""
       a = substr(s, RSTART, RLENGTH)
       mo = substr(a, 1, 3)
       if (!(mo in mon)) return ""
-      if (match(a, /[0-9]+[ \t]+[0-9]{2}:[0-9]{2}:[0-9]{2}/) == 0) return ""
+      if (match(a, /[0-9]+[ \t]+[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/) == 0) return ""
       dd = substr(a, RSTART, RLENGTH)
       if (match(dd, /^[0-9]+/) == 0) return ""
       dd = sprintf("%02d", substr(dd, RSTART, RLENGTH) + 0)
-      if (match(a, /[0-9]{2}:[0-9]{2}:[0-9]{2}/) == 0) return ""
+      if (match(a, /[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/) == 0) return ""
       t = substr(a, RSTART, 8)
       hh = substr(t, 1, 2); mi = substr(t, 4, 2); ss = substr(t, 7, 2)
       return year mon[mo] dd hh mi ss
     }
     function qid_of(s,   m) {
-      if (match(s, /: [0-9A-Fa-f]{5,}: /)) {
+      # ≥5 hex (mawk bez {5,})
+      if (match(s, /: [0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]*: /)) {
         m = substr(s, RSTART + 2, RLENGTH - 4)
         return m
       }

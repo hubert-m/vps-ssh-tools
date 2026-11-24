@@ -374,13 +374,19 @@ hm_os_firewall_deny() {
 }
 
 hm_os_firewall_remove() {
-  local spec="${1:-}" port proto="tcp"
+  local spec="${1:-}" port proto="tcp" ip=""
   hm_os_bind || return 1
   if hm_have_cmd csf; then
-    # numer nieobsługiwany — expect port[/proto] or IP
+    # numer nieobsługiwany — expect port[/proto] or from:IP / IP
     if [[ "${spec}" =~ ^[0-9]+$ ]]; then
       _hm_os_csf_deny_port "${spec}" "tcp"
       return $?
+    fi
+    if [[ "${spec}" == from:* ]]; then
+      ip="${spec#from:}"
+      csf -ar "${ip}" >/dev/null 2>&1 || csf -dr "${ip}" >/dev/null 2>&1 || return 1
+      csf -r >/dev/null 2>&1 || true
+      return 0
     fi
     if [[ "${spec}" == *.* || ( "${spec}" == *:* && "${spec}" != */* ) ]]; then
       csf -ar "${spec}" >/dev/null 2>&1 || csf -dr "${spec}" >/dev/null 2>&1 || return 1

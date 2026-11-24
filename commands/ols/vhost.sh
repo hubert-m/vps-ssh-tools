@@ -153,7 +153,7 @@ hm_ols_vhost_errorlog_tail_errors() {
     BEGIN { bad=0 }
     {
       # OLS: YYYY-MM-DD HH:MM:SS.mmm ...
-      if (match($0, /^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}/)) {
+      if (match($0, /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]/)) {
         ts=substr($0,1,19)
         gsub(/[-:]/," ",ts)
         epoch=mktime(ts " 0")

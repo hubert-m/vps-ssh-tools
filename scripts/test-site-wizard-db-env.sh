@@ -163,6 +163,56 @@ else
   ok "other-user-read-mode-only"
 fi
 
+# Istniejąca baza (nie w manifeście) → rc≠0, bez unbound variable, rollback HOME/.dbs
+hm_mysql_db_exists() { return 0; }
+hm_mysql_create() { hm_err "mysql_create nie powinno być wołane"; return 1; }
+hm_site_db_ensure_mysql() { return 0; }
+hm_site_base_check() {
+  HM_SITE_BASE_DOMAIN="${1:-}"
+  HM_SITE_BASE_USER="${2:-xuser}"
+  HM_SITE_BASE_RUNTIME="${3:-php}"
+  return 0
+}
+hm_site_base_apply() {
+  local home d="${HM_SITE_BASE_DOMAIN:-collide.example}"
+  home="$(hm_site_home "${d}")"
+  mkdir -p "${home}/shared" "${home}/public_html" "${home}/logs"
+  : > "${home}/shared/.env"
+  chmod 0600 "${home}/shared/.env" 2>/dev/null || true
+  return 0
+}
+hm_site_unix_user() { printf 'xuser\n'; }
+hm_site_web_provision() { return 0; }
+hm_tx_begin() { HM_TX_JOURNAL="${root}/tx.journal"; : > "${HM_TX_JOURNAL}"; return 0; }
+hm_tx_step() { return 2; }
+hm_tx_done() { return 0; }
+hm_tx_rollback() {
+  local d="$1" home
+  home="$(hm_site_home "${d}")"
+  rm -rf -- "${home}"
+  rm -f -- "$(hm_site_manifest_path "${d}")" "${HM_SITE_MANIFEST_DIR}/.${d}.dbs"
+  HM_TX_JOURNAL=""
+  printf 'rolled:%s\n' "${d}" >> "${root}/rollback.log"
+  return 0
+}
+hm_tx_note_undo() { return 0; }
+: > "${root}/rollback.log"
+col_out="${root}/collide.out"
+if cmd_site_new collide.example --runtime php --db mysql --yes >"${col_out}" 2>&1; then
+  bad "mysql-exists-rc"
+else
+  ok "mysql-exists-rc"
+fi
+if grep -qi 'unbound variable' "${col_out}"; then
+  bad "mysql-exists-unbound"
+else
+  ok "mysql-exists-unbound"
+fi
+grep -Eiq 'Odmowa:.*(baza|db)|już istnieje' "${col_out}" && ok "mysql-exists-msg" || { bad "mysql-exists-msg"; cat "${col_out}" >&2; }
+[[ ! -d "$(hm_site_home collide.example)" ]] && ok "mysql-exists-no-home" || bad "mysql-exists-no-home"
+[[ ! -f "${HM_SITE_MANIFEST_DIR}/.collide.example.dbs" ]] && ok "mysql-exists-no-dbs" || bad "mysql-exists-no-dbs"
+grep -q 'rolled:collide.example' "${root}/rollback.log" && ok "mysql-exists-rollback" || bad "mysql-exists-rollback"
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"
   exit 1

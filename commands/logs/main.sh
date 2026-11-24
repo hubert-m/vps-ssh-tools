@@ -320,7 +320,8 @@ hm_logs_search_awk() {
       for (i = 1; i <= 12; i++) mon[_m[i]] = sprintf("%02d", i)
     }
     function line_cmp(s,   m, dd, mo, yy, hh, mi, ss) {
-      if (!match(s, /\[[0-9]{2}\/[A-Za-z]{3}\/[0-9]{4}:[0-9]{2}:[0-9]{2}:[0-9]{2}/)) return ""
+      # mawk: bez {n} — jawne powtórzenia
+      if (!match(s, /\[[0-9][0-9]\/[A-Za-z][A-Za-z][A-Za-z]\/[0-9][0-9][0-9][0-9]:[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/)) return ""
       m = substr(s, RSTART + 1, RLENGTH - 1)
       dd = substr(m, 1, 2); mo = substr(m, 4, 3); yy = substr(m, 8, 4)
       hh = substr(m, 13, 2); mi = substr(m, 16, 2); ss = substr(m, 19, 2)
@@ -338,9 +339,9 @@ hm_logs_search_awk() {
       if (url != "" && $0 !~ url) next
       if (status != "") {
         if (status == "5xx" || status == "5XX") {
-          if ($0 !~ /[[:space:]]5[0-9]{2}[[:space:]]/) next
+          if ($0 !~ /[[:space:]]5[0-9][0-9][[:space:]]/) next
         } else if (status == "4xx" || status == "4XX") {
-          if ($0 !~ /[[:space:]]4[0-9]{2}[[:space:]]/) next
+          if ($0 !~ /[[:space:]]4[0-9][0-9][[:space:]]/) next
         } else if (index($0, " " status " ") == 0) next
       }
       printf "%s\t%s\n", domain, $0

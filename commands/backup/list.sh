@@ -95,7 +95,8 @@ hm_backup_detect_files_mode() {
   # echo: tar | chunks | none
   local remote_base="$1"
   if [[ "${remote_base}" == /* ]]; then
-    [[ -f "${remote_base}/files.tar.gz" ]] && { echo "tar"; return 0; }
+    { [[ -f "${remote_base}/files.tar.gz" ]] || [[ -f "${remote_base}/files.tar.gz.enc" ]]; } \
+      && { echo "tar"; return 0; }
     if [[ -d "${remote_base}/files.chunks" ]] \
       && find "${remote_base}/files.chunks" -name 'files.tar.gz.part_*' 2>/dev/null | grep -q .; then
       echo "chunks"
@@ -104,7 +105,8 @@ hm_backup_detect_files_mode() {
     echo "none"
     return 0
   fi
-  if rclone ls "${remote_base}/files.tar.gz" >/dev/null 2>&1; then
+  if rclone ls "${remote_base}/files.tar.gz" >/dev/null 2>&1 \
+      || rclone ls "${remote_base}/files.tar.gz.enc" >/dev/null 2>&1; then
     echo "tar"
     return 0
   fi
@@ -125,7 +127,7 @@ hm_backup_list_stamps() {
   local rel="$1"
   local base
   base="$(hm_rclone_dest "${rel}")"
-  hm_rclone_lsd_names "${base}" | grep -E '^[0-9]{8}-[0-9]{6}$' | sort -r
+  hm_rclone_lsd_names "${base}" | grep -E '^[0-9]{8}-[0-9]{6}(-[0-9]+)?$' | sort -r
 }
 
 # 0 = osierocony/pusty (do BAD / orphan-purge); 1 = użyteczny (także partial z payloadem)

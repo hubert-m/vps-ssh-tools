@@ -344,6 +344,64 @@ else
   fail=1
 fi
 
+# --- mail delete: kolejność Maildir ↔ deleteEmail + rollback ---
+TRASH_ROOT="${tmpdir}/trash"
+export HM_MAIL_TRASH_ROOT="${TRASH_ROOT}"
+md="${tmpdir}/vmail/example.pl/biuro"
+mkdir -p "${md}/cur" "${md}/new"
+printf 'msg-body\n' > "${md}/cur/1."
+FAKE_USERS["biuro@example.pl"]=1
+HM_SITE_DOMAIN="example.pl"
+hm_mail_maildir_path() { printf '%s' "${md}"; }
+
+# deleteEmail fails → Maildir przywrócony
+hm_run() {
+  printf '%s\n' "$*" >> "${RUN_LOG}"
+  [[ "$*" == *deleteEmail* ]] && return 1
+  return 0
+}
+: > "${RUN_LOG}"
+if hm_mail_account_delete biuro --yes >/dev/null 2>&1; then
+  echo "FAIL delete-cp-fail-should-rc"
+  fail=1
+elif [[ -f "${md}/cur/1." ]]; then
+  echo "OK   delete-cp-fail-maildir-restored"
+else
+  echo "FAIL delete-cp-fail-maildir-restored"
+  fail=1
+fi
+
+# --purge + CP fail → bez rm Maildir
+mkdir -p "${md}/cur"
+printf 'msg-body\n' > "${md}/cur/1."
+: > "${RUN_LOG}"
+if hm_mail_account_delete biuro --purge --yes >/dev/null 2>&1; then
+  echo "FAIL delete-purge-cp-fail-should-rc"
+  fail=1
+elif [[ -f "${md}/cur/1." ]]; then
+  echo "OK   delete-purge-cp-fail-no-rm"
+else
+  echo "FAIL delete-purge-cp-fail-no-rm"
+  fail=1
+fi
+
+# sukces CP + --purge → path i trash puste
+hm_run() {
+  printf '%s\n' "$*" >> "${RUN_LOG}"
+  return 0
+}
+mkdir -p "${md}/cur"
+printf 'msg-body\n' > "${md}/cur/1."
+: > "${RUN_LOG}"
+if hm_mail_account_delete biuro --purge --yes >/dev/null 2>&1 \
+  && [[ ! -e "${md}" ]] \
+  && [[ -z "$(find "${TRASH_ROOT}" -type f 2>/dev/null | head -1 || true)" ]]; then
+  echo "OK   delete-purge-cp-ok"
+else
+  echo "FAIL delete-purge-cp-ok"
+  fail=1
+fi
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED=${fail}"
   exit 1

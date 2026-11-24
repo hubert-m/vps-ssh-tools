@@ -284,7 +284,7 @@ hm_traffic_awk='
     return (s ~ /^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/ && s ~ /[.]/)
   }
   function clf_cmp(s,   m, dd, mo, yy, hh, mi, ss) {
-    if (!match(s, /\[[0-9]{2}\/[A-Za-z]{3}\/[0-9]{4}:[0-9]{2}:[0-9]{2}:[0-9]{2}/)) return ""
+    if (!match(s, /\[[0-9][0-9]\/[A-Za-z][A-Za-z][A-Za-z]\/[0-9][0-9][0-9][0-9]:[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/)) return ""
     m = substr(s, RSTART + 1, RLENGTH - 1)
     dd = substr(m, 1, 2); mo = substr(m, 4, 3); yy = substr(m, 8, 4)
     hh = substr(m, 13, 2); mi = substr(m, 16, 2); ss = substr(m, 19, 2)
@@ -301,7 +301,7 @@ hm_traffic_awk='
     line = $0
     if (!within_since(line)) next
     rip = real_ip(line)
-    if (line ~ /\[[0-9]{2}\/[A-Za-z]{3}\/[0-9]{4}:/ || (NF >= 7 && $2 == "-" && $3 == "-")) {
+    if (line ~ /\[[0-9][0-9]\/[A-Za-z][A-Za-z][A-Za-z]\/[0-9][0-9][0-9][0-9]:/ || (NF >= 7 && $2 == "-" && $3 == "-")) {
       ip = $1
       if (rip != "") ip = rip
       bytes = 0

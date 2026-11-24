@@ -434,6 +434,23 @@ cmd_site_new() {
   fi
   if declare -F hm_tx_begin >/dev/null 2>&1; then
     if [[ -f "$(hm_site_manifest_path "${domain}")" && "${tx_resume}" -eq 0 ]]; then
+      local _home_chk="" _user_chk="" _stale=0
+      _home_chk="$(hm_site_home "${domain}" 2>/dev/null || true)"
+      if [[ -z "${_home_chk}" || ! -d "${_home_chk}" ]]; then
+        _stale=1
+      else
+        if declare -F hm_site_unix_user >/dev/null 2>&1; then
+          _user_chk="$(hm_site_unix_user "${domain}" 2>/dev/null || true)"
+        fi
+        [[ -z "${_user_chk}" ]] && _user_chk="$(sed -n 's/.*"user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$(hm_site_manifest_path "${domain}")" | head -1)"
+        if [[ -n "${_user_chk}" ]] && ! id "${_user_chk}" >/dev/null 2>&1; then
+          _stale=1
+        fi
+      fi
+      if [[ "${_stale}" -eq 1 ]]; then
+        hm_err "Stale manifest dla ${domain} (brak katalogu/usera Unix). Usuń: webs delete ${domain} — albo wznów: site new ${domain} --resume"
+        return 1
+      fi
       hm_info "pomijam — już jest (manifest ${domain})"
       [[ -n "${save_profile}" ]] && hm_site_profile_save "${save_profile}" "${domain}" "${preset_app}" "${runtime}" "${db}" "${webserver}"
       return 0

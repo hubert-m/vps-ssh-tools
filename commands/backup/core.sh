@@ -193,11 +193,17 @@ hm_backup_prefer_docroot_if_shared_home() {
 hm_backup_tar_excludes() {
   local mode="${1:-backup}"
   local list e
+  local -a parts=()
   case "${mode}" in
     archive) list="${ARCHIVE_EXCLUDES:-}" ;;
     *) list="${BACKUP_EXCLUDES:-}" ;;
   esac
-  for e in ${list}; do
+  # Bez globa w CWD (set -f): „*.log” nie rozwija się do lokalnych plików.
+  set -f
+  # shellcheck disable=SC2206
+  parts=( ${list} )
+  set +f
+  for e in "${parts[@]+"${parts[@]}"}"; do
     [[ -n "${e}" ]] || continue
     printf -- '--exclude=%s ' "${e}"
   done
@@ -271,6 +277,70 @@ hm_backup_stamp() {
   date +%Y%m%d-%H%M%S
 }
 
+# Katalog snapshotu już zajęty (ma treść)?
+hm_backup_snapshot_dir_busy() {
+  local base="${1:-}"
+  [[ -n "${base}" ]] || return 1
+  if [[ "${base}" == /* ]]; then
+    [[ -d "${base}" ]] || return 1
+    local e
+    e="$(find "${base}" -mindepth 1 -maxdepth 1 2>/dev/null | head -1 || true)"
+    [[ -n "${e}" ]]
+    return $?
+  fi
+  rclone lsf "${base}" 2>/dev/null | head -1 | grep -q .
+}
+
+# Oznacz snapshot utworzony przez ten proces (purge tylko własny).
+hm_backup_mark_owned_remote() {
+  local base="${1:-}"
+  [[ -n "${base}" ]] || return 0
+  HM_BACKUP_OWNED_REMOTE="${base}"
+  export HM_BACKUP_OWNED_REMOTE
+  if [[ "${base}" == /* ]]; then
+    mkdir -p "${base}" 2>/dev/null || true
+    printf '%s\n' "$$" > "${base}/.hmtools-owned" 2>/dev/null || true
+  else
+    printf '%s\n' "$$" | hm_rclone_rcat "${base}/.hmtools-owned" 2>/dev/null || true
+  fi
+}
+
+# Ustal unikalny stamp+remote_base. Przy HM_BACKUP_FORCE_STAMP + kolizja → odmowa.
+# $1=site|full|archive  $2=domena (dla site/archive) — ustawia HM_BACKUP_STAMP / HM_BACKUP_REMOTE_BASE
+hm_backup_claim_stamp() {
+  local kind="$1" domain="${2:-}"
+  local stamp remote_base n=0 cand
+  stamp="$(hm_backup_stamp)"
+  case "${kind}" in
+    full) remote_base="$(hm_backup_dest_full "${stamp}")" ;;
+    site|archive) remote_base="$(hm_backup_dest_site "${domain}" "${stamp}")" ;;
+    *) hm_err "hm_backup_claim_stamp: nieznany kind=${kind}"; return 1 ;;
+  esac
+  if hm_backup_snapshot_dir_busy "${remote_base}"; then
+    if [[ -n "${HM_BACKUP_FORCE_STAMP:-}" ]]; then
+      hm_err "Kolizja stampu ${stamp}: ${remote_base} już istnieje — odmowa (nie nadpisuję / nie purguję cudzego)."
+      return 1
+    fi
+    n=1
+    while [[ "${n}" -lt 100 ]]; do
+      cand="${stamp}-${n}"
+      case "${kind}" in
+        full) remote_base="$(hm_backup_dest_full "${cand}")" ;;
+        *) remote_base="$(hm_backup_dest_site "${domain}" "${cand}")" ;;
+      esac
+      hm_backup_snapshot_dir_busy "${remote_base}" || { stamp="${cand}"; break; }
+      n=$((n + 1))
+    done
+    if [[ "${n}" -ge 100 ]]; then
+      hm_err "Nie znaleziono wolnego stampu od ${stamp}."
+      return 1
+    fi
+  fi
+  HM_BACKUP_STAMP="${stamp}"
+  HM_BACKUP_REMOTE_BASE="${remote_base}"
+  export HM_BACKUP_STAMP HM_BACKUP_REMOTE_BASE
+}
+
 hm_stream_mysqldump() {
   local dbname="$1"
   local dest="$2"
@@ -298,7 +368,7 @@ hm_stream_mysqldump() {
   hm_status_line "mysqldump ${dbname}..."
   set +e
   set +o pipefail
-  "${dumpcli}" "${sock_args[@]}" --single-transaction --quick --routines --triggers \
+  "${dumpcli}" "${sock_args[@]}" --single-transaction --quick --routines --triggers --events \
     -- "${dbname}" 2>"${errf}" | gzip -c > "${tmp}"
   local -a _ps=( "${PIPESTATUS[@]}" )
   dump_rc=${_ps[0]:-1}
@@ -317,15 +387,59 @@ hm_stream_mysqldump() {
   fi
   rm -f "${errf}"
 
-  if ! hm_rclone_copyto "${tmp}" "${dest}"; then
-    hm_err "Upload dumpa nieudany: ${dest}"
-    # nie zostawiaj częściowego artefaktu
-    rclone deletefile "${dest}" >/dev/null 2>&1 || true
+  local upload="${tmp}" remote_dest="${dest}"
+  if [[ -n "${BACKUP_ENCRYPT_PASSPHRASE:-}" ]]; then
+    if ! upload="$(hm_backup_maybe_encrypt_file "${tmp}")"; then
+      rm -f "${tmp}" "${tmp}.enc" 2>/dev/null || true
+      return 1
+    fi
+    [[ "${upload}" == *.enc ]] && remote_dest="${dest}.enc"
+  fi
+  if ! hm_rclone_copyto "${upload}" "${remote_dest}"; then
+    hm_err "Upload dumpa nieudany: ${remote_dest}"
+    if [[ "${remote_dest}" == /* ]]; then
+      rm -f -- "${remote_dest}" 2>/dev/null || true
+    else
+      rclone deletefile "${remote_dest}" >/dev/null 2>&1 || true
+    fi
+    rm -f "${tmp}" "${tmp}.enc" 2>/dev/null || true
+    return 1
+  fi
+  rm -f "${tmp}" "${tmp}.enc" 2>/dev/null || true
+  # SHOW CREATE DATABASE → obok dumpa (charset/collation) — plaintext DDL (bez haseł)
+  if declare -F hm_backup_save_create_database >/dev/null 2>&1; then
+    hm_backup_save_create_database "${dbname}" "${dest%.sql.gz}.create.sql" || true
+  fi
+  hm_ok "DB ${dbname} OK${remote_dest:+ (${remote_dest##*/})}."
+}
+
+# Zapisz CREATE DATABASE … CHARACTER SET/COLLATE obok dumpa.
+hm_backup_save_create_database() {
+  local dbname="$1" dest="$2" cli sock_args=() tmp line
+  hm_is_valid_db_name "${dbname}" || return 1
+  cli="$(hm_mysql_cli)" || return 1
+  [[ -n "${MYSQL_SOCKET:-}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
+  tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-cdb.XXXXXX.sql")"
+  line="$("${cli}" "${sock_args[@]}" -N -B -e "SHOW CREATE DATABASE \`${dbname}\`;" 2>/dev/null \
+    | awk -F'\t' '{print $2}' | head -1)"
+  if [[ -z "${line}" || "${line}" != CREATE* ]]; then
     rm -f "${tmp}"
     return 1
   fi
+  # IF NOT EXISTS — bezpieczny restore
+  line="$(printf '%s' "${line}" | sed 's/^CREATE DATABASE `/CREATE DATABASE IF NOT EXISTS `/')"
+  printf '%s;\n' "${line}" > "${tmp}"
+  if ! hm_rclone_copyto "${tmp}" "${dest}" 2>/dev/null; then
+    # lokalny dest
+    if [[ "${dest}" == /* ]]; then
+      mkdir -p "$(dirname "${dest}")"
+      cp -a "${tmp}" "${dest}" || { rm -f "${tmp}"; return 1; }
+    else
+      cat "${tmp}" | hm_rclone_rcat "${dest}" 2>/dev/null || { rm -f "${tmp}"; return 1; }
+    fi
+  fi
   rm -f "${tmp}"
-  hm_ok "DB ${dbname} OK."
+  return 0
 }
 
 # tar exit 1 = ostrzeżenie (file changed); 2 = błąd krytyczny
@@ -347,13 +461,72 @@ hm_tar_pipe_ok() {
   return 1
 }
 
+# Flagi meta plików (ACL/xattr/sparse) — tylko gdy GNU tar je zna.
+# $1=create|extract  → stdout: spacja + opcje
+hm_backup_tar_meta_opts() {
+  local mode="${1:-create}" help=""
+  if [[ -z "${HM_BACKUP_TAR_HELP_CACHE:-}" ]]; then
+    HM_BACKUP_TAR_HELP_CACHE="$(tar --help 2>&1 || true)"
+    export HM_BACKUP_TAR_HELP_CACHE
+  fi
+  help="${HM_BACKUP_TAR_HELP_CACHE}"
+  local opts="" probe=""
+  # ACL/xattr tylko gdy FS naprawdę je przyjmuje (setfacl/setfattr na probe OK).
+  if [[ -z "${HM_BACKUP_TAR_ACL_OK:-}" ]]; then
+    HM_BACKUP_TAR_ACL_OK=0
+    if printf '%s' "${help}" | grep -q -- '--acls' \
+        && command -v getfacl >/dev/null 2>&1 && command -v setfacl >/dev/null 2>&1; then
+      probe="$(mktemp "${TMP_DIR:-/tmp}/hmtools-acl.XXXXXX")"
+      if setfacl -m "u:$(id -un):r" "${probe}" 2>/dev/null \
+          && getfacl -c "${probe}" 2>/dev/null | grep -q "user:"; then
+        HM_BACKUP_TAR_ACL_OK=1
+      fi
+      rm -f "${probe}"
+    fi
+    export HM_BACKUP_TAR_ACL_OK
+  fi
+  if [[ -z "${HM_BACKUP_TAR_XATTR_OK:-}" ]]; then
+    HM_BACKUP_TAR_XATTR_OK=0
+    if printf '%s' "${help}" | grep -q -- '--xattrs' \
+        && command -v getfattr >/dev/null 2>&1 && command -v setfattr >/dev/null 2>&1; then
+      probe="$(mktemp "${TMP_DIR:-/tmp}/hmtools-xattr.XXXXXX")"
+      if setfattr -n user.hmtools -v 1 "${probe}" 2>/dev/null \
+          && getfattr -n user.hmtools "${probe}" >/dev/null 2>&1; then
+        HM_BACKUP_TAR_XATTR_OK=1
+      fi
+      rm -f "${probe}"
+    fi
+    export HM_BACKUP_TAR_XATTR_OK
+  fi
+  if [[ "${HM_BACKUP_TAR_ACL_OK}" == "1" ]]; then
+    opts+=" --acls"
+  fi
+  if [[ "${HM_BACKUP_TAR_XATTR_OK}" == "1" ]]; then
+    opts+=" --xattrs"
+    if printf '%s' "${help}" | grep -q -- '--xattrs-include'; then
+      opts+=" --xattrs-include=*"
+    fi
+  fi
+  if [[ "${mode}" == "create" ]]; then
+    if printf '%s' "${help}" | grep -q -- '--sparse'; then
+      opts+=" --sparse"
+    fi
+    if printf '%s' "${help}" | grep -q -- '--numeric-owner'; then
+      opts+=" --numeric-owner"
+    fi
+  fi
+  printf '%s' "${opts}"
+}
+
 hm_stream_tar_rcat() {
   local src_dir="$1"
   local dest="$2"
   local exclude_mode="${3:-backup}"
-  local excludes tar_err tar_rc gzip_rc rcat_rc tee_rc hash_file
+  local excludes tar_err tar_rc gzip_rc rcat_rc tee_rc hash_file meta_opts
   local strict=0 tar_opts="--warning=no-file-changed --ignore-failed-read"
+  local local_gz="" enc_path="" upload_dest="${dest}"
   excludes="$(hm_backup_tar_excludes "${exclude_mode}")"
+  meta_opts="$(hm_backup_tar_meta_opts create)"
   tar_err="$(mktemp "${TMP_DIR:-/tmp}/hmtools-tar.XXXXXX.err")"
   hash_file="$(mktemp "${TMP_DIR:-/tmp}/hmtools-tar.XXXXXX.sha")"
   HM_BACKUP_LAST_SHA256=""
@@ -364,41 +537,86 @@ hm_stream_tar_rcat() {
 
   hm_info "Archiwum (stream) ${src_dir} → ${dest} [excludes=${exclude_mode}: $(hm_backup_excludes_list "${exclude_mode}")]"
   hm_status_line "tar|gzip|rclone ${src_dir}..."
-  set +e
-  set +o pipefail
-  # shellcheck disable=SC2086
-  tar -C "${src_dir}" ${tar_opts} ${excludes} -cf - . 2>"${tar_err}" \
-    | gzip -c \
-    | tee >(sha256sum 2>/dev/null | awk '{print $1}' > "${hash_file}") \
-    | hm_rclone_rcat "${dest}"
-  local -a _ps=( "${PIPESTATUS[@]}" )
-  tar_rc=${_ps[0]:-1}
-  gzip_rc=${_ps[1]:-1}
-  tee_rc=${_ps[2]:-1}
-  rcat_rc=${_ps[3]:-1}
-  set -o pipefail
-  set -e
-  hm_status_clear
 
-  if [[ -s "${tar_err}" ]]; then
-    hm_warn "tar: $(head -c 300 "${tar_err}" | tr -d '\n' | tr '\r' ' ' | head -c 300)"
-  fi
-  rm -f "${tar_err}"
+  # Z passphrase: najpierw lokalny plik → encrypt → upload .enc (nie plaintext na remote).
+  if [[ -n "${BACKUP_ENCRYPT_PASSPHRASE:-}" ]]; then
+    local_gz="$(mktemp "${TMP_DIR:-/tmp}/hmtools-tar.XXXXXX.tar.gz")"
+    set +e
+    set +o pipefail
+    # shellcheck disable=SC2086
+    tar -C "${src_dir}" ${tar_opts} ${meta_opts} ${excludes} -cf - . 2>"${tar_err}" \
+      | gzip -c \
+      | tee >(sha256sum 2>/dev/null | awk '{print $1}' > "${hash_file}") \
+      > "${local_gz}"
+    local -a _ps=( "${PIPESTATUS[@]}" )
+    tar_rc=${_ps[0]:-1}
+    gzip_rc=${_ps[1]:-1}
+    tee_rc=${_ps[2]:-1}
+    set -o pipefail
+    set -e
+    hm_status_clear
+    if [[ -s "${tar_err}" ]]; then
+      hm_warn "tar: $(head -c 300 "${tar_err}" | tr -d '\n' | tr '\r' ' ' | head -c 300)"
+    fi
+    rm -f "${tar_err}"
+    if [[ "${gzip_rc}" -ne 0 || "${tee_rc}" -ne 0 || ! -s "${local_gz}" ]]; then
+      hm_err "Stream tar nieudany dla ${src_dir} (gzip=${gzip_rc} tee=${tee_rc})."
+      rm -f "${hash_file}" "${local_gz}"
+      return 1
+    fi
+    if ! hm_tar_pipe_ok "${tar_rc}" "${strict}"; then
+      hm_err "tar błąd krytyczny (kod ${tar_rc}) dla ${src_dir}."
+      rm -f "${hash_file}" "${local_gz}"
+      return 1
+    fi
+    if ! enc_path="$(hm_backup_maybe_encrypt_file "${local_gz}")"; then
+      rm -f "${hash_file}" "${local_gz}" "${local_gz}.enc" 2>/dev/null || true
+      return 1
+    fi
+    upload_dest="${dest}.enc"
+    if ! hm_rclone_copyto "${enc_path}" "${upload_dest}"; then
+      hm_err "Upload zaszyfrowanego ${upload_dest} nieudany."
+      rm -f "${hash_file}" "${local_gz}" "${local_gz}.enc" 2>/dev/null || true
+      return 1
+    fi
+    rm -f "${local_gz}" "${local_gz}.enc" 2>/dev/null || true
+  else
+    set +e
+    set +o pipefail
+    # shellcheck disable=SC2086
+    tar -C "${src_dir}" ${tar_opts} ${meta_opts} ${excludes} -cf - . 2>"${tar_err}" \
+      | gzip -c \
+      | tee >(sha256sum 2>/dev/null | awk '{print $1}' > "${hash_file}") \
+      | hm_rclone_rcat "${dest}"
+    local -a _ps=( "${PIPESTATUS[@]}" )
+    tar_rc=${_ps[0]:-1}
+    gzip_rc=${_ps[1]:-1}
+    tee_rc=${_ps[2]:-1}
+    rcat_rc=${_ps[3]:-1}
+    set -o pipefail
+    set -e
+    hm_status_clear
 
-  if [[ "${gzip_rc}" -ne 0 || "${rcat_rc}" -ne 0 || "${tee_rc}" -ne 0 ]]; then
-    hm_err "Stream tar nieudany dla ${src_dir} (gzip=${gzip_rc} tee=${tee_rc} rcat=${rcat_rc})."
-    rm -f "${hash_file}"
-    return 1
-  fi
-  if ! hm_tar_pipe_ok "${tar_rc}" "${strict}"; then
-    hm_err "tar błąd krytyczny (kod ${tar_rc}) dla ${src_dir}."
-    rm -f "${hash_file}"
-    return 1
+    if [[ -s "${tar_err}" ]]; then
+      hm_warn "tar: $(head -c 300 "${tar_err}" | tr -d '\n' | tr '\r' ' ' | head -c 300)"
+    fi
+    rm -f "${tar_err}"
+
+    if [[ "${gzip_rc}" -ne 0 || "${rcat_rc}" -ne 0 || "${tee_rc}" -ne 0 ]]; then
+      hm_err "Stream tar nieudany dla ${src_dir} (gzip=${gzip_rc} tee=${tee_rc} rcat=${rcat_rc})."
+      rm -f "${hash_file}"
+      return 1
+    fi
+    if ! hm_tar_pipe_ok "${tar_rc}" "${strict}"; then
+      hm_err "tar błąd krytyczny (kod ${tar_rc}) dla ${src_dir}."
+      rm -f "${hash_file}"
+      return 1
+    fi
   fi
   HM_BACKUP_LAST_SHA256="$(tr -d '[:space:]' < "${hash_file}" 2>/dev/null || true)"
   rm -f "${hash_file}"
   export HM_BACKUP_LAST_SHA256
-  hm_ok "Pliki ${src_dir} OK (stream${HM_BACKUP_LAST_SHA256:+, sha256=${HM_BACKUP_LAST_SHA256:0:12}…})."
+  hm_ok "Pliki ${src_dir} OK (stream${HM_BACKUP_LAST_SHA256:+, sha256=${HM_BACKUP_LAST_SHA256:0:12}…}${upload_dest:+ → ${upload_dest##*/}})."
 }
 
 hm_chunked_tar_upload() {
@@ -408,9 +626,10 @@ hm_chunked_tar_upload() {
   local exclude_mode="${3:-backup}"
   local chunk_bytes=$((CHUNK_SIZE_MB * 1024 * 1024))
   local work="${TMP_DIR}/$$"
-  local excludes tar_err tar_rc gzip_rc split_rc
+  local excludes tar_err tar_rc gzip_rc split_rc meta_opts
   local strict=0 tar_opts="--warning=no-file-changed --ignore-failed-read"
   excludes="$(hm_backup_tar_excludes "${exclude_mode}")"
+  meta_opts="$(hm_backup_tar_meta_opts create)"
   HM_BACKUP_LAST_SHA256=""
   HM_BACKUP_LAST_SHA256SUMS=""
   if [[ "${exclude_mode}" == "archive" ]]; then
@@ -428,7 +647,7 @@ hm_chunked_tar_upload() {
   set +e
   set +o pipefail
   # shellcheck disable=SC2086
-  tar -C "${src_dir}" ${tar_opts} ${excludes} -cf - . 2>"${tar_err}" \
+  tar -C "${src_dir}" ${tar_opts} ${meta_opts} ${excludes} -cf - . 2>"${tar_err}" \
     | gzip -c \
     | tee "${whole_gz}" \
     | split -b "${chunk_bytes}" -d -a 4 - "${work}/part_"
@@ -535,16 +754,20 @@ hm_backup_site() {
 
   hm_site_context_push "${domain}" || return 1
   local stamp remote_base
-  stamp="$(hm_backup_stamp)"
-  # Root: <root>/<domena>/<stamp>/  (rclone lub lokalnie)
-  remote_base="$(hm_backup_dest_site "${domain}" "${stamp}")"
+  hm_backup_claim_stamp site "${domain}" || { hm_site_context_pop; return 1; }
+  stamp="${HM_BACKUP_STAMP}"
+  remote_base="${HM_BACKUP_REMOTE_BASE}"
 
   hm_info "Backup strony ${domain}"
   hm_info "Root: ${RCLONE_REMOTE}${HM_BACKUP_TARGET_NAME:+ (cel=${HM_BACKUP_TARGET_NAME})}"
   hm_info "Cel: ${remote_base}"
+  if [[ -n "${BACKUP_ENCRYPT_PASSPHRASE:-}" ]]; then
+    hm_info "Szyfrowanie klienta: ON (files + db + meta → .enc)"
+  fi
   hm_rclone_ensure_backup_layout
   hm_rclone_mkdir "$(hm_rclone_dest "${domain}")"
   hm_rclone_mkdir "${remote_base}"
+  hm_backup_mark_owned_remote "${remote_base}"
 
   hm_ensure_secure_tmpdir
   local manifest
@@ -761,18 +984,21 @@ hm_backup_full() {
   trap 'hm_backup_release_lock' RETURN
 
   local stamp remote_base
-  stamp="$(hm_backup_stamp)"
-  # Root: <root>/full/<stamp>/
-  remote_base="$(hm_backup_dest_full "${stamp}")"
+  hm_backup_claim_stamp full || return 1
+  stamp="${HM_BACKUP_STAMP}"
+  remote_base="${HM_BACKUP_REMOTE_BASE}"
 
   hm_info "Pełny backup serwera"
   hm_info "Root: ${RCLONE_REMOTE}${HM_BACKUP_TARGET_NAME:+ (cel=${HM_BACKUP_TARGET_NAME})}"
   hm_info "Cel: ${remote_base}"
   if [[ -z "${BACKUP_ENCRYPT_PASSPHRASE:-}" ]]; then
-    hm_warn "BACKUP_ENCRYPT_PASSPHRASE nieustawione — wrażliwe artefakty (db-accounts / opcjonalnie system-configs) idą bez szyfrowania klienta. Zalecane: passphrase lub rclone crypt remote."
+    hm_warn "BACKUP_ENCRYPT_PASSPHRASE nieustawione — files/db/meta idą bez szyfrowania klienta. Zalecane: passphrase lub rclone crypt remote."
+  else
+    hm_info "Szyfrowanie klienta: ON (files + db + meta → .enc)"
   fi
   hm_rclone_ensure_backup_layout
   hm_rclone_mkdir "${remote_base}"
+  hm_backup_mark_owned_remote "${remote_base}"
   if declare -F hm_ovpn_backup_for_full >/dev/null 2>&1; then
     hm_ovpn_backup_for_full "${remote_base}" || hm_warn "Kopia OpenVPN pominięta w backup full."
   fi

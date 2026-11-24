@@ -221,6 +221,59 @@ else
   ok "historia bez sekretu"
 fi
 
+# latest → najnowszy stamp
+mkdir -p "${BACKUP_LOCAL_ROOT}/blog.test/20260102" "${BACKUP_LOCAL_ROOT}/blog.test/20260103"
+cp -a "${TMP}/good/." "${BACKUP_LOCAL_ROOT}/blog.test/20260102/"
+cp -a "${TMP}/good/." "${BACKUP_LOCAL_ROOT}/blog.test/20260103/"
+if hm_backup_verify_cmd blog.test latest --target local --json 2>/dev/null | grep -q '"stamp":"20260103"'; then
+  ok "latest-resolve"
+else
+  # wynik może być w linii PASS
+  out="$(hm_backup_verify_cmd blog.test latest --target local 2>&1 || true)"
+  printf '%s\n' "${out}" | grep -q '20260103' && ok "latest-resolve" || bad "latest-resolve ${out}"
+fi
+
+# serwis bez DB
+mkdir -p "${TMP}/nodb/payload"
+echo x > "${TMP}/nodb/payload/a.txt"
+tar -czf "${TMP}/nodb/files.tar.gz" -C "${TMP}/nodb/payload" a.txt
+nsum="$(sha256sum "${TMP}/nodb/files.tar.gz" | awk '{print $1}')"
+printf '%s  files.tar.gz\n' "${nsum}" > "${TMP}/nodb/SHA256SUMS"
+printf '{"sha256_files":"%s","databases":[]}\n' "${nsum}" > "${TMP}/nodb/manifest.json"
+rm -rf "${BACKUP_LOCAL_ROOT}/static.test"
+mkdir -p "${BACKUP_LOCAL_ROOT}/static.test"
+cp -a "${TMP}/nodb" "${BACKUP_LOCAL_ROOT}/static.test/20260101"
+if hm_backup_verify_cmd static.test 20260101 --target local --json 2>/dev/null | grep -q '"result":"PASS"'; then
+  ok "no-db-pass"
+else
+  bad "no-db-pass"
+fi
+
+# chunki
+mkdir -p "${TMP}/chunk/files.chunks" "${TMP}/chunk/payload" "${TMP}/chunk/db"
+echo y > "${TMP}/chunk/payload/b.txt"
+tar -czf "${TMP}/chunk/whole.tar.gz" -C "${TMP}/chunk/payload" b.txt
+split -b 200 -d -a 4 "${TMP}/chunk/whole.tar.gz" "${TMP}/chunk/files.chunks/files.tar.gz.part_"
+printf '%s\n' 'CREATE TABLE t (id INT);' | gzip -c > "${TMP}/chunk/db/shop.sql.gz"
+printf '{"databases":["shop"]}\n' > "${TMP}/chunk/manifest.json"
+rm -rf "${BACKUP_LOCAL_ROOT}/chunk.test"
+mkdir -p "${BACKUP_LOCAL_ROOT}/chunk.test"
+cp -a "${TMP}/chunk" "${BACKUP_LOCAL_ROOT}/chunk.test/20260101"
+if hm_backup_verify_cmd chunk.test 20260101 --target local --json 2>/dev/null | grep -q '"result":"PASS"'; then
+  ok "chunks-pass"
+else
+  bad "chunks-pass"
+fi
+
+# full/<stamp>/sites/<d>
+mkdir -p "${BACKUP_LOCAL_ROOT}/full/20260105/sites/fullsite.test"
+cp -a "${TMP}/good/." "${BACKUP_LOCAL_ROOT}/full/20260105/sites/fullsite.test/"
+if hm_backup_verify_cmd fullsite.test 20260105 --target local --json 2>/dev/null | grep -q '"result":"PASS"'; then
+  ok "full-sites-pass"
+else
+  bad "full-sites-pass"
+fi
+
 rm -rf "${TMP}"
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"

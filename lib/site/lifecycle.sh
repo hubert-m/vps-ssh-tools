@@ -463,21 +463,43 @@ hm_site_lifecycle_collect_delete() {
   done < "${file}"
 }
 
+# Manifest / .dbs / stan / resources — sprzątanie niezależne od resources.ndjson.
+hm_site_lifecycle_has_meta() {
+  local domain="${1:-${HM_DEL_DOMAIN:-}}" man res state dbfile
+  [[ -n "${domain}" ]] || return 1
+  man="$(hm_site_manifest_path "${domain}" 2>/dev/null || true)"
+  res="$(hm_site_resources_path "${domain}" 2>/dev/null || true)"
+  state="$(hm_site_state_dir "${domain}" 2>/dev/null || true)"
+  dbfile="$(hm_site_manifest_dir)/.${domain}.dbs"
+  [[ -n "${man}" && -f "${man}" && ! -L "${man}" ]] && return 0
+  [[ -n "${res}" && -f "${res}" && ! -L "${res}" ]] && return 0
+  [[ -f "${dbfile}" && ! -L "${dbfile}" ]] && return 0
+  [[ -n "${state}" && -d "${state}" && ! -L "${state}" ]] && return 0
+  return 1
+}
+
 hm_site_lifecycle_plan_delete() {
   local line kind path shared
-  [[ "${#HM_DEL_WIZARD[@]}" -gt 0 ]] || return 0
-  for line in "${HM_DEL_WIZARD[@]}"; do
-    kind="${line%%$'\t'*}"
-    path="${line#*$'\t'}"
-    shared="${path##*$'\t'}"
-    path="${path%$'\t'*}"
-    if [[ "${shared}" == "1" ]]; then
-      HM_DEL_PLAN_STEPS+=("Zostawiam współdzielone (${kind}): ${path}")
-    else
-      HM_DEL_PLAN_STEPS+=("Zasób kreatora (${kind}): ${path}")
-    fi
-  done
-  HM_DEL_PLAN_KEYS+=("wizard")
+  if [[ "${#HM_DEL_WIZARD[@]}" -gt 0 ]]; then
+    for line in "${HM_DEL_WIZARD[@]}"; do
+      kind="${line%%$'\t'*}"
+      path="${line#*$'\t'}"
+      shared="${path##*$'\t'}"
+      path="${path%$'\t'*}"
+      if [[ "${shared}" == "1" ]]; then
+        HM_DEL_PLAN_STEPS+=("Zostawiam współdzielone (${kind}): ${path}")
+      else
+        HM_DEL_PLAN_STEPS+=("Zasób kreatora (${kind}): ${path}")
+      fi
+    done
+    HM_DEL_PLAN_KEYS+=("wizard")
+    return 0
+  fi
+  # site new bez vhosta/unitów nie tworzy resources.ndjson — i tak sprzątaj meta + bazy z .dbs
+  if hm_site_lifecycle_has_meta; then
+    HM_DEL_PLAN_STEPS+=("Sprzątanie metadanych kreatora (manifest, .dbs, stan) i baz z manifestu")
+    HM_DEL_PLAN_KEYS+=("meta")
+  fi
 }
 
 hm_site_doctor_readable() {

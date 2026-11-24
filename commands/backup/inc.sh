@@ -173,7 +173,7 @@ hm_backup_inc_site() {
     local dumpcli
     dumpcli="$(hm_mysqldump_cli)" || continue
     # shellcheck disable=SC2086
-    if ! "${dumpcli}" --single-transaction --quick --routines --triggers "${name}" 2>/dev/null \
+    if ! "${dumpcli}" --single-transaction --quick --routines --triggers --events "${name}" 2>/dev/null \
       | hm_restic -r "${repo}" backup \
         --stdin --stdin-filename "db/${name}.sql" \
         --tag "domain=${domain}" --tag "db=${name}"; then

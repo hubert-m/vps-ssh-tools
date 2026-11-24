@@ -111,7 +111,7 @@ Oprócz dumpów baz i plików snapshot typu `archive` zapisuje:
 
 **Katalog plików:** pakowany jest pełny katalog domowy użytkownika strony (gdy `$HOME` obejmuje site root / vhRoot) — w archiwum są też ukryte elementy w stylu `.ssh`, `.pm2`, `.config`, `.bash_history`. `tar` bierze zawartość `.` (w tym pliki kropkowe); `BACKUP_EXCLUDES` nie wyklucza tych katalogów. Child domain ze współdzielonym home mastera pakuje tylko swój **docroot**.
 
-**Bezpieczeństwo:** `system-configs` bez `/etc/shadow`, `privkey*.pem`, `ssh_host_*_key`; opcjonalnie `BACKUP_ENCRYPT_PASSPHRASE` (openssl, **export** + fail-closed bez plaintext) dla `db-accounts` / `unix-account` / system-configs. Wspólny `flock` dla backup/archive/restore/prune; prune nie kasuje świeżych orphanów (`BACKUP_ORPHAN_GRACE_HOURS`).
+**Bezpieczeństwo:** `system-configs` bez `/etc/shadow`, `privkey*.pem`, `ssh_host_*_key`. Przy ustawionej `BACKUP_ENCRYPT_PASSPHRASE` (openssl AES-256-CBC + pbkdf2, **export**, fail-closed) szyfrowane są **wszystkie** artefakty klienta: `files.tar.gz`, `db/*.sql.gz`, `db-accounts`, `unix-account` / meta, `system-configs` (sufiks `.enc`). Bez passphrase — plaintext na remote (ostrzeżenie w planie). Wspólny `flock` dla backup/archive/restore/prune; prune nie kasuje świeżych orphanów (`BACKUP_ORPHAN_GRACE_HOURS`). Kolizja stampu (ten sam `HM_BACKUP_FORCE_STAMP` / ta sama sekunda) → odmowa lub sufiks `-N`; purge abortu tylko własnego katalogu.
 
 **Full restore:** `backup restore-full [stamp] [--system]`.
 

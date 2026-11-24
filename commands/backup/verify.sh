@@ -55,9 +55,48 @@ hm_backup_drill_history() {
   printf '%s\n' "${line}" >> "${file}"
 }
 
+hm_backup_drill_resolve_stamp() {
+  local scope="$1" stamp="$2" target="${3:-local}" base found=""
+  [[ -n "${stamp}" && "${stamp}" != "latest" ]] && { printf '%s' "${stamp}"; return 0; }
+  if [[ "${target}" == "local" ]]; then
+    base="${BACKUP_LOCAL_ROOT:-/backup/hmtools}/${scope}"
+    if [[ -d "${base}" ]]; then
+      found="$(find "${base}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null \
+        | grep -E '^[0-9]{8}(-[0-9]{6})?$' | sort -r | head -1 || true)"
+      if [[ -z "${found}" ]]; then
+        found="$(find "${base}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null \
+          | grep -Ev '^(partial|archive)$' | sort -r | head -1 || true)"
+      fi
+    fi
+    # full/<stamp>/sites/<scope>
+    if [[ -z "${found}" ]]; then
+      base="${BACKUP_LOCAL_ROOT:-/backup/hmtools}/full"
+      if [[ -d "${base}" ]]; then
+        found="$(find "${base}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null \
+          | grep -E '^[0-9]{8}(-[0-9]{6})?$' | sort -r | head -1 || true)"
+        if [[ -n "${found}" && ! -d "${base}/${found}/sites/${scope}" \
+              && ! -d "${BACKUP_LOCAL_ROOT:-/backup/hmtools}/${scope}/${found}" ]]; then
+          found=""
+        fi
+      fi
+    fi
+  elif declare -F hm_backup_list_stamps >/dev/null 2>&1; then
+    found="$(hm_backup_list_stamps "${scope}" 2>/dev/null | head -1 || true)"
+  fi
+  [[ -n "${found}" ]] || {
+    HM_DRILL_REASON="brak stampów (latest)"
+    return 1
+  }
+  printf '%s' "${found}"
+}
+
 hm_backup_drill_fetch_local() {
   local scope="$1" stamp="$2" dest="$3" src
   src="${BACKUP_LOCAL_ROOT:-/backup/hmtools}/${scope}/${stamp}"
+  if [[ ! -d "${src}" ]]; then
+    # full/<stamp>/sites/<domena>
+    src="${BACKUP_LOCAL_ROOT:-/backup/hmtools}/full/${stamp}/sites/${scope}"
+  fi
   [[ -d "${src}" ]] || {
     HM_DRILL_REASON="brak lokalnego snapshotu"
     return 1
@@ -82,9 +121,21 @@ hm_backup_drill_exec_bin() {
 
 hm_backup_drill_fetch_rclone() {
   local target="$1" scope="$2" stamp="$3" dest="$4" remote bin rc=0
-  remote="${HM_BACKUP_VERIFY_REMOTE:-hmtools-${target}:backup}"
+  if [[ -n "${HM_BACKUP_VERIFY_REMOTE:-}" ]]; then
+    remote="${HM_BACKUP_VERIFY_REMOTE}"
+  elif [[ -n "${RCLONE_REMOTE:-}" ]] && { [[ "${RCLONE_REMOTE}" == "${target}:"* ]] \
+      || [[ "${target}" == "gdrive" || "${target}" == "drive" ]]; }; then
+    remote="${RCLONE_REMOTE}"
+  else
+    remote="hmtools-${target}:backup"
+  fi
   bin="${HM_BACKUP_VERIFY_RCLONE_BIN:-rclone}"
   hm_backup_drill_exec_bin "${bin}" copy "${remote}/${scope}/${stamp}" "${dest}" || rc=$?
+  # Fallback full/<stamp>/sites/<scope>
+  if [[ "${rc}" -ne 0 ]] || [[ ! -e "${dest}/manifest.json" && ! -e "${dest}/files.tar.gz" && ! -d "${dest}/files.chunks" ]]; then
+    rc=0
+    hm_backup_drill_exec_bin "${bin}" copy "${remote}/full/${stamp}/sites/${scope}" "${dest}" || rc=$?
+  fi
   if [[ "${rc}" -eq 127 ]]; then
     HM_DRILL_REASON="brak rclone"
     return 1
@@ -182,12 +233,48 @@ hm_backup_drill_sums() {
 }
 
 hm_backup_drill_sql_filter() {
+  # tolower — portable (mawk nie ma IGNORECASE)
   awk '
-    BEGIN { IGNORECASE = 1 }
-    /^[[:space:]]*(CREATE|DROP)[[:space:]]+DATABASE([[:space:]]|$)/ { next }
-    /^[[:space:]]*USE[[:space:]]/ { next }
-    { print }
+    {
+      line=$0
+      low=tolower(line)
+      if (low ~ /^[[:space:]]*(create|drop)[[:space:]]+database([[:space:]]|$)/) next
+      if (low ~ /^[[:space:]]*use[[:space:]]/) next
+      print line
+    }
   '
+}
+
+# Sklej files.chunks → files.tar.gz w dest (gdy brak monolitu).
+hm_backup_drill_join_chunks() {
+  local dest="$1" out part
+  [[ -f "${dest}/files.tar.gz" ]] && return 0
+  [[ -d "${dest}/files.chunks" ]] || return 1
+  out="${dest}/files.tar.gz"
+  : > "${out}"
+  while IFS= read -r part; do
+    [[ -n "${part}" ]] || continue
+    cat "${part}" >> "${out}" || return 1
+  done < <(find "${dest}/files.chunks" -name 'files.tar.gz.part_*' 2>/dev/null | sort)
+  [[ -s "${out}" ]] || { rm -f "${out}"; return 1; }
+  return 0
+}
+
+# Czy snapshot wymaga dump SQL? return 0 = tak. Puste/brak databases → nie (serwis bez bazy).
+hm_backup_drill_expects_db() {
+  local dest="$1" man blob
+  man="${dest}/manifest.json"
+  [[ -f "${man}" ]] || return 1
+  if grep -Eq '"databases"[[:space:]]*:[[:space:]]*\[\]' "${man}" 2>/dev/null; then
+    return 1
+  fi
+  if grep -Eq '"databases"[[:space:]]*:[[:space:]]*""' "${man}" 2>/dev/null; then
+    return 1
+  fi
+  # Niepusta tablica / niepusty string → wymagaj dumpów
+  blob="$(sed -n 's/.*"databases"[[:space:]]*:[[:space:]]*//p' "${man}" | head -1)"
+  [[ -n "${blob}" && "${blob}" != "null"* ]] || return 1
+  return 0
 }
 
 hm_backup_drill_run() {
@@ -208,13 +295,23 @@ hm_backup_drill_run() {
     stat -c '%a' "${HM_DRILL_WORK}" > "${HM_BACKUP_VERIFY_MODE_LOG}" 2>/dev/null || true
   fi
   dest="${HM_DRILL_WORK}/snap"
-  if ! hm_backup_drill_fetch "${target}" "${scope}" "${stamp}" "${dest}"; then
-    reason="${HM_DRILL_REASON:-pobranie nieudane}"
-  elif [[ ! -f "${dest}/files.tar.gz" ]]; then
-    reason="brak files.tar.gz"
-  elif ! hm_backup_drill_sums "${dest}"; then
-    reason="${HM_DRILL_REASON:-zla suma}"
+  local resolved=""
+  if ! resolved="$(hm_backup_drill_resolve_stamp "${scope}" "${stamp}" "${target}")"; then
+    reason="${HM_DRILL_REASON:-brak stampów (latest)}"
   else
+    stamp="${resolved}"
+  fi
+  if [[ -z "${reason}" ]] && ! hm_backup_drill_fetch "${target}" "${scope}" "${stamp}" "${dest}"; then
+    reason="${HM_DRILL_REASON:-pobranie nieudane}"
+  fi
+  if [[ -z "${reason}" ]]; then
+    hm_backup_drill_join_chunks "${dest}" || true
+  fi
+  if [[ -z "${reason}" && ! -f "${dest}/files.tar.gz" ]]; then
+    reason="brak files.tar.gz"
+  elif [[ -z "${reason}" ]] && ! hm_backup_drill_sums "${dest}"; then
+    reason="${HM_DRILL_REASON:-zla suma}"
+  elif [[ -z "${reason}" ]]; then
     list="${HM_DRILL_WORK}/tar.list"
     if ! tar -tzf "${dest}/files.tar.gz" > "${list}" 2>"${HM_DRILL_WORK}/tar.err"; then
       reason="uszkodzony tar"
@@ -226,13 +323,17 @@ hm_backup_drill_run() {
       fi
     fi
   fi
+  local sqls=() need_db=1
   if [[ -z "${reason}" ]]; then
-    local sqls=()
     shopt -s nullglob
     sqls=( "${dest}/db/"*.sql.gz )
     shopt -u nullglob
     if [[ "${#sqls[@]}" -eq 0 ]]; then
-      reason="brak dumpa SQL"
+      if hm_backup_drill_expects_db "${dest}"; then
+        reason="brak dumpa SQL"
+      else
+        need_db=0
+      fi
     else
       for sql in "${sqls[@]}"; do
         if ! gzip -t "${sql}" 2>/dev/null; then
@@ -247,7 +348,7 @@ hm_backup_drill_run() {
       done
     fi
   fi
-  if [[ -z "${reason}" ]]; then
+  if [[ -z "${reason}" && "${need_db}" -eq 1 ]]; then
     HM_DRILL_DB="hmtools_verify_${rand}"
     if [[ ! "${HM_DRILL_DB}" =~ ^hmtools_verify_[a-z0-9]+$ ]]; then
       reason="odmowa nazwy bazy"
@@ -266,10 +367,14 @@ hm_backup_drill_run() {
       done
     fi
   fi
-  if [[ -z "${reason}" && -n "${HM_DRILL_DB}" ]]; then
-    tables="$(hm_backup_drill_mysql --batch -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${HM_DRILL_DB}'" 2>/dev/null || true)"
-    tables="$(printf '%s' "${tables}" | tr -d '[:space:]')"
-    [[ "${tables}" =~ ^[0-9]+$ ]] || tables=0
+  if [[ -z "${reason}" ]]; then
+    if [[ "${need_db}" -eq 1 && -n "${HM_DRILL_DB}" ]]; then
+      tables="$(hm_backup_drill_mysql --batch -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${HM_DRILL_DB}'" 2>/dev/null || true)"
+      tables="$(printf '%s' "${tables}" | tr -d '[:space:]')"
+      [[ "${tables}" =~ ^[0-9]+$ ]] || tables=0
+    else
+      tables=0
+    fi
     result="PASS"
     reason="ok"
   fi

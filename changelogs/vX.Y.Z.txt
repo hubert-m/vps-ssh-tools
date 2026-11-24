@@ -20,3 +20,14 @@
 - Fix: backup restore — walidacja gzip/tar przed zmianą; staging→rsync (`--delete` przy `--overwrite-files`); Unix po plikach; dump DB `gzip -t` przed importem; test-restore-atomic
 - Fix: backup restore-full — bez `--overwrite-db` pomija niepuste bazy; `gzip -t` + rc≠0 przy błędzie; `backup restore` szuka też `full/<stamp>/sites/<d>`; test-restore-full
 - Fix: docker compose update rollback — zapis tag+imageID+repoDigest; `docker tag <ID> <tag>` przed pull; bez `continue` omijającego retag; test-docker-ops
+- Fix/Sec: firewall remove from:IP — dokładna kolumna From (nie podciąg); CSF zdejmuje `from:` przed csf -ar; test-ufw-from-match
+- Fix: webs delete — meta (manifest/.dbs/stan) bez `resources.ndjson`; ostrzeżenie wg liczby baz; `site new` przy stale manifest → rc≠0; test-site-lifecycle / test-site-wizard-base
+- Fix: site new MySQL — bez `HM_MYSQL_CREATE_PASS` unbound; istniejąca baza (nie resume) → rc≠0 + rollback; resume nie nadpisuje pustym hasłem; test-site-wizard-db-env
+- Fix: backup restore — CP: zachowaj child/DB spoza snapshota (re-link; `--prune-cp-extra`); SSL: whitelist + nowszy `notAfter`; test-restore-cp-ssl
+- Fix: backup/restore pliki — tar `--acls --xattrs --sparse` (gdy dostępne); `chown -h` dla symlinków; test-backup-file-fidelity
+- Fix: backup verify — `latest`→stamp; chunki + `full/…/sites`; serwis bez DB ≠ FAIL; remote z `RCLONE_REMOTE`; awk `tolower`; test-backup-verify
+- Fix: backup/restore DB — mysqldump `--events`; `db/<n>.create.sql` (charset/collation) przy restore; test-backup-db-fidelity
+- Fix: mawk (Debian 12) — regex bez `{n}` w logs/mail/traffic/dns/ols awk; test-mawk-regex
+- Fix: mail delete — Maildir→trash przed deleteEmail; rollback przy błędzie CP; purge dopiero po sukcesie; test-mail-accounts
+- Fix: openvpn uninstall — nie usuwa cudzych reguł FW/masq (`FW_HAD_*`); ufw z komentarzem hmtools; test-openvpn-uninstall
+- Fix: backup/archive — kolizja stampu, excludes bez globa, encrypt files+db, lokalny zapis `*.part`, purge tylko własny; test-backup-quality

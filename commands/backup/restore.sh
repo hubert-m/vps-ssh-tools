@@ -29,7 +29,13 @@ hm_backup_restore_fetch_files_archive() {
   mode="$(hm_backup_detect_files_mode "${remote_base}")"
   case "${mode}" in
     tar)
-      if ! hm_backup_r_cat "${remote_base}/files.tar.gz" > "${out_tar}"; then
+      if hm_backup_r_exists "${remote_base}/files.tar.gz.enc" \
+          || hm_backup_r_exists "${remote_base}/files.tar.gz"; then
+        if ! hm_backup_fetch_maybe_decrypt "${remote_base}" "files.tar.gz" "${out_tar}"; then
+          hm_err "Pobranie files.tar.gz(.enc) nieudane."
+          return 1
+        fi
+      else
         hm_err "Pobranie files.tar.gz nieudane."
         return 1
       fi
@@ -91,7 +97,12 @@ hm_backup_restore_files() {
   mkdir -p "${staging}" || { rm -f "${tarf}"; return 1; }
 
   hm_info "Odtwarzanie plików (staging) → ${staging}"
-  if ! tar --no-same-owner -xzf "${tarf}" -C "${staging}"; then
+  local meta_x=""
+  if declare -F hm_backup_tar_meta_opts >/dev/null 2>&1; then
+    meta_x="$(hm_backup_tar_meta_opts extract)"
+  fi
+  # shellcheck disable=SC2086
+  if ! tar --no-same-owner ${meta_x} -xzf "${tarf}" -C "${staging}"; then
     hm_err "Rozpakowanie do staging nieudane — target nietknięty."
     rm -rf -- "${staging}"
     rm -f "${tarf}"
@@ -123,7 +134,8 @@ hm_backup_restore_files() {
     if [[ "${overwrite_files}" -eq 1 && "${keep_extra}" -ne 1 ]]; then
       hm_warn "Brak rsync — nie usuwam obcych plików (--overwrite-files wymaga rsync)."
     fi
-    if ! tar -C "${staging}" -cf - . | tar --no-same-owner -C "${target_dir}" -xf -; then
+    # shellcheck disable=SC2086
+    if ! tar -C "${staging}" -cf - . | tar --no-same-owner ${meta_x} -C "${target_dir}" -xf -; then
       hm_err "Kopiowanie staging → target nieudane."
       rm -rf -- "${staging}"
       return 1
@@ -134,6 +146,7 @@ hm_backup_restore_files() {
 }
 
 # Po restore: user:user wewnątrz, ale public_html/docroot zachowuje grupę WWW (nogroup/lsadm) — jak perms fix.
+# Symlinki: chown -h (bez follow) — inaczej live/ → archive i skróty dostają root:root.
 hm_backup_restore_fix_ownership() {
   local target_dir="$1"
   local user="$2"
@@ -151,26 +164,35 @@ hm_backup_restore_fix_ownership() {
     webgrp="${user}"
   fi
 
-  hm_info "chown plików → ${user}:${user} (docroot/public_html: ${user}:${webgrp})"
+  hm_info "chown -h plików → ${user}:${user} (docroot/public_html: ${user}:${webgrp})"
   # root katalogu strony
-  chown "${user}:${user}" -- "${target_dir}" 2>/dev/null || true
+  chown -h "${user}:${user}" -- "${target_dir}" 2>/dev/null || chown "${user}:${user}" -- "${target_dir}" 2>/dev/null || true
 
   # zawartość — nie zmieniaj grupy samego public_html/docroot w tym samym przebiegu
   local ent base
   while IFS= read -r -d '' ent; do
-    [[ -L "${ent}" ]] && continue
     base="$(basename "${ent}")"
     if [[ "${base}" == "public_html" ]]; then
-      # wnętrze public_html → user:user; sam katalog → user:webgrp
-      find -P "${ent}" -xdev -mindepth 1 -maxdepth 1 -print0 2>/dev/null \
+      # wnętrze public_html → user:user (symlinki: -h); sam katalog → user:webgrp
+      find -P "${ent}" -xdev -mindepth 1 -print0 2>/dev/null \
         | while IFS= read -r -d '' inner; do
-            [[ -L "${inner}" ]] && continue
-            chown -R "${user}:${user}" -- "${inner}" 2>/dev/null || true
+            chown -h "${user}:${user}" -- "${inner}" 2>/dev/null \
+              || chown "${user}:${user}" -- "${inner}" 2>/dev/null || true
           done
-      chown "${user}:${webgrp}" -- "${ent}" 2>/dev/null || chown "${user}:${user}" -- "${ent}" 2>/dev/null || true
+      chown -h "${user}:${webgrp}" -- "${ent}" 2>/dev/null \
+        || chown "${user}:${webgrp}" -- "${ent}" 2>/dev/null \
+        || chown "${user}:${user}" -- "${ent}" 2>/dev/null || true
       continue
     fi
-    chown -R "${user}:${user}" -- "${ent}" 2>/dev/null || true
+    if [[ -L "${ent}" ]]; then
+      chown -h "${user}:${user}" -- "${ent}" 2>/dev/null || true
+      continue
+    fi
+    find -P "${ent}" -xdev -print0 2>/dev/null \
+      | while IFS= read -r -d '' inner; do
+          chown -h "${user}:${user}" -- "${inner}" 2>/dev/null \
+            || chown "${user}:${user}" -- "${inner}" 2>/dev/null || true
+        done
   done < <(find -P "${target_dir}" -xdev -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
 
   if [[ -n "${docroot}" && -d "${docroot}" ]]; then
@@ -178,7 +200,8 @@ hm_backup_restore_fix_ownership() {
     rd="$(realpath -m "${docroot}" 2>/dev/null || echo "${docroot}")"
     rt="$(realpath -m "${target_dir}" 2>/dev/null || echo "${target_dir}")"
     if [[ "${rd}" == "${rt}" || "${rd}" == "${rt}"/* ]]; then
-      chown "${user}:${webgrp}" -- "${docroot}" 2>/dev/null || true
+      chown -h "${user}:${webgrp}" -- "${docroot}" 2>/dev/null \
+        || chown "${user}:${webgrp}" -- "${docroot}" 2>/dev/null || true
     fi
   fi
   return 0
@@ -227,8 +250,10 @@ hm_backup_snap_site_config_dbs() {
   [[ -n "${remote_base}" ]] || return 0
 
   if [[ "${remote_base}" == /* ]]; then
-    [[ -f "${remote_base}/files.tar.gz" && -s "${remote_base}/files.tar.gz" ]] && has_tar=1
-  elif rclone ls "${remote_base}/files.tar.gz" >/dev/null 2>&1; then
+    { [[ -f "${remote_base}/files.tar.gz" && -s "${remote_base}/files.tar.gz" ]] \
+        || [[ -f "${remote_base}/files.tar.gz.enc" && -s "${remote_base}/files.tar.gz.enc" ]]; } && has_tar=1
+  elif rclone ls "${remote_base}/files.tar.gz" >/dev/null 2>&1 \
+      || rclone ls "${remote_base}/files.tar.gz.enc" >/dev/null 2>&1; then
     has_tar=1
   fi
   if [[ "${has_tar}" -eq 1 ]]; then
@@ -455,24 +480,36 @@ hm_backup_restore_dbs() {
     fi
     hm_progress_bar "${di}" "${dtotal}" "Import DB: ${db}"
     hm_status_clear
-    hm_info "Import DB ${db} ← ${remote_base}/db/${db}.sql.gz"
+    hm_info "Import DB ${db} ← ${remote_base}/db/${db}.sql.gz(.enc)"
     # Walidacja dumpu przed CREATE/DROP (uszkodzony gzip nie kasuje tabel)
     local db_tmp
     db_tmp="$(hm_mktemp .sql.gz)"
-    if ! hm_backup_r_cat "${remote_base}/db/${db}.sql.gz" > "${db_tmp}" 2>/dev/null; then
-      # fallback rclone path
-      if ! rclone cat "${remote_base}/db/${db}.sql.gz" > "${db_tmp}" 2>/dev/null; then
-        rm -f "${db_tmp}"
-        hm_err "Pobranie dumpa ${db} nieudane."
-        return 1
-      fi
+    if ! hm_backup_fetch_maybe_decrypt "${remote_base}/db" "${db}.sql.gz" "${db_tmp}" 2>/dev/null \
+        && ! hm_backup_r_cat "${remote_base}/db/${db}.sql.gz" > "${db_tmp}" 2>/dev/null; then
+      rm -f "${db_tmp}"
+      hm_err "Pobranie dumpa ${db} nieudane."
+      return 1
     fi
     if ! gzip -t "${db_tmp}" 2>/dev/null; then
       rm -f "${db_tmp}"
       hm_err "Walidacja: dump ${db}.sql.gz uszkodzony (gzip -t) — baza nietknięta."
       return 1
     fi
-    "${cli}" "${sock_args[@]}" -e "CREATE DATABASE IF NOT EXISTS \`${db}\`;" 2>/dev/null || true
+    # Preferuj SHOW CREATE DATABASE ze snapshota (charset/collation)
+    local cdb_tmp cdb_applied=0
+    cdb_tmp="$(hm_mktemp .create.sql)"
+    if hm_backup_r_cat "${remote_base}/db/${db}.create.sql" > "${cdb_tmp}" 2>/dev/null \
+        || rclone cat "${remote_base}/db/${db}.create.sql" > "${cdb_tmp}" 2>/dev/null; then
+      if [[ -s "${cdb_tmp}" ]] && grep -qi 'CREATE DATABASE' "${cdb_tmp}"; then
+        if "${cli}" "${sock_args[@]}" < "${cdb_tmp}" 2>/dev/null; then
+          cdb_applied=1
+        fi
+      fi
+    fi
+    rm -f "${cdb_tmp}"
+    if [[ "${cdb_applied}" -eq 0 ]]; then
+      "${cli}" "${sock_args[@]}" -e "CREATE DATABASE IF NOT EXISTS \`${db}\`;" 2>/dev/null || true
+    fi
     if ! gunzip -c "${db_tmp}" | "${cli}" "${sock_args[@]}" "${db}"; then
       rm -f "${db_tmp}"
       hm_err "Import DB ${db} nieudany."
@@ -1113,19 +1150,129 @@ hm_backup_restore_db_accounts() {
 }
 
 # SSL z archive — rozpakowanie z zachowaniem symlinków (tar bez -h przy pakowaniu).
+# Członek ssl.tar.gz dozwolony tylko dla domeny (bez ścieżek poza LE/acme).
+hm_backup_ssl_member_allowed() {
+  local m="$1" domain="$2"
+  [[ -n "${m}" && -n "${domain}" ]] || return 1
+  m="${m#./}"
+  m="${m#/}"
+  case "${m}" in
+    etc/letsencrypt/live/"${domain}"|etc/letsencrypt/live/"${domain}"/*) return 0 ;;
+    etc/letsencrypt/archive/"${domain}"|etc/letsencrypt/archive/"${domain}"/*) return 0 ;;
+    etc/letsencrypt/renewal/"${domain}".conf) return 0 ;;
+    root/.acme.sh/"${domain}"|root/.acme.sh/"${domain}"/*) return 0 ;;
+    root/.acme.sh/"${domain}"_ecc|root/.acme.sh/"${domain}"_ecc/*) return 0 ;;
+  esac
+  return 1
+}
+
+# Epoch notAfter certyfikatu (0 = brak/nieczytelny).
+hm_backup_ssl_not_after_epoch() {
+  local pem="$1" end
+  [[ -f "${pem}" && ! -L "${pem}" ]] || {
+    # symlink live → archive: odczytaj cel
+    [[ -e "${pem}" ]] || { printf '0'; return 0; }
+  }
+  end="$(openssl x509 -enddate -noout -in "${pem}" 2>/dev/null | sed -n 's/^notAfter=//p')" || end=""
+  [[ -n "${end}" ]] || { printf '0'; return 0; }
+  date -d "${end}" +%s 2>/dev/null || date -j -f '%b %d %T %Y %Z' "${end}" +%s 2>/dev/null || printf '0'
+}
+
 hm_backup_restore_ssl() {
   local remote_base="$1"
+  local domain="${2:-${HM_SITE_DOMAIN:-}}"
+  local tarf stage member live_pem snap_pem live_e snap_e skip_live=0
   if ! rclone cat "${remote_base}/ssl.tar.gz" >/dev/null 2>&1; then
     hm_info "Brak ssl.tar.gz — pomijam SSL."
     return 0
   fi
-  hm_info "Odtwarzanie SSL z ssl.tar.gz (ścieżki absolutne → /)…"
-  if rclone cat "${remote_base}/ssl.tar.gz" | tar -xzf - -C /; then
-    hm_ok "SSL rozpakowany (live/archive/renewal / acme.sh)."
-    return 0
+  [[ -n "${domain}" ]] && hm_is_valid_domain "${domain}" || {
+    hm_err "SSL restore: brak/nieprawidłowa domena — odmowa (whitelist)."
+    return 1
+  }
+  tarf="$(mktemp "${TMP_DIR:-/tmp}/hmtools-ssl.XXXXXX.tar.gz")"
+  stage="$(mktemp -d "${TMP_DIR:-/tmp}/hmtools-ssl.XXXXXX")"
+  chmod 700 "${stage}"
+  if ! rclone cat "${remote_base}/ssl.tar.gz" > "${tarf}" || [[ ! -s "${tarf}" ]]; then
+    rm -f "${tarf}"; rm -rf "${stage}"
+    hm_warn "Pobranie ssl.tar.gz nieudane."
+    return 1
   fi
-  hm_warn "Rozpakowanie ssl.tar.gz nieudane."
-  return 1
+  while IFS= read -r member || [[ -n "${member}" ]]; do
+    [[ -n "${member}" ]] || continue
+    [[ "${member}" == */ ]] && continue
+    if ! hm_backup_ssl_member_allowed "${member}" "${domain}"; then
+      hm_err "ssl.tar.gz zawiera niedozwoloną ścieżkę: ${member} — odmowa."
+      rm -f "${tarf}"; rm -rf "${stage}"
+      return 1
+    fi
+  done < <(tar -tzf "${tarf}" 2>/dev/null || true)
+
+  hm_info "Odtwarzanie SSL z ssl.tar.gz (whitelist ${domain}, keep-newer / notAfter)…"
+  if ! tar -xzf "${tarf}" -C "${stage}" --keep-newer-files 2>/dev/null; then
+    # niektóre tar bez --keep-newer-files
+    if ! tar -xzf "${tarf}" -C "${stage}"; then
+      hm_warn "Rozpakowanie ssl.tar.gz nieudane."
+      rm -f "${tarf}"; rm -rf "${stage}"
+      return 1
+    fi
+  fi
+
+  live_pem="/etc/letsencrypt/live/${domain}/cert.pem"
+  snap_pem="${stage}/etc/letsencrypt/live/${domain}/cert.pem"
+  [[ -e "${snap_pem}" ]] || snap_pem="${stage}/etc/letsencrypt/live/${domain}/fullchain.pem"
+  [[ -e "${live_pem}" ]] || live_pem="/etc/letsencrypt/live/${domain}/fullchain.pem"
+  if [[ -e "${live_pem}" && -e "${snap_pem}" ]]; then
+    live_e="$(hm_backup_ssl_not_after_epoch "${live_pem}")"
+    snap_e="$(hm_backup_ssl_not_after_epoch "${snap_pem}")"
+    if [[ "${live_e}" =~ ^[0-9]+$ && "${snap_e}" =~ ^[0-9]+$ \
+          && "${live_e}" -gt 0 && "${snap_e}" -gt 0 && "${live_e}" -gt "${snap_e}" ]]; then
+      hm_info "Żywy certyfikat LE nowszy (notAfter) — zachowuję live/archive/renewal, pomijam LE ze snapshota."
+      skip_live=1
+      rm -rf "${stage}/etc/letsencrypt/live/${domain}" \
+             "${stage}/etc/letsencrypt/archive/${domain}" \
+             "${stage}/etc/letsencrypt/renewal/${domain}.conf"
+    fi
+  fi
+
+  # Skopiuj tylko whitelistowane drzewa (nie cały stage → /)
+  local src dest
+  for src in \
+    "${stage}/etc/letsencrypt/live/${domain}" \
+    "${stage}/etc/letsencrypt/archive/${domain}" \
+    "${stage}/etc/letsencrypt/renewal/${domain}.conf" \
+    "${stage}/root/.acme.sh/${domain}" \
+    "${stage}/root/.acme.sh/${domain}_ecc"
+  do
+    [[ -e "${src}" ]] || continue
+    dest="/${src#"${stage}/"}"
+    mkdir -p "$(dirname "${dest}")"
+    if [[ -d "${src}" ]]; then
+      mkdir -p "${dest}"
+      if hm_have_cmd rsync; then
+        rsync -a -- "${src}/" "${dest}/" || {
+          hm_warn "rsync SSL → ${dest} nieudany"
+          rm -f "${tarf}"; rm -rf "${stage}"
+          return 1
+        }
+      else
+        tar -C "${src}" -cf - . | tar -C "${dest}" -xf - || {
+          hm_warn "kopiowanie SSL → ${dest} nieudane"
+          rm -f "${tarf}"; rm -rf "${stage}"
+          return 1
+        }
+      fi
+    else
+      cp -a -- "${src}" "${dest}" || {
+        hm_warn "cp SSL → ${dest} nieudany"
+        rm -f "${tarf}"; rm -rf "${stage}"
+        return 1
+      }
+    fi
+  done
+  rm -f "${tarf}"; rm -rf "${stage}"
+  hm_ok "SSL odtworzony (whitelist${skip_live:+; nowszy live zachowany})."
+  return 0
 }
 
 # Crontab użytkownika strony z crontab.txt
@@ -1181,12 +1328,55 @@ hm_backup_restore_pm2_hint() {
   return 0
 }
 
+hm_backup_cp_snap_child_domains() {
+  local sqlf="$1"
+  grep -E '^INSERT INTO `websiteFunctions_childdomains`' "${sqlf}" 2>/dev/null \
+    | grep -oE "'[^']+\.[^']+'" | tr -d "'" | awk 'NF && !seen[$0]++'
+}
+
+hm_backup_cp_snap_db_names() {
+  local sqlf="$1"
+  grep -E '^INSERT INTO `databases_databases`' "${sqlf}" 2>/dev/null \
+    | grep -oE "'[A-Za-z0-9_]{2,64}'" | tr -d "'" | awk 'NF && !seen[$0]++'
+}
+
+# Lista child domen live (master = domain) — jedna na linię.
+hm_backup_cp_live_children() {
+  local domain="$1" cli="$2"
+  shift 2
+  local -a sock_args=("$@")
+  local dq
+  dq="$(hm_sql_quote "${domain}")"
+  "${cli}" "${sock_args[@]}" cyberpanel -N -B -e "
+SELECT c.domain FROM websiteFunctions_childdomains c
+INNER JOIN websiteFunctions_websites w ON c.master_id = w.id
+WHERE w.domain = ${dq};
+" 2>/dev/null | tr -d '\r' | awk 'NF'
+}
+
+hm_backup_cp_live_dbs() {
+  local domain="$1" cli="$2"
+  shift 2
+  local -a sock_args=("$@")
+  local dq
+  dq="$(hm_sql_quote "${domain}")"
+  "${cli}" "${sock_args[@]}" cyberpanel -N -B -e "
+SELECT d.dbName FROM databases_databases d
+INNER JOIN websiteFunctions_websites w ON d.website_id = w.id
+WHERE w.domain = ${dq};
+" 2>/dev/null | tr -d '\r' | awk 'NF'
+}
+
 # CyberPanel website/childdomains/databases INSERT z cyberpanel-site.sql
 # Bez jawnego PK: strip `id`, mapowanie master_id/website_id → nowy id website.
+# Nadmiarowe child/DB (po backupie) zachowywane i re-linkowane — chyba że --prune-cp-extra.
 hm_backup_restore_cyberpanel_site() {
   local remote_base="$1"
   local domain="${2:-}"
+  local prune_extra="${3:-${HM_BACKUP_PRUNE_CP_EXTRA:-0}}"
   local cli sock_args=() sqlf src_id new_id dq web_sql rest_sql
+  local -a snap_ch=() snap_db=() live_ch=() live_db=() keep_ch=() keep_db=()
+  local ch db keep_list="" _in_snap=0
   if ! rclone cat "${remote_base}/cyberpanel-site.sql" >/dev/null 2>&1; then
     hm_info "Brak cyberpanel-site.sql — panel CP może nie widzieć domeny (dodaj ręcznie lub pomiń)."
     return 0
@@ -1212,15 +1402,79 @@ hm_backup_restore_cyberpanel_site() {
     hm_archive_cp_sql_strip_explicit_ids "${sqlf}" || true
   fi
 
+  mapfile -t snap_ch < <(hm_backup_cp_snap_child_domains "${sqlf}" || true)
+  mapfile -t snap_db < <(hm_backup_cp_snap_db_names "${sqlf}" || true)
+
   if [[ -n "${domain}" ]] && hm_is_valid_domain "${domain}"; then
     dq="$(hm_sql_quote "${domain}")"
-    "${cli}" "${sock_args[@]}" cyberpanel -e "
+    mapfile -t live_ch < <(hm_backup_cp_live_children "${domain}" "${cli}" "${sock_args[@]+"${sock_args[@]}"}" || true)
+    mapfile -t live_db < <(hm_backup_cp_live_dbs "${domain}" "${cli}" "${sock_args[@]+"${sock_args[@]}"}" || true)
+    for ch in "${live_ch[@]+"${live_ch[@]}"}"; do
+      [[ -n "${ch}" ]] || continue
+      _in_snap=0
+      for db in "${snap_ch[@]+"${snap_ch[@]}"}"; do
+        [[ "${db}" == "${ch}" ]] && _in_snap=1 && break
+      done
+      [[ "${_in_snap}" -eq 0 ]] && keep_ch+=("${ch}")
+    done
+    for db in "${live_db[@]+"${live_db[@]}"}"; do
+      [[ -n "${db}" ]] || continue
+      _in_snap=0
+      for ch in "${snap_db[@]+"${snap_db[@]}"}"; do
+        [[ "${ch}" == "${db}" ]] && _in_snap=1 && break
+      done
+      [[ "${_in_snap}" -eq 0 ]] && keep_db+=("${db}")
+    done
+
+    if [[ "${#keep_ch[@]}" -gt 0 || "${#keep_db[@]}" -gt 0 ]]; then
+      keep_list="$(printf '%s,' "${keep_ch[@]+"${keep_ch[@]}"}" "${keep_db[@]+"${keep_db[@]}"}")"
+      keep_list="${keep_list%,}"
+      if [[ "${prune_extra}" == "1" ]]; then
+        hm_warn "CP prune (--prune-cp-extra): usuwam nadmiarowe (po backupie): ${keep_list}"
+        keep_ch=()
+        keep_db=()
+      else
+        hm_info "CP: zachowuję nadmiarowe child/DB (nie w snapshocie): ${keep_list}"
+      fi
+    fi
+
+    hm_info "Czyszczenie wpisu CP dla ${domain} przed importem snapshota…"
+    # FK off: zachowane child/DB zostają (stary master_id) → re-link po imporcie
+    local del_sql="SET FOREIGN_KEY_CHECKS=0;"
+    if [[ "${#keep_db[@]}" -eq 0 ]]; then
+      del_sql+="
 DELETE d FROM databases_databases d
-  INNER JOIN websiteFunctions_websites w ON d.website_id = w.id WHERE w.domain = ${dq};
+  INNER JOIN websiteFunctions_websites w ON d.website_id = w.id WHERE w.domain = ${dq};"
+    else
+      for db in "${snap_db[@]+"${snap_db[@]}"}"; do
+        [[ -n "${db}" ]] || continue
+        del_sql+="
+DELETE d FROM databases_databases d
+  INNER JOIN websiteFunctions_websites w ON d.website_id = w.id
+  WHERE w.domain = ${dq} AND d.dbName = $(hm_sql_quote "${db}");"
+      done
+    fi
+    if [[ "${#keep_ch[@]}" -eq 0 ]]; then
+      del_sql+="
 DELETE c FROM websiteFunctions_childdomains c
-  INNER JOIN websiteFunctions_websites w ON c.master_id = w.id WHERE w.domain = ${dq};
+  INNER JOIN websiteFunctions_websites w ON c.master_id = w.id WHERE w.domain = ${dq};"
+    else
+      for ch in "${snap_ch[@]+"${snap_ch[@]}"}"; do
+        [[ -n "${ch}" ]] || continue
+        del_sql+="
+DELETE c FROM websiteFunctions_childdomains c
+  INNER JOIN websiteFunctions_websites w ON c.master_id = w.id
+  WHERE w.domain = ${dq} AND c.domain = $(hm_sql_quote "${ch}");"
+      done
+    fi
+    del_sql+="
 DELETE FROM websiteFunctions_websites WHERE domain = ${dq};
-" 2>/dev/null || true
+SET FOREIGN_KEY_CHECKS=1;"
+    if ! "${cli}" "${sock_args[@]}" cyberpanel -e "${del_sql}"; then
+      rm -f "${sqlf}" "${web_sql}" "${rest_sql}"
+      hm_err "DELETE CyberPanel dla ${domain} nieudany."
+      return 1
+    fi
   fi
 
   # 1) website INSERT (bez id) → nowy autoincrement
@@ -1260,8 +1514,25 @@ DELETE FROM websiteFunctions_websites WHERE domain = ${dq};
       return 1
     fi
   fi
+
+  # Re-link nadmiarowych child/DB do nowego website_id
+  if [[ -n "${new_id}" && "${#keep_ch[@]}" -gt 0 ]]; then
+    for ch in "${keep_ch[@]}"; do
+      "${cli}" "${sock_args[@]}" cyberpanel -e \
+        "UPDATE websiteFunctions_childdomains SET master_id=${new_id} WHERE domain=$(hm_sql_quote "${ch}");" \
+        || hm_warn "Re-link child ${ch} → id=${new_id} nieudany."
+    done
+  fi
+  if [[ -n "${new_id}" && "${#keep_db[@]}" -gt 0 ]]; then
+    for db in "${keep_db[@]}"; do
+      "${cli}" "${sock_args[@]}" cyberpanel -e \
+        "UPDATE databases_databases SET website_id=${new_id} WHERE dbName=$(hm_sql_quote "${db}");" \
+        || hm_warn "Re-link DB ${db} → id=${new_id} nieudany."
+    done
+  fi
+
   rm -f "${sqlf}" "${web_sql}" "${rest_sql}"
-  hm_ok "Wpis CyberPanel odtworzony${new_id:+ (id=${new_id})}."
+  hm_ok "Wpis CyberPanel odtworzony${new_id:+ (id=${new_id})}${keep_list:+; zachowano: ${keep_list}}."
   return 0
 }
 
@@ -1575,7 +1846,7 @@ hm_backup_restore_ols_from_archive() {
 _hm_backup_restore_body() {
   local domain="${1:-}"
   shift || true
-  local stamp="" files_only=0 db_only=0 overwrite_db=0 adopt_user=0 overwrite_files=0 force_foreign_db=0
+  local stamp="" files_only=0 db_only=0 overwrite_db=0 adopt_user=0 overwrite_files=0 force_foreign_db=0 prune_cp_extra=0
   local a
   for a in "$@"; do
     case "${a}" in
@@ -1585,6 +1856,7 @@ _hm_backup_restore_body() {
       --adopt-existing-user) adopt_user=1 ;;
       --overwrite-files) overwrite_files=1 ;;
       --force-foreign-db) force_foreign_db=1 ;;
+      --prune-cp-extra) prune_cp_extra=1 ;;
       -*)
         hm_err "Nieznana flaga: ${a}"
         return 1
@@ -1609,11 +1881,12 @@ _hm_backup_restore_body() {
     domain="${HM_SITE_DOMAIN:-}"
   fi
   [[ -n "${domain}" ]] || {
-    hm_err "Użycie: backup restore <domena> [stamp] [--files-only|--db-only] [--overwrite-db] [--overwrite-files] [--adopt-existing-user] [--force-foreign-db]"
+    hm_err "Użycie: backup restore <domena> [stamp] [--files-only|--db-only] [--overwrite-db] [--overwrite-files] [--adopt-existing-user] [--force-foreign-db] [--prune-cp-extra]"
     return 1
   }
   HM_BACKUP_FORCE_FOREIGN_DB="${force_foreign_db}"
-  export HM_BACKUP_FORCE_FOREIGN_DB
+  HM_BACKUP_PRUNE_CP_EXTRA="${prune_cp_extra}"
+  export HM_BACKUP_FORCE_FOREIGN_DB HM_BACKUP_PRUNE_CP_EXTRA
 
   hm_load_config
   hm_detect_all
@@ -1654,7 +1927,7 @@ _hm_backup_restore_body() {
     hm_info "Wybrano najnowszy: ${stamp}"
   fi
 
-  if [[ ! "${stamp}" =~ ^[0-9]{8}-[0-9]{6}$ ]]; then
+  if [[ ! "${stamp}" =~ ^[0-9]{8}-[0-9]{6}(-[0-9]+)?$ ]]; then
     hm_err "Nieprawidłowy stamp: '${stamp}' (oczekiwano YYYYMMDD-HHMMSS)."
     return 1
   fi
@@ -1831,7 +2104,7 @@ _hm_backup_restore_body() {
       plan_steps+=("Odtworzenie konfiguracji ${snap_web:-nginx/apache}: webserver.tar.gz / php-fpm.tar.gz / meta.tar.gz (walidacja przed reload)")
     fi
     if [[ "${restore_ssl}" -eq 1 ]]; then
-      plan_steps+=("Odtworzenie SSL z ssl.tar.gz (symlinki live/ → archive/ zachowane)")
+      plan_steps+=("Odtworzenie SSL z ssl.tar.gz (whitelist ${domain}; nowszy live/ notAfter zachowany)")
     fi
     if [[ "${restore_cron}" -eq 1 && "${skip_unix_shared}" -eq 0 ]]; then
       plan_steps+=("Odtworzenie crontab użytkownika ${HM_SITE_USER:-${unix_name:-?}} z crontab.txt")
@@ -1840,7 +2113,11 @@ _hm_backup_restore_body() {
       restore_cron=0
     fi
     if [[ "${restore_cp}" -eq 1 ]]; then
-      plan_steps+=("Odtworzenie wpisu CyberPanel z cyberpanel-site.sql (website/childdomains/databases)")
+      if [[ "${prune_cp_extra}" -eq 1 ]]; then
+        plan_steps+=("CyberPanel: import cyberpanel-site.sql + --prune-cp-extra (usuń child/DB dodane po backupie)")
+      else
+        plan_steps+=("CyberPanel: import cyberpanel-site.sql (nadmiarowe child/DB po backupie → zachowane i re-link)")
+      fi
     fi
     if rclone cat "${remote_base}/pm2-processes.json" >/dev/null 2>&1; then
       plan_steps+=("PM2: tylko wskazówka (pm2-processes.json) — bez automatycznego startu procesów")
@@ -1986,13 +2263,13 @@ _hm_backup_restore_body() {
       hm_warn "Unix user ${HM_SITE_USER} nie istnieje (brak unix-account.meta / useradd) — pliki w ${target_dir} mogą być root:root."
     fi
     if [[ "${restore_ssl}" -eq 1 ]]; then
-      hm_backup_restore_ssl "${remote_base}" || hm_warn "SSL restore nieudany — sprawdź certbot/acme."
+      hm_backup_restore_ssl "${remote_base}" "${domain}" || hm_warn "SSL restore nieudany — sprawdź certbot/acme."
     fi
     if [[ "${restore_cron}" -eq 1 ]]; then
       hm_backup_restore_crontab "${remote_base}" "${HM_SITE_USER:-}" "${domain}" || true
     fi
     if [[ "${restore_cp}" -eq 1 ]]; then
-      if ! hm_backup_restore_cyberpanel_site "${remote_base}" "${domain}"; then
+      if ! hm_backup_restore_cyberpanel_site "${remote_base}" "${domain}" "${prune_cp_extra}"; then
         hm_err "CyberPanel SQL niezaimportowany — przerywam restore (rc≠0)."
         return 1
       fi
@@ -2076,7 +2353,7 @@ EOF
     stamp="$(printf '%s\n' "${list}" | head -1)"
     hm_info "Wybrano najnowszy full: ${stamp}"
   fi
-  [[ "${stamp}" =~ ^[0-9]{8}-[0-9]{6}$ ]] || { hm_err "Nieprawidłowy stamp: ${stamp}"; return 1; }
+  [[ "${stamp}" =~ ^[0-9]{8}-[0-9]{6}(-[0-9]+)?$ ]] || { hm_err "Nieprawidłowy stamp: ${stamp}"; return 1; }
 
   local remote_base
   remote_base="$(hm_backup_dest_full "${stamp}")"
@@ -2146,7 +2423,18 @@ EOF
       continue
     fi
     hm_info "Import DB ${name}…"
-    "${cli}" "${sock_args[@]}" -e "CREATE DATABASE IF NOT EXISTS \`${name}\`;" 2>/dev/null || true
+    local cdb_tmp cdb_applied=0
+    cdb_tmp="$(hm_mktemp .create.sql)"
+    if hm_backup_r_cat "${remote_base}/databases/${name}.create.sql" > "${cdb_tmp}" 2>/dev/null \
+        || rclone cat "${remote_base}/databases/${name}.create.sql" > "${cdb_tmp}" 2>/dev/null; then
+      if [[ -s "${cdb_tmp}" ]] && grep -qi 'CREATE DATABASE' "${cdb_tmp}"; then
+        "${cli}" "${sock_args[@]}" < "${cdb_tmp}" 2>/dev/null && cdb_applied=1 || true
+      fi
+    fi
+    rm -f "${cdb_tmp}"
+    if [[ "${cdb_applied}" -eq 0 ]]; then
+      "${cli}" "${sock_args[@]}" -e "CREATE DATABASE IF NOT EXISTS \`${name}\`;" 2>/dev/null || true
+    fi
     if ! gunzip -c "${db_tmp}" 2>/dev/null | "${cli}" "${sock_args[@]}" "${name}" >/dev/null 2>&1; then
       rm -f "${db_tmp}"
       hm_err "Import ${name} nieudany."

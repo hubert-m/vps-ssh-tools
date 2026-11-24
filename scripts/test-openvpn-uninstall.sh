@@ -63,6 +63,8 @@ PKI=${HM_OVPN_PKI}
 PREV_FORWARD=1
 FW=ufw
 IFACE=eth0
+FW_HAD_PORT_RULE=0
+FW_HAD_MASQ=0
 PACKAGES=yes
 EOF
   printf '1\n' > "${HM_OVPN_FORWARD_STATE}"
@@ -114,10 +116,52 @@ mode="$(stat -c '%a' -- "${HM_OVPN_UFW_RULES}" 2>/dev/null || true)"
 [[ ! -f "${HM_OVPN_CRON}" && -f "${root}/cron/other" ]] && ok cron || bad cron
 [[ ! -f "${HM_OVPN_F2B_JAIL}" && ! -f "${HM_OVPN_NAT_UNIT}" ]] && ok jail-nat || bad jail-nat
 [[ ! -f "${HM_OVPN_F2B_FILTER}" ]] && ok f2b-filter || bad f2b-filter
-grep -q 'ufw delete allow 1194/udp' "${HM_OVPN_CALL_LOG}" && ok fw-delete || bad fw-delete
+grep -q 'ufw delete allow 1194/udp' "${HM_OVPN_CALL_LOG}" && bad fw-no-raw-delete || ok fw-no-raw-delete
+grep -q 'hm_os_firewall_remove 1194/udp' "${HM_OVPN_CALL_LOG}" && ok fw-comment-remove || bad fw-comment-remove
 [[ ! -d "${HM_OVPN_EXPORT}" ]] && ok profiles-gone || bad profiles-gone
 grep -q 'pkg remove openvpn' "${HM_OVPN_CALL_LOG}" && ok purge || bad purge
 printf '%s' "${out}" | grep -q '^kopia: ' && ok report-copy || bad report-copy
+
+# firewalld: FW_HAD_MASQ=1 / FW_HAD_PORT_RULE=1 → nie usuwaj cudzych
+seed
+cat > "${HM_OVPN_ETC}/hmtools.state" <<EOF
+PORT=1194
+PROTO=udp
+SUBNET=10.8.0.0/24
+ENDPOINT=vpn.test
+PKI=${HM_OVPN_PKI}
+PREV_FORWARD=1
+FW=firewalld
+IFACE=eth0
+FW_HAD_PORT_RULE=1
+FW_HAD_MASQ=1
+PACKAGES=no
+EOF
+: > "${HM_OVPN_CALL_LOG}"
+hm_ovpn_uninstall --yes --no-backup --keep-pki --keep-profiles >/dev/null
+grep -q -- '--remove-masquerade' "${HM_OVPN_CALL_LOG}" && bad fwd-keep-masq || ok fwd-keep-masq
+grep -q -- '--remove-port=1194/udp' "${HM_OVPN_CALL_LOG}" && bad fwd-keep-port || ok fwd-keep-port
+grep -q -- '--remove-interface=tun0' "${HM_OVPN_CALL_LOG}" && ok fwd-drop-tun || bad fwd-drop-tun
+
+# firewalld: FW_HAD_*=0 → wolno usunąć nasze
+seed
+cat > "${HM_OVPN_ETC}/hmtools.state" <<EOF
+PORT=443
+PROTO=tcp
+SUBNET=10.8.0.0/24
+ENDPOINT=vpn.test
+PKI=${HM_OVPN_PKI}
+PREV_FORWARD=0
+FW=firewalld
+IFACE=eth0
+FW_HAD_PORT_RULE=0
+FW_HAD_MASQ=0
+PACKAGES=no
+EOF
+: > "${HM_OVPN_CALL_LOG}"
+hm_ovpn_uninstall --yes --no-backup --keep-pki --keep-profiles >/dev/null
+grep -q -- '--remove-masquerade' "${HM_OVPN_CALL_LOG}" && ok fwd-drop-masq || bad fwd-drop-masq
+grep -q -- '--remove-port=443/tcp' "${HM_OVPN_CALL_LOG}" && ok fwd-drop-port || bad fwd-drop-port
 
 if hm_ovpn_uninstall --yes >/dev/null 2>&1; then bad nomanifest; else ok nomanifest; fi
 grep -q 'dport 22' "${HM_OVPN_UFW_RULES}" && ok nomanifest-ssh || bad nomanifest-ssh

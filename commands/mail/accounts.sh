@@ -435,15 +435,16 @@ hm_mail_account_delete() {
     [[ "${exists}" == "1" ]] || { hm_err "Brak skrzynki: ${email}"; return 1; }
   fi
 
-  local trash stamp
+  local trash stamp trash_root moved=0 copied=0
   stamp="$(date +%Y%m%d-%H%M%S)"
-  trash="/home/vmail/.hmtools-trash/${stamp}-${localpart}@${domain}"
+  trash_root="${HM_MAIL_TRASH_ROOT:-/home/vmail/.hmtools-trash}"
+  trash="${trash_root}/${stamp}-${localpart}@${domain}"
 
   local -a plan=("cyberpanel deleteEmail — ${email}")
   if [[ "${purge}" -eq 1 ]]; then
-    plan+=("PURGE Maildir ${path} (bezpowrotne)")
+    plan+=("Maildir → trash, po sukcesie CP: PURGE ${trash}")
   else
-    plan+=("Archiwizacja Maildir → ${trash} (domyślnie; --purge kasuje)")
+    plan+=("Archiwizacja Maildir → ${trash} (domyślnie; --purge kasuje trash)")
   fi
 
   if [[ "${purge}" -eq 1 ]]; then
@@ -464,25 +465,56 @@ hm_mail_account_delete() {
     fi
   fi
 
-  # najpierw archiwum / purge plików, potem deleteEmail (żeby znać ścieżkę)
+  # Zawsze najpierw Maildir → trash (także przy --purge), potem deleteEmail;
+  # przy błędzie CP przywróć; purge trash dopiero po sukcesie.
   if [[ -d "${path}" ]]; then
-    if [[ "${purge}" -eq 1 ]]; then
-      rm -rf -- "${path}" || hm_warn "Nie usunięto ${path}"
-    else
-      mkdir -p "$(dirname "${trash}")"
-      mv -- "${path}" "${trash}" 2>/dev/null || {
-        hm_warn "mv Maildir nieudany — kopiuję."
-        mkdir -p "${trash}"
-        cp -a "${path}/." "${trash}/" 2>/dev/null || true
-      }
+    mkdir -p -- "${trash_root}" || {
+      hm_err "Nie utworzono ${trash_root}"
+      return 1
+    }
+    if mv -- "${path}" "${trash}" 2>/dev/null; then
+      moved=1
       hm_info "Maildir → ${trash}"
+    else
+      hm_warn "mv Maildir nieudany — kopiuję."
+      mkdir -p -- "${trash}" || {
+        hm_err "Nie utworzono ${trash}"
+        return 1
+      }
+      if ! cp -a "${path}/." "${trash}/"; then
+        hm_err "Kopia Maildir nieudana — przerywam (konto i Maildir nietknięte)."
+        rm -rf -- "${trash}" 2>/dev/null || true
+        return 1
+      fi
+      copied=1
+      moved=1
+      hm_info "Maildir → ${trash} (kopia; oryginał zostaje do sukcesu CP)"
     fi
   fi
 
   if ! hm_run cyberpanel deleteEmail --email "${email}" 2>/dev/null \
     && ! hm_run cyberpanel deleteEmail --domainName "${domain}" --userName "${localpart}" 2>/dev/null; then
-    hm_err "cyberpanel deleteEmail nieudane."
+    if [[ "${copied}" -eq 1 ]]; then
+      rm -rf -- "${trash}" 2>/dev/null || true
+      hm_err "cyberpanel deleteEmail nieudane — Maildir nietknięty: ${path}"
+    elif [[ "${moved}" -eq 1 && -e "${trash}" ]]; then
+      mkdir -p -- "$(dirname "${path}")" 2>/dev/null || true
+      if mv -- "${trash}" "${path}" 2>/dev/null; then
+        hm_err "cyberpanel deleteEmail nieudane — przywrócono Maildir: ${path}"
+      else
+        hm_err "cyberpanel deleteEmail nieudane — Maildir w trash: ${trash} (przywrócenie nieudane)"
+      fi
+    else
+      hm_err "cyberpanel deleteEmail nieudane."
+    fi
     return 1
+  fi
+
+  if [[ "${copied}" -eq 1 && -d "${path}" ]]; then
+    rm -rf -- "${path}" || hm_warn "Nie usunięto oryginału ${path} po sukcesie CP"
+  fi
+  if [[ "${purge}" -eq 1 && "${moved}" -eq 1 ]]; then
+    rm -rf -- "${trash}" || hm_warn "Nie usunięto trash ${trash}"
   fi
   hm_ok "Usunięto konto ${email}"
 }

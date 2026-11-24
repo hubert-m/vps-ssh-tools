@@ -238,15 +238,21 @@ hm_backup_config_root() {
 }
 
 hm_rclone_rcat() {
-  # stdin → remote path LUB lokalny plik
-  local dest="$1"
+  # stdin → remote path LUB lokalny plik (atomowo: *.part + mv)
+  local dest="$1" part rc
   if [[ "${dest}" == /* ]]; then
     mkdir -p "$(dirname "${dest}")" 2>/dev/null || true
+    part="${dest}.part.$$"
     hm_file_log INFO "RUN: rcat(local) ${dest}"
     set +e
-    cat > "${dest}"
-    local rc=$?
+    cat > "${part}"
+    rc=$?
     set -e
+    if [[ "${rc}" -eq 0 ]]; then
+      mv -f -- "${part}" "${dest}" || rc=$?
+    else
+      rm -f -- "${part}" 2>/dev/null || true
+    fi
     hm_file_log INFO "RUN_END: rc=${rc} cmd=rcat(local)"
     return "${rc}"
   fi
@@ -263,13 +269,20 @@ hm_rclone_rcat() {
 hm_rclone_copyto() {
   local src="$1"
   local dest="$2"
+  local part rc
   if [[ "${dest}" == /* ]]; then
     mkdir -p "$(dirname "${dest}")" 2>/dev/null || true
+    part="${dest}.part.$$"
     hm_file_log INFO "RUN: cp → ${dest}"
     set +e
-    cp -a "${src}" "${dest}"
-    local rc=$?
+    cp -a "${src}" "${part}"
+    rc=$?
     set -e
+    if [[ "${rc}" -eq 0 ]]; then
+      mv -f -- "${part}" "${dest}" || rc=$?
+    else
+      rm -f -- "${part}" 2>/dev/null || true
+    fi
     hm_file_log INFO "RUN_END: rc=${rc} cmd=cp"
     return "${rc}"
   fi

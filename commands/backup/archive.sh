@@ -41,12 +41,28 @@ hm_backup_gzip_tar_ok() {
 hm_archive_purge_remote() {
   local remote_base="${1:-}"
   [[ -n "${remote_base}" ]] || return 0
-  hm_warn "Sprzątam niepełny snapshot na Drive: ${remote_base}"
+  # Tylko katalog utworzony przez bieżący proces (kolizja stampu → nie kasuj cudzego).
+  if [[ -n "${HM_BACKUP_OWNED_REMOTE:-}" && "${remote_base}" != "${HM_BACKUP_OWNED_REMOTE}" ]]; then
+    hm_warn "Pomijam purge (to nie nasz snapshot): ${remote_base}"
+    return 0
+  fi
+  if [[ "${remote_base}" == /* ]]; then
+    if [[ -f "${remote_base}/.hmtools-owned" ]] \
+        || [[ -n "${HM_BACKUP_OWNED_REMOTE:-}" && "${remote_base}" == "${HM_BACKUP_OWNED_REMOTE}" ]]; then
+      hm_warn "Sprzątam niepełny snapshot lokalny: ${remote_base}"
+      rm -rf -- "${remote_base}"
+      hm_ok "Usunięto niepełny snapshot ${remote_base}"
+    else
+      hm_warn "Pomijam purge lokalnego katalogu bez markera .hmtools-owned: ${remote_base}"
+    fi
+    return 0
+  fi
+  hm_warn "Sprzątam niepełny snapshot na remote: ${remote_base}"
   if rclone purge "${remote_base}" 2>/dev/null; then
     hm_ok "Usunięto niepełny snapshot ${remote_base}"
   else
     rclone delete "${remote_base}" --rmdirs 2>/dev/null || true
-    hm_warn "Nie udało się w pełni usunąć ${remote_base} — sprawdź ręcznie na Drive."
+    hm_warn "Nie udało się w pełni usunąć ${remote_base} — sprawdź ręcznie."
   fi
 }
 
@@ -761,7 +777,9 @@ _hm_backup_archive_site_body() {
 
   hm_load_config
   hm_detect_all
-  hm_rclone_check || return 1
+  if ! hm_rclone_root_is_local; then
+    hm_rclone_check || return 1
+  fi
   hm_backup_check_space || return 1
   hm_backup_acquire_lock || return 1
   trap 'hm_backup_release_lock' RETURN
@@ -782,8 +800,12 @@ _hm_backup_archive_site_body() {
   hm_set_site_context "${domain}"
 
   local stamp remote_base
-  stamp="$(hm_backup_stamp)"
-  remote_base="$(hm_backup_dest_site "${domain}" "${stamp}")"
+  hm_backup_claim_stamp archive "${domain}" || return 1
+  stamp="${HM_BACKUP_STAMP}"
+  remote_base="${HM_BACKUP_REMOTE_BASE}"
+  hm_rclone_mkdir "$(hm_rclone_dest "${domain}")" 2>/dev/null || true
+  hm_rclone_mkdir "${remote_base}" 2>/dev/null || true
+  hm_backup_mark_owned_remote "${remote_base}"
 
   local -a archive_dbs=()
   local -a archive_db_users=()

@@ -1057,6 +1057,17 @@ DELETE FROM websites_website WHERE domainName = ${dq};
           hm_site_lifecycle_execute_delete
         fi
         ;;
+      meta)
+        # Brak resources.ndjson (np. site new tylko php+mysql) — DROP z .dbs + sprzątanie meta
+        hm_progress_bar "${i}" "${total}" "meta kreatora…"
+        if declare -F hm_site_lifecycle_drop_manifest_dbs >/dev/null 2>&1; then
+          hm_site_lifecycle_drop_manifest_dbs "${domain}" || true
+        fi
+        if declare -F hm_site_lifecycle_cleanup_meta >/dev/null 2>&1; then
+          hm_site_lifecycle_cleanup_meta "${domain}" || true
+        fi
+        hm_ok "Metadane kreatora wyczyszczone."
+        ;;
       files)
         hm_progress_bar "${i}" "${total}" "rm -rf katalog…"
         if [[ "${HM_DEL_KEEP_FILES:-0}" == "1" ]]; then
@@ -1208,8 +1219,10 @@ EOF
   fi
   if [[ "${keep_db}" -eq 1 ]]; then
     warn_data="pliki strony zostaną bezpowrotnie skasowane z VPS (bazy MySQL zachowane: --keep-db)"
+  elif [[ "${#HM_DEL_DBS[@]}" -gt 0 ]]; then
+    warn_data="pliki i ${#HM_DEL_DBS[@]} baz(y) zostaną bezpowrotnie skasowane z VPS"
   else
-    warn_data="pliki i bazy zostaną bezpowrotnie skasowane z VPS"
+    warn_data="pliki strony zostaną bezpowrotnie skasowane z VPS (brak baz do usunięcia)"
   fi
 
   if ! hm_confirm_plan_critical "${domain}" \
