@@ -190,23 +190,62 @@ hm_backup_prefer_docroot_if_shared_home() {
 }
 
 # $1 = backup|archive — archive używa ARCHIVE_EXCLUDES (domyślnie puste = pełny dump przed usunięciem)
+# Wypisuje --exclude=… (spacje) — legacy; preferuj hm_backup_tar_argv.
 hm_backup_tar_excludes() {
   local mode="${1:-backup}"
+  local e
+  local -a args=()
+  hm_backup_tar_excludes_arr "${mode}" args
+  for e in "${args[@]+"${args[@]}"}"; do
+    printf -- '%s ' "${e}"
+  done
+}
+
+# Wypełnia nameref tablicy argumentami --exclude=… (bez globa w CWD, bez zależności od IFS).
+hm_backup_tar_excludes_arr() {
+  local mode="${1:-backup}"
+  local -n _ex_out="${2:-}"
   local list e
   local -a parts=()
+  _ex_out=()
   case "${mode}" in
     archive) list="${ARCHIVE_EXCLUDES:-}" ;;
     *) list="${BACKUP_EXCLUDES:-}" ;;
   esac
-  # Bez globa w CWD (set -f): „*.log” nie rozwija się do lokalnych plików.
+  local _save_ifs="${IFS}"
+  IFS=$' \t\n'
   set -f
   # shellcheck disable=SC2206
   parts=( ${list} )
   set +f
+  IFS="${_save_ifs}"
   for e in "${parts[@]+"${parts[@]}"}"; do
     [[ -n "${e}" ]] || continue
-    printf -- '--exclude=%s ' "${e}"
+    _ex_out+=("--exclude=${e}")
   done
+}
+
+# Buduje argv tar (opcje + excludes) jako tablicę — odporne na IFS=',' w callerze.
+# $1=exclude_mode → ustawia globalną HM_BACKUP_TAR_ARGV
+hm_backup_tar_argv() {
+  local exclude_mode="${1:-backup}"
+  local meta _save_ifs
+  local -a meta_a=() ex_a=()
+  HM_BACKUP_TAR_ARGV=()
+  if [[ "${exclude_mode}" == "archive" ]]; then
+    HM_BACKUP_TAR_ARGV+=(--warning=no-file-changed)
+  else
+    HM_BACKUP_TAR_ARGV+=(--warning=no-file-changed --ignore-failed-read)
+  fi
+  meta="$(hm_backup_tar_meta_opts create)"
+  _save_ifs="${IFS}"
+  IFS=$' \t\n'
+  # shellcheck disable=SC2206
+  meta_a=( ${meta} )
+  IFS="${_save_ifs}"
+  HM_BACKUP_TAR_ARGV+=("${meta_a[@]+"${meta_a[@]}"}")
+  hm_backup_tar_excludes_arr "${exclude_mode}" ex_a
+  HM_BACKUP_TAR_ARGV+=("${ex_a[@]+"${ex_a[@]}"}")
 }
 
 hm_backup_excludes_list() {
@@ -522,18 +561,14 @@ hm_stream_tar_rcat() {
   local src_dir="$1"
   local dest="$2"
   local exclude_mode="${3:-backup}"
-  local excludes tar_err tar_rc gzip_rc rcat_rc tee_rc hash_file meta_opts
-  local strict=0 tar_opts="--warning=no-file-changed --ignore-failed-read"
+  local tar_err tar_rc gzip_rc rcat_rc tee_rc hash_file
+  local strict=0
   local local_gz="" enc_path="" upload_dest="${dest}"
-  excludes="$(hm_backup_tar_excludes "${exclude_mode}")"
-  meta_opts="$(hm_backup_tar_meta_opts create)"
+  hm_backup_tar_argv "${exclude_mode}"
   tar_err="$(mktemp "${TMP_DIR:-/tmp}/hmtools-tar.XXXXXX.err")"
   hash_file="$(mktemp "${TMP_DIR:-/tmp}/hmtools-tar.XXXXXX.sha")"
   HM_BACKUP_LAST_SHA256=""
-  if [[ "${exclude_mode}" == "archive" ]]; then
-    strict=1
-    tar_opts="--warning=no-file-changed"
-  fi
+  [[ "${exclude_mode}" == "archive" ]] && strict=1
 
   hm_info "Archiwum (stream) ${src_dir} → ${dest} [excludes=${exclude_mode}: $(hm_backup_excludes_list "${exclude_mode}")]"
   hm_status_line "tar|gzip|rclone ${src_dir}..."
@@ -543,8 +578,7 @@ hm_stream_tar_rcat() {
     local_gz="$(mktemp "${TMP_DIR:-/tmp}/hmtools-tar.XXXXXX.tar.gz")"
     set +e
     set +o pipefail
-    # shellcheck disable=SC2086
-    tar -C "${src_dir}" ${tar_opts} ${meta_opts} ${excludes} -cf - . 2>"${tar_err}" \
+    tar -C "${src_dir}" "${HM_BACKUP_TAR_ARGV[@]}" -cf - . 2>"${tar_err}" \
       | gzip -c \
       | tee >(sha256sum 2>/dev/null | awk '{print $1}' > "${hash_file}") \
       > "${local_gz}"
@@ -583,8 +617,7 @@ hm_stream_tar_rcat() {
   else
     set +e
     set +o pipefail
-    # shellcheck disable=SC2086
-    tar -C "${src_dir}" ${tar_opts} ${meta_opts} ${excludes} -cf - . 2>"${tar_err}" \
+    tar -C "${src_dir}" "${HM_BACKUP_TAR_ARGV[@]}" -cf - . 2>"${tar_err}" \
       | gzip -c \
       | tee >(sha256sum 2>/dev/null | awk '{print $1}' > "${hash_file}") \
       | hm_rclone_rcat "${dest}"
@@ -626,16 +659,12 @@ hm_chunked_tar_upload() {
   local exclude_mode="${3:-backup}"
   local chunk_bytes=$((CHUNK_SIZE_MB * 1024 * 1024))
   local work="${TMP_DIR}/$$"
-  local excludes tar_err tar_rc gzip_rc split_rc meta_opts
-  local strict=0 tar_opts="--warning=no-file-changed --ignore-failed-read"
-  excludes="$(hm_backup_tar_excludes "${exclude_mode}")"
-  meta_opts="$(hm_backup_tar_meta_opts create)"
+  local tar_err tar_rc gzip_rc split_rc
+  local strict=0
+  hm_backup_tar_argv "${exclude_mode}"
   HM_BACKUP_LAST_SHA256=""
   HM_BACKUP_LAST_SHA256SUMS=""
-  if [[ "${exclude_mode}" == "archive" ]]; then
-    strict=1
-    tar_opts="--warning=no-file-changed"
-  fi
+  [[ "${exclude_mode}" == "archive" ]] && strict=1
 
   mkdir -p "${work}"
   tar_err="$(mktemp "${work}/tar.XXXXXX.err")"
@@ -646,8 +675,7 @@ hm_chunked_tar_upload() {
 
   set +e
   set +o pipefail
-  # shellcheck disable=SC2086
-  tar -C "${src_dir}" ${tar_opts} ${meta_opts} ${excludes} -cf - . 2>"${tar_err}" \
+  tar -C "${src_dir}" "${HM_BACKUP_TAR_ARGV[@]}" -cf - . 2>"${tar_err}" \
     | gzip -c \
     | tee "${whole_gz}" \
     | split -b "${chunk_bytes}" -d -a 4 - "${work}/part_"

@@ -79,6 +79,68 @@ rc=$?
 set -e
 [[ "${rc}" -ne 0 ]] && pass "(d) ucięty dump → rc≠0" || fail "(d) oczekiwano rc≠0"
 
+# --- (c2) tryb chunków: poprawne part_* + (joined) → rc=0 ---
+CHUNK_SNAP="${TMP}/chunk.ok/20200101-120000"
+mkdir -p "${CHUNK_SNAP}/files.chunks" "${CHUNK_SNAP}/db"
+# podziel istniejący tar na 2 części
+split -b 40 -d -a 4 --additional-suffix='' "${SNAP}/files.tar.gz" "${CHUNK_SNAP}/files.chunks/files.tar.gz.part_" 2>/dev/null \
+  || split -b 40 -d -a 4 "${SNAP}/files.tar.gz" "${CHUNK_SNAP}/files.chunks/files.tar.gz.part_"
+# ujednolić nazwy: part_0000 / part_0001
+shopt -s nullglob
+_parts=( "${CHUNK_SNAP}/files.chunks"/files.tar.gz.part_* )
+if [[ "${#_parts[@]}" -lt 2 ]]; then
+  # split na niektórych systemach: part_00 — dopnij drugi pusty? lepiej ręcznie
+  rm -rf "${CHUNK_SNAP}/files.chunks"
+  mkdir -p "${CHUNK_SNAP}/files.chunks"
+  dd if="${SNAP}/files.tar.gz" of="${CHUNK_SNAP}/files.chunks/files.tar.gz.part_0000" bs=1 count=40 status=none 2>/dev/null \
+    || head -c 40 "${SNAP}/files.tar.gz" > "${CHUNK_SNAP}/files.chunks/files.tar.gz.part_0000"
+  dd if="${SNAP}/files.tar.gz" of="${CHUNK_SNAP}/files.chunks/files.tar.gz.part_0001" bs=1 skip=40 status=none 2>/dev/null \
+    || tail -c +41 "${SNAP}/files.tar.gz" > "${CHUNK_SNAP}/files.chunks/files.tar.gz.part_0001"
+fi
+# rename jeżeli split dał part_00 zamiast part_0000
+for _p in "${CHUNK_SNAP}/files.chunks"/files.tar.gz.part_*; do
+  [[ -f "${_p}" ]] || continue
+  _bn="$(basename "${_p}")"
+  if [[ "${_bn}" =~ ^files\.tar\.gz\.part_([0-9]+)$ ]]; then
+    _num="${BASH_REMATCH[1]}"
+    _want="$(printf 'files.tar.gz.part_%04d' "$((10#${_num}))")"
+    if [[ "${_bn}" != "${_want}" ]]; then
+      mv -f "${_p}" "${CHUNK_SNAP}/files.chunks/${_want}"
+    fi
+  fi
+done
+shopt -u nullglob
+_nparts="$(find "${CHUNK_SNAP}/files.chunks" -name 'files.tar.gz.part_*' | wc -l | tr -d ' ')"
+: > "${CHUNK_SNAP}/SHA256SUMS"
+for _p in $(find "${CHUNK_SNAP}/files.chunks" -name 'files.tar.gz.part_*' | sort); do
+  _h="$(sha256sum "${_p}" | awk '{print $1}')"
+  printf '%s  files.chunks/%s\n' "${_h}" "$(basename "${_p}")" >> "${CHUNK_SNAP}/SHA256SUMS"
+done
+printf '%s  files.tar.gz (joined)\n' "${HASH}" >> "${CHUNK_SNAP}/SHA256SUMS"
+printf '%s\n' "{\"type\":\"archive\",\"sha256_files\":\"${HASH}\",\"files_mode\":\"chunks\",\"status\":\"ok\"}" \
+  > "${CHUNK_SNAP}/manifest.json"
+printf 'chunks=%s\n' "${_nparts}" > "${CHUNK_SNAP}/files.chunks/files.tar.gz.chunks.txt"
+cp -a "${SNAP}/db/shop_app.sql.gz" "${CHUNK_SNAP}/db/"
+set +e
+hm_backup_verify_remote_archive "${CHUNK_SNAP}" chunks "${_nparts}" shop_app >/dev/null 2>&1
+rc=$?
+set -e
+[[ "${rc}" -eq 0 ]] && pass "(c2) chunki OK + (joined) → rc=0" || fail "(c2) oczekiwano rc=0, got=${rc}"
+
+# --- (c3) flip bajtu w part_0001 → rc≠0 ---
+cp -a "${CHUNK_SNAP}" "${TMP}/chunk.flip"
+_flip_part="$(find "${TMP}/chunk.flip/files.chunks" -name 'files.tar.gz.part_0001' | head -1)"
+if [[ -n "${_flip_part}" && -f "${_flip_part}" ]]; then
+  printf '\xff' | dd of="${_flip_part}" bs=1 seek=2 conv=notrunc status=none 2>/dev/null || true
+  set +e
+  hm_backup_verify_remote_archive "${TMP}/chunk.flip" chunks "${_nparts}" shop_app >/dev/null 2>&1
+  rc=$?
+  set -e
+  [[ "${rc}" -ne 0 ]] && pass "(c3) uszkodzony chunk → rc≠0" || fail "(c3) oczekiwano rc≠0"
+else
+  fail "(c3) brak part_0001 do flip"
+fi
+
 # --- (e) błąd copyto ssl → archive nie woła delete ---
 DELETE_CALLED=0
 hm_site_execute_delete() { DELETE_CALLED=1; return 0; }

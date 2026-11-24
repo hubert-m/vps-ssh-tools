@@ -139,11 +139,17 @@ hm_backup_verify_remote_archive() {
     elif [[ "${remote_base}" != /* ]]; then
       sums_blob="$(rclone cat "${remote_base}/SHA256SUMS" 2>/dev/null || true)"
     fi
+    local joined_want=""
     if [[ -n "${sums_blob}" ]]; then
       while read -r sums_line || [[ -n "${sums_line}" ]]; do
         sum="$(printf '%s' "${sums_line}" | awk '{print $1}')"
         path="$(printf '%s' "${sums_line}" | awk '{print $2}')"
         [[ "${sum}" =~ ^[0-9a-fA-F]{64}$ && -n "${path}" ]] || continue
+        # „… files.tar.gz (joined)” = suma całego archiwum po sklejeniu (nie plik na remote)
+        if [[ "${sums_line}" == *" (joined)"* ]]; then
+          joined_want="${sum}"
+          continue
+        fi
         got="$(hm_rclone_sha256_any "${remote_base}/${path}" || true)"
         if [[ -z "${got}" || "${got}" != "${sum}" ]]; then
           hm_err "WERYFIKACJA NIEUDANA: SHA256 ${path} niezgodny."
@@ -151,7 +157,7 @@ hm_backup_verify_remote_archive() {
         fi
       done <<< "${sums_blob}"
     fi
-    # sklej chunki lokalnie → gzip -t / tar -tzf (+ opcjonalnie sha256_files)
+    # sklej chunki lokalnie → gzip -t / tar -tzf + SHA256 (joined / sha256_files)
     local join_tmp
     join_tmp="$(mktemp "${TMP_DIR:-/tmp}/hm-chunks.XXXXXX.tar.gz")"
     : > "${join_tmp}"
@@ -178,13 +184,29 @@ hm_backup_verify_remote_archive() {
       hm_err "WERYFIKACJA NIEUDANA: sklejone chunki uszkodzone (gzip/tar)!"
       return 1
     fi
+    got="$(hm_backup_sha256_file "${join_tmp}" || true)"
+    if [[ -z "${got}" ]]; then
+      rm -f "${join_tmp}"
+      hm_err "WERYFIKACJA NIEUDANA: nie udało się policzyć SHA256 sklejonych chunków."
+      return 1
+    fi
+    # Preferuj sha256_files z manifestu; fallback: linia (joined) w SHA256SUMS
     if [[ -n "${want}" ]]; then
-      got="$(hm_backup_sha256_file "${join_tmp}" || true)"
-      if [[ -z "${got}" || "${got}" != "${want}" ]]; then
+      if [[ "${got}" != "${want}" ]]; then
         rm -f "${join_tmp}"
         hm_err "WERYFIKACJA NIEUDANA: SHA256 sklejonych chunków ≠ sha256_files."
         return 1
       fi
+    elif [[ -n "${joined_want}" ]]; then
+      if [[ "${got}" != "${joined_want}" ]]; then
+        rm -f "${join_tmp}"
+        hm_err "WERYFIKACJA NIEUDANA: SHA256 sklejonych chunków ≠ (joined) w SHA256SUMS."
+        return 1
+      fi
+    else
+      rm -f "${join_tmp}"
+      hm_err "WERYFIKACJA NIEUDANA: brak sha256_files / (joined) dla trybu chunków!"
+      return 1
     fi
     rm -f "${join_tmp}"
   else
@@ -936,7 +958,7 @@ _hm_backup_archive_site_body() {
     "[BACKUP] Snapshot konta Unix SSH: ${unix_desc} → unix-account.meta + unix-authorized_keys"
     "[BACKUP] Spakowanie PEŁNEGO katalogu ${archive_files_root} ($(hm_human_size "${archive_files_size}")) bez BACKUP_EXCLUDES (ARCHIVE_EXCLUDES=$(hm_backup_excludes_list archive); ukryte .ssh/.pm2/.git/tmp/… włącznie) → files.tar.gz / files.chunks/"
     "[BACKUP] OLS vhost + SSL (symlinki live/ zachowane) + crontab + PM2 + cyberpanel-site.sql + manifest.json"
-    "[WERYFIKACJA] Twarda kontrola integralności wszystkich plików kopii na Google Drive (rozmiar > 0 B)"
+    "[WERYFIKACJA] Twarda kontrola integralności (SHA256 + gzip/tar; chunki po sklejeniu)"
   )
 
   hm_site_build_delete_plan

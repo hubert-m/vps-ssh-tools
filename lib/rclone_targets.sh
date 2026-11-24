@@ -34,13 +34,14 @@ hm_backup_default_target_name() {
 
 hm_backup_target_names() {
   hm_load_config 2>/dev/null || true
-  local -a names=()
+  local -a names=() parts=()
   local def t
   def="$(hm_backup_default_target_name)"
   names+=("${def}")
   if [[ -n "${BACKUP_TARGETS:-}" ]]; then
-    local IFS=','
-    for t in ${BACKUP_TARGETS}; do
+    # IFS tylko na read — nie na całą funkcję (psuje tar / word-split w callee)
+    IFS=',' read -r -a parts <<< "${BACKUP_TARGETS}"
+    for t in "${parts[@]+"${parts[@]}"}"; do
       t="$(printf '%s' "${t}" | tr -d '[:space:]')"
       [[ -n "${t}" ]] || continue
       [[ "${t}" == "${def}" ]] && continue
@@ -223,10 +224,11 @@ hm_backup_parse_target_args() {
 hm_backup_run_on_targets() {
   local mode="$1" # site|full
   shift
-  local domain="" stamp=""
-  local -a tnames=()
-  local IFS=',' t
-  for t in ${HM_BACKUP_TARGETS_SELECTED:-$(hm_backup_default_target_name)}; do
+  local domain="" stamp="" t
+  local -a tnames=() parts=()
+  # NIE: local IFS=',' — psuje word-split opcji tar w hm_backup_site/full
+  IFS=',' read -r -a parts <<< "${HM_BACKUP_TARGETS_SELECTED:-$(hm_backup_default_target_name)}"
+  for t in "${parts[@]+"${parts[@]}"}"; do
     t="$(printf '%s' "${t}" | tr -d '[:space:]')"
     [[ -n "${t}" ]] && tnames+=("${t}")
   done

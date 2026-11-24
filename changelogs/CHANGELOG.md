@@ -47,6 +47,10 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: mail delete — Maildir→trash przed deleteEmail; rollback przy błędzie CP; purge dopiero po sukcesie; test-mail-accounts
 - Fix: openvpn uninstall — nie usuwa cudzych reguł FW/masq (`FW_HAD_*`); ufw z komentarzem hmtools; test-openvpn-uninstall
 - Fix: backup/archive — kolizja stampu, excludes bez globa, encrypt files+db, lokalny zapis `*.part`, purge tylko własny; test-backup-quality
+- Fix: archive verify chunki — linia `files.tar.gz (joined)` w SHA256SUMS nie szuka pliku; suma po sklejeniu; test-archive-verify-integrity
+- Fix: backup site/full — bez `local IFS=','` w `hm_backup_run_on_targets`; tar przez tablice argv; test-backup-targets
+- Fix: restore-full `--system` — nie nadpisuje etc/passwd|group|shadow|gshadow; błąd tar ⇒ rc≠0; test-restore-full
+- Fix: backup restore — kopia `.hm-pre-restore-*` przed rsync; `--overwrite-db` ⇒ dump pre-restore + DROP/CREATE (bez tabel spoza snapshota); test-restore-atomic
 
 ## [v0.1.15]
 

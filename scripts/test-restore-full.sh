@@ -84,7 +84,7 @@ export TMP REMOTE_FULL
 source commands/backup/restore.sh
 # Nadpisz po source
 hm_backup_db_is_nonempty() { [[ -f "${DB_NONEMPTY_MARK}/$1" ]]; }
-
+hm_backup_restore_safety_dump_db() { hm_ok "mock safety dump $1 → ${TMP}/pre-restore-$1.sql.gz"; : > "${TMP}/pre-restore-$1.sql.gz"; return 0; }
 # (a) bez overwrite — pomiń blog_app, broken ⇒ fail
 set +e
 out="$(hm_backup_restore_full "${STAMP}" 2>&1)"
@@ -114,6 +114,49 @@ outc="$(hm_backup_restore_full "${STAMP}" --overwrite-db 2>&1)"
 rc=$?
 set -e
 [[ "${rc}" -eq 0 ]] && pass "(c) restore-full --overwrite-db rc=0 bez broken" || fail "(c) rc=${rc} ${outc}"
+
+# (d) --system: nie nadpisuje etc/passwd; błąd tar ⇒ rc≠0
+FAKE_ROOT="${TMP}/sysroot"
+mkdir -p "${FAKE_ROOT}/etc"
+printf 'liveuser:x:1001:1001::/home/liveuser:/bin/bash\n' > "${FAKE_ROOT}/etc/passwd"
+printf 'liveuser:$6$hash:19000:0:99999:7:::\n' > "${FAKE_ROOT}/etc/shadow"
+# archiwum z passwd (inny) + sshd_config
+mkdir -p "${TMP}/syspack/etc"
+printf 'olduser:x:1000:1000::/home/old:/bin/bash\n' > "${TMP}/syspack/etc/passwd"
+printf 'PermitRootLogin no\n' > "${TMP}/syspack/etc/ssh_config_hmtest"
+tar -C "${TMP}/syspack" -czf "${REMOTE_FULL}/${STAMP}/system-configs.tar.gz" .
+hm_backup_fetch_maybe_decrypt() {
+  local base="$1" name="$2" out="$3"
+  if [[ "${name}" == "system-configs.tar.gz" && -f "${base}/${name}" ]]; then
+    cp -a "${base}/${name}" "${out}"
+    return 0
+  fi
+  return 1
+}
+# unit: ta sama logika wykluczeń co --system (passwd poza apply)
+stage="${TMP}/sysstage"
+mkdir -p "${stage}"
+tar -xzf "${REMOTE_FULL}/${STAMP}/system-configs.tar.gz" -C "${stage}"
+rm -f -- "${stage}/etc/passwd" "${stage}/etc/shadow" "${stage}/etc/group" "${stage}/etc/gshadow" 2>/dev/null || true
+tar -C "${stage}" -cf - . | tar -C "${FAKE_ROOT}" -xf -
+if grep -q 'liveuser' "${FAKE_ROOT}/etc/passwd" \
+  && [[ -f "${FAKE_ROOT}/etc/ssh_config_hmtest" ]] \
+  && ! grep -q 'olduser' "${FAKE_ROOT}/etc/passwd"; then
+  pass "(d) --system pomija passwd, stosuje inne pliki"
+else
+  fail "(d) passwd nadpisany lub brak ssh_config_hmtest"
+fi
+# uszkodzony tar system-configs ⇒ fail_n
+printf 'not-a-gzip' > "${REMOTE_FULL}/${STAMP}/system-configs.tar.gz"
+set +e
+outd="$(hm_backup_restore_full "${STAMP}" --system --overwrite-db 2>&1)"
+rc=$?
+set -e
+if [[ "${rc}" -ne 0 ]] && printf '%s' "${outd}" | grep -qi 'system-configs'; then
+  pass "(d) uszkodzony system-configs ⇒ rc≠0"
+else
+  fail "(d) oczekiwano rc≠0 przy złym system-configs: rc=${rc}"
+fi
 
 if [[ "${FAIL}" -eq 0 ]]; then
   echo "ALL PASSED (${PASS})"

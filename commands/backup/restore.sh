@@ -110,12 +110,30 @@ hm_backup_restore_files() {
   fi
   rm -f "${tarf}"
 
-  # Podmiana: kopia bieżącego → rsync ze stagingu
+  # Kopia bezpieczeństwa bieżącego drzewa (przed rsync) — rollback ręczny
   if [[ -d "${target_dir}" ]] && find "${target_dir}" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
-    if [[ "${overwrite_files}" -eq 1 || "${keep_extra}" -eq 0 ]]; then
-      # Domyślnie przy pustym target bez overwrite — tylko extract; przy niepustym z overwrite — --delete
-      :
+    hm_info "Kopia bezpieczeństwa plików → ${pre_bak}"
+    rm -rf -- "${pre_bak}"
+    mkdir -p "${pre_bak}" || {
+      hm_err "Nie można utworzyć ${pre_bak} — target nietknięty."
+      rm -rf -- "${staging}"
+      return 1
+    }
+    if hm_have_cmd rsync; then
+      if ! rsync -aH --numeric-ids "${target_dir}/" "${pre_bak}/"; then
+        hm_err "Kopia pre-restore plików nieudana — target nietknięty."
+        rm -rf -- "${staging}" "${pre_bak}"
+        return 1
+      fi
+    else
+      # shellcheck disable=SC2086
+      if ! tar -C "${target_dir}" -cf - . | tar --no-same-owner ${meta_x} -C "${pre_bak}" -xf -; then
+        hm_err "Kopia pre-restore plików nieudana — target nietknięty."
+        rm -rf -- "${staging}" "${pre_bak}"
+        return 1
+      fi
     fi
+    hm_ok "Kopia przed restore: ${pre_bak} (cofnięcie: rsync -aH --delete ${pre_bak}/ ${target_dir}/)."
   fi
 
   if hm_have_cmd rsync; then
@@ -143,6 +161,80 @@ hm_backup_restore_files() {
   fi
   rm -rf -- "${staging}"
   hm_ok "Pliki odtworzone${overwrite_files:+ (overwrite-files)}."
+}
+
+# Zrzut bezpieczeństwa przed --overwrite-db → /var/backups/hmtools/pre-restore/
+hm_backup_restore_safety_dump_db() {
+  local db="$1"
+  local stamp dir out dumpcli sock_args=() old_umask
+  local -a _ps
+  local dump_rc gzip_rc
+  hm_is_valid_db_name "${db}" || return 1
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  dir="${HM_BACKUP_PRE_RESTORE_DIR:-/var/backups/hmtools/pre-restore}"
+  out="${dir}/pre-restore-${db}-${stamp}.sql.gz"
+  if declare -F hm_mysql_dump_local >/dev/null 2>&1; then
+    if ! hm_mysql_dump_local "${db}" "${out}"; then
+      hm_err "Dump bezpieczeństwa ${db} nieudany — baza nietknięta."
+      return 1
+    fi
+    hm_info "Cofnięcie bazy: gunzip -c ${out} | mysql \`${db}\`"
+    return 0
+  fi
+  dumpcli="$(hm_mysqldump_cli)" || { hm_err "Brak mysqldump — nie mogę zrobić kopii przed overwrite."; return 1; }
+  [[ -n "${MYSQL_SOCKET:-}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
+  old_umask="$(umask)"
+  umask 077
+  mkdir -p "${dir}" || { umask "${old_umask}"; hm_err "Nie można utworzyć ${dir}"; return 1; }
+  set +e
+  set +o pipefail
+  "${dumpcli}" "${sock_args[@]}" --single-transaction --quick --routines --triggers --events \
+    -- "${db}" 2>/dev/null | gzip -c > "${out}"
+  _ps=( "${PIPESTATUS[@]}" )
+  dump_rc=${_ps[0]:-1}
+  gzip_rc=${_ps[1]:-1}
+  set -o pipefail
+  set -e
+  umask "${old_umask}"
+  if [[ "${dump_rc}" -ne 0 || "${gzip_rc}" -ne 0 || ! -s "${out}" ]]; then
+    rm -f "${out}"
+    hm_err "Dump bezpieczeństwa ${db} nieudany — baza nietknięta."
+    return 1
+  fi
+  chmod 0600 "${out}" 2>/dev/null || true
+  hm_ok "Kopia bezpieczeństwa bazy: ${out}"
+  hm_info "Cofnięcie: gunzip -c ${out} | mysql \`${db}\`"
+  return 0
+}
+
+# DROP + CREATE (ze snapshota .create.sql) — baza = dokładnie snapshot, bez tabel spoza dumpu.
+# subdir: "db" (site) lub "databases" (full)
+hm_backup_restore_recreate_db() {
+  local db="$1" remote_base="$2" subdir="${3:-db}"
+  local cli sock_args=() cdb_tmp cdb_applied=0
+  cli="$(hm_mysql_cli)" || { hm_err "Brak klienta mysql/mariadb."; return 1; }
+  [[ -n "${MYSQL_SOCKET:-}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
+  if ! "${cli}" "${sock_args[@]}" -e "DROP DATABASE IF EXISTS \`${db}\`;"; then
+    hm_err "DROP DATABASE ${db} nieudany."
+    return 1
+  fi
+  cdb_tmp="$(hm_mktemp .create.sql)"
+  if hm_backup_r_cat "${remote_base}/${subdir}/${db}.create.sql" > "${cdb_tmp}" 2>/dev/null \
+      || rclone cat "${remote_base}/${subdir}/${db}.create.sql" > "${cdb_tmp}" 2>/dev/null; then
+    if [[ -s "${cdb_tmp}" ]] && grep -qi 'CREATE DATABASE' "${cdb_tmp}"; then
+      if "${cli}" "${sock_args[@]}" < "${cdb_tmp}" 2>/dev/null; then
+        cdb_applied=1
+      fi
+    fi
+  fi
+  rm -f "${cdb_tmp}"
+  if [[ "${cdb_applied}" -eq 0 ]]; then
+    if ! "${cli}" "${sock_args[@]}" -e "CREATE DATABASE IF NOT EXISTS \`${db}\`;"; then
+      hm_err "CREATE DATABASE ${db} nieudany."
+      return 1
+    fi
+  fi
+  return 0
 }
 
 # Po restore: user:user wewnątrz, ale public_html/docroot zachowuje grupę WWW (nogroup/lsadm) — jak perms fix.
@@ -471,12 +563,14 @@ hm_backup_restore_dbs() {
       hm_err "ODMOWA: baza \`${db}\` należy do innej żywej domeny niż ${for_domain} — nie nadpisuję (nawet z --overwrite-db; użyj --force-foreign-db tylko świadomie)."
       return 1
     fi
+    local db_exists_nonempty=0
     if hm_backup_db_is_nonempty "${db}"; then
       if [[ "${overwrite_db}" -ne 1 ]]; then
         hm_err "KOLIZJA: baza \`${db}\` już istnieje i nie jest pusta — odmowa importu (użyj --overwrite-db)."
         return 1
       fi
-      hm_warn "KOLIZJA: nadpisuję niepustą bazę \`${db}\` (--overwrite-db)."
+      db_exists_nonempty=1
+      hm_warn "KOLIZJA: nadpisuję niepustą bazę \`${db}\` (--overwrite-db) — DROP+CREATE (lustro snapshotu)."
     fi
     hm_progress_bar "${di}" "${dtotal}" "Import DB: ${db}"
     hm_status_clear
@@ -495,20 +589,31 @@ hm_backup_restore_dbs() {
       hm_err "Walidacja: dump ${db}.sql.gz uszkodzony (gzip -t) — baza nietknięta."
       return 1
     fi
-    # Preferuj SHOW CREATE DATABASE ze snapshota (charset/collation)
-    local cdb_tmp cdb_applied=0
-    cdb_tmp="$(hm_mktemp .create.sql)"
-    if hm_backup_r_cat "${remote_base}/db/${db}.create.sql" > "${cdb_tmp}" 2>/dev/null \
-        || rclone cat "${remote_base}/db/${db}.create.sql" > "${cdb_tmp}" 2>/dev/null; then
-      if [[ -s "${cdb_tmp}" ]] && grep -qi 'CREATE DATABASE' "${cdb_tmp}"; then
-        if "${cli}" "${sock_args[@]}" < "${cdb_tmp}" 2>/dev/null; then
-          cdb_applied=1
+    if [[ "${db_exists_nonempty}" -eq 1 ]]; then
+      if ! hm_backup_restore_safety_dump_db "${db}"; then
+        rm -f "${db_tmp}"
+        return 1
+      fi
+      if ! hm_backup_restore_recreate_db "${db}" "${remote_base}" "db"; then
+        rm -f "${db_tmp}"
+        return 1
+      fi
+    else
+      # Preferuj SHOW CREATE DATABASE ze snapshota (charset/collation)
+      local cdb_tmp cdb_applied=0
+      cdb_tmp="$(hm_mktemp .create.sql)"
+      if hm_backup_r_cat "${remote_base}/db/${db}.create.sql" > "${cdb_tmp}" 2>/dev/null \
+          || rclone cat "${remote_base}/db/${db}.create.sql" > "${cdb_tmp}" 2>/dev/null; then
+        if [[ -s "${cdb_tmp}" ]] && grep -qi 'CREATE DATABASE' "${cdb_tmp}"; then
+          if "${cli}" "${sock_args[@]}" < "${cdb_tmp}" 2>/dev/null; then
+            cdb_applied=1
+          fi
         fi
       fi
-    fi
-    rm -f "${cdb_tmp}"
-    if [[ "${cdb_applied}" -eq 0 ]]; then
-      "${cli}" "${sock_args[@]}" -e "CREATE DATABASE IF NOT EXISTS \`${db}\`;" 2>/dev/null || true
+      rm -f "${cdb_tmp}"
+      if [[ "${cdb_applied}" -eq 0 ]]; then
+        "${cli}" "${sock_args[@]}" -e "CREATE DATABASE IF NOT EXISTS \`${db}\`;" 2>/dev/null || true
+      fi
     fi
     if ! gunzip -c "${db_tmp}" | "${cli}" "${sock_args[@]}" "${db}"; then
       rm -f "${db_tmp}"
@@ -2315,7 +2420,7 @@ Użycie: backup restore-full [stamp] [--system] [--overwrite-db]
 
 Odtwarza snapshot full/: bazy + db-accounts.
 Bez --overwrite-db istniejące niepuste bazy są POMIJANE (jak backup restore).
---system — dodatkowo rozpakuj system-configs.tar.gz(.enc) do /
+--system — rozpakuj system-configs.tar.gz(.enc) do / (bez etc/passwd|group|shadow|gshadow)
 Bez stampu — najnowszy snapshot full/.
 Pliki stron: backup restore <domena> <stamp> (szuka też full/<stamp>/sites/<domena>).
 EOF
@@ -2365,7 +2470,7 @@ EOF
   hm_backup_abort_if_enc_without_passphrase "${remote_base}" || return 1
 
   local -a plan=(
-    "Opcjonalnie: system-configs.tar.gz(.enc) → / (OSTROŻNIE — nadpisze /etc bez shadow; tylko z --system)"
+    "Opcjonalnie: system-configs.tar.gz(.enc) → / (bez etc/passwd|group|shadow|gshadow — archiwum ich nie zawiera spójnie; tylko z --system)"
     "Import baz z ${remote_base}/databases/*.sql.gz$([[ "${overwrite_db}" -eq 1 ]] && echo ' (--overwrite-db)' || echo ' — istniejące niepuste POMINIĘTE')"
     "Odtworzenie kont MySQL z db-accounts.sql(.enc) jeśli obecne"
     "Listing sites/<domena>/ — pliki: backup restore <domena> ${stamp}"
@@ -2377,22 +2482,41 @@ EOF
     return 1
   fi
 
+  local f name cli sock_args=() db_tmp fail_n=0 skip_n=0 ok_n=0
+
   if [[ "${do_system}" -eq 1 ]]; then
-    local sys_tmp
+    local sys_tmp sys_stage
     sys_tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-sys.XXXXXX.tar.gz")"
+    sys_stage="$(mktemp -d "${TMP_DIR:-/tmp}/hmtools-sys.XXXXXX.d")"
     if hm_backup_fetch_maybe_decrypt "${remote_base}" "system-configs.tar.gz" "${sys_tmp}"; then
-      hm_warn "Rozpakowuję system-configs do / (bez shadow w archiwum)…"
-      tar -xzf "${sys_tmp}" -C / 2>/dev/null || hm_warn "Częściowy błąd tar system-configs."
-      hm_ok "system-configs zastosowane."
+      if ! tar -xzf "${sys_tmp}" -C "${sys_stage}"; then
+        hm_err "Rozpakowanie system-configs nieudane — nic nie zapisano do /."
+        rm -rf -- "${sys_stage}"
+        rm -f -- "${sys_tmp}"
+        fail_n=$((fail_n + 1))
+      else
+        # Archiwum celowo bez shadow — NIE nadpisuj passwd/group (niespójne konta).
+        rm -f -- \
+          "${sys_stage}/etc/passwd" "${sys_stage}/etc/passwd-" \
+          "${sys_stage}/etc/group" "${sys_stage}/etc/group-" \
+          "${sys_stage}/etc/shadow" "${sys_stage}/etc/shadow-" \
+          "${sys_stage}/etc/gshadow" "${sys_stage}/etc/gshadow-" 2>/dev/null || true
+        hm_info "Pomijam etc/{passwd,group,shadow,gshadow} przy --system (brak spójnego shadow w snapshocie)."
+        if ! tar -C "${sys_stage}" -cf - . | tar -C / -xf -; then
+          hm_err "Zastosowanie system-configs do / nieudane."
+          fail_n=$((fail_n + 1))
+        else
+          hm_ok "system-configs zastosowane (bez baz kont Unix)."
+        fi
+      fi
     else
       hm_warn "Brak system-configs.tar.gz(.enc)."
     fi
-    rm -f "${sys_tmp}"
+    rm -rf -- "${sys_stage}" 2>/dev/null || true
+    rm -f -- "${sys_tmp}"
   else
     hm_info "Pomijam system-configs (dodaj --system aby zastosować)."
   fi
-
-  local f name cli sock_args=() db_tmp fail_n=0 skip_n=0 ok_n=0
   cli="$(hm_mysql_cli)" || { hm_err "Brak mysql."; return 1; }
   [[ -n "${MYSQL_SOCKET:-}" ]] && sock_args=(--socket="${MYSQL_SOCKET}")
   while IFS= read -r f; do
@@ -2400,13 +2524,15 @@ EOF
     name="${f%.sql.gz}"
     name="${name##*/}"
     hm_is_valid_db_name "${name}" || continue
+    local full_db_nonempty=0
     if declare -F hm_backup_db_is_nonempty >/dev/null 2>&1 && hm_backup_db_is_nonempty "${name}"; then
       if [[ "${overwrite_db}" -ne 1 ]]; then
         hm_warn "Pomijam istniejącą niepustą bazę \`${name}\` (użyj --overwrite-db)."
         skip_n=$((skip_n + 1))
         continue
       fi
-      hm_warn "Nadpisuję niepustą bazę \`${name}\` (--overwrite-db)."
+      full_db_nonempty=1
+      hm_warn "Nadpisuję niepustą bazę \`${name}\` (--overwrite-db) — DROP+CREATE."
     fi
     db_tmp="$(hm_mktemp .sql.gz)"
     if ! hm_backup_r_cat "${remote_base}/databases/${name}.sql.gz" > "${db_tmp}" 2>/dev/null \
@@ -2423,17 +2549,30 @@ EOF
       continue
     fi
     hm_info "Import DB ${name}…"
-    local cdb_tmp cdb_applied=0
-    cdb_tmp="$(hm_mktemp .create.sql)"
-    if hm_backup_r_cat "${remote_base}/databases/${name}.create.sql" > "${cdb_tmp}" 2>/dev/null \
-        || rclone cat "${remote_base}/databases/${name}.create.sql" > "${cdb_tmp}" 2>/dev/null; then
-      if [[ -s "${cdb_tmp}" ]] && grep -qi 'CREATE DATABASE' "${cdb_tmp}"; then
-        "${cli}" "${sock_args[@]}" < "${cdb_tmp}" 2>/dev/null && cdb_applied=1 || true
+    if [[ "${full_db_nonempty}" -eq 1 ]]; then
+      if ! hm_backup_restore_safety_dump_db "${name}"; then
+        rm -f "${db_tmp}"
+        fail_n=$((fail_n + 1))
+        continue
       fi
-    fi
-    rm -f "${cdb_tmp}"
-    if [[ "${cdb_applied}" -eq 0 ]]; then
-      "${cli}" "${sock_args[@]}" -e "CREATE DATABASE IF NOT EXISTS \`${name}\`;" 2>/dev/null || true
+      if ! hm_backup_restore_recreate_db "${name}" "${remote_base}" "databases"; then
+        rm -f "${db_tmp}"
+        fail_n=$((fail_n + 1))
+        continue
+      fi
+    else
+      local cdb_tmp cdb_applied=0
+      cdb_tmp="$(hm_mktemp .create.sql)"
+      if hm_backup_r_cat "${remote_base}/databases/${name}.create.sql" > "${cdb_tmp}" 2>/dev/null \
+          || rclone cat "${remote_base}/databases/${name}.create.sql" > "${cdb_tmp}" 2>/dev/null; then
+        if [[ -s "${cdb_tmp}" ]] && grep -qi 'CREATE DATABASE' "${cdb_tmp}"; then
+          "${cli}" "${sock_args[@]}" < "${cdb_tmp}" 2>/dev/null && cdb_applied=1 || true
+        fi
+      fi
+      rm -f "${cdb_tmp}"
+      if [[ "${cdb_applied}" -eq 0 ]]; then
+        "${cli}" "${sock_args[@]}" -e "CREATE DATABASE IF NOT EXISTS \`${name}\`;" 2>/dev/null || true
+      fi
     fi
     if ! gunzip -c "${db_tmp}" 2>/dev/null | "${cli}" "${sock_args[@]}" "${name}" >/dev/null 2>&1; then
       rm -f "${db_tmp}"

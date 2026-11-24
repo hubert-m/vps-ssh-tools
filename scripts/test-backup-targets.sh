@@ -195,6 +195,50 @@ else
   fail=1
 fi
 
+# --- IFS=',' nie wycieka do hm_backup_site/full (regresja tar --warning) ---
+_saved_ifs=""
+hm_backup_use_target() { RCLONE_REMOTE="${local_root}"; export RCLONE_REMOTE; return 0; }
+hm_backup_stamp() { printf '20260101-120000'; }
+hm_backup_site() {
+  _saved_ifs="${IFS}"
+  return 0
+}
+hm_backup_full() { return 0; }
+HM_BACKUP_TARGETS_SELECTED="local,other"
+hm_backup_run_on_targets site example.pl >/dev/null 2>&1 || true
+# domyślny IFS zawiera spację — nie przecinek jako jedyny separator
+if [[ "${_saved_ifs}" == *","* && "${_saved_ifs}" != *" "* ]]; then
+  echo "FAIL run-on-targets-ifs-leaked got='${_saved_ifs}'"
+  fail=1
+else
+  echo "OK   run-on-targets-ifs-safe"
+fi
+
+# tar argv odporny na IFS=',' (tablice, nie word-split stringów)
+# shellcheck disable=SC1091
+source commands/backup/core.sh
+export BACKUP_EXCLUDES='./tmp *.log'
+IFS=','
+hm_backup_tar_argv backup
+IFS=$' \t\n'
+argv_str="${HM_BACKUP_TAR_ARGV[*]}"
+if [[ " ${argv_str} " == *" --warning=no-file-changed "* ]] \
+  && [[ " ${argv_str} " == *" --ignore-failed-read "* ]] \
+  && [[ " ${argv_str} " == *" --exclude=./tmp "* ]] \
+  && [[ " ${argv_str} " == *" --exclude=*.log "* ]]; then
+  echo "OK   tar-argv-ifs-and-excludes"
+else
+  echo "FAIL tar-argv-ifs-and-excludes got=${argv_str}"
+  fail=1
+fi
+# nie jeden zlepiony argument
+if [[ "${#HM_BACKUP_TAR_ARGV[@]}" -ge 4 ]]; then
+  echo "OK   tar-argv-split-count"
+else
+  echo "FAIL tar-argv-split-count n=${#HM_BACKUP_TAR_ARGV[@]}"
+  fail=1
+fi
+
 if [[ "${fail}" -eq 0 ]]; then
   echo "ALL OK"
   exit 0

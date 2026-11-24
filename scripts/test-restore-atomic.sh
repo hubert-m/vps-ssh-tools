@@ -94,6 +94,51 @@ else
 fi
 rm -f "${db_tmp}"
 
+# --- (d) po udanym restore istnieje .hm-pre-restore-* ---
+cp "${REMOTE}/files.tar.gz.bak" "${REMOTE}/files.tar.gz"
+TARGET2="${TMP}/site2"
+mkdir -p "${TARGET2}/public_html"
+printf 'live\n' > "${TARGET2}/public_html/index.html"
+printf 'extra\n' > "${TARGET2}/public_html/keep-extra.txt"
+if hm_backup_restore_files "${REMOTE}" "${TARGET2}" 1 >/dev/null 2>&1; then
+  if compgen -G "${TMP}/.hm-pre-restore-*" >/dev/null \
+      && [[ -f "$(echo "${TMP}"/.hm-pre-restore-*/public_html/keep-extra.txt)" ]]; then
+    pass "(d) kopia .hm-pre-restore-* z plikami sprzed restore"
+  else
+    fail "(d) brak .hm-pre-restore-* lub brak pliku z kopii"
+  fi
+else
+  fail "(d) restore nieudany"
+fi
+
+# --- (e) recreate_db: DROP + CREATE (lustro snapshotu) ---
+printf 'CREATE DATABASE IF NOT EXISTS `app` CHARACTER SET utf8mb4;\n' > "${REMOTE}/db/app.create.sql"
+FAKE_MYSQL="${TMP}/fake-mysql"
+cat > "${FAKE_MYSQL}" <<'EOF'
+#!/usr/bin/env bash
+echo "ARGS:$*" >> "${HM_TEST_MYSQL_LOG}"
+if [[ -n "${1:-}" && "$1" == -e ]]; then
+  echo "SQL:$2" >> "${HM_TEST_MYSQL_LOG}"
+elif [[ ! -t 0 ]]; then
+  cat >> "${HM_TEST_MYSQL_LOG}"
+fi
+exit 0
+EOF
+chmod +x "${FAKE_MYSQL}"
+export HM_TEST_MYSQL_LOG="${TMP}/mysql.log"
+: > "${HM_TEST_MYSQL_LOG}"
+hm_mysql_cli() { printf '%s\n' "${FAKE_MYSQL}"; }
+if hm_backup_restore_recreate_db "app" "${REMOTE}" "db"; then
+  if grep -q 'DROP DATABASE IF EXISTS `app`' "${HM_TEST_MYSQL_LOG}" \
+      && grep -qi 'CREATE DATABASE' "${HM_TEST_MYSQL_LOG}"; then
+    pass "(e) recreate_db: DROP + CREATE"
+  else
+    fail "(e) brak DROP/CREATE w logu: $(tr '\n' '|' < "${HM_TEST_MYSQL_LOG}")"
+  fi
+else
+  fail "(e) recreate_db rc≠0"
+fi
+
 if [[ "${FAIL}" -eq 0 ]]; then
   echo "ALL PASSED (${PASS})"
 else
