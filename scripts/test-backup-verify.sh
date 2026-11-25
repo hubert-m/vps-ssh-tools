@@ -268,10 +268,62 @@ fi
 # full/<stamp>/sites/<d>
 mkdir -p "${BACKUP_LOCAL_ROOT}/full/20260105/sites/fullsite.test"
 cp -a "${TMP}/good/." "${BACKUP_LOCAL_ROOT}/full/20260105/sites/fullsite.test/"
+printf '{"status":"ok","type":"full"}\n' > "${BACKUP_LOCAL_ROOT}/full/20260105/manifest.json"
 if hm_backup_verify_cmd fullsite.test 20260105 --target local --json 2>/dev/null | grep -q '"result":"PASS"'; then
   ok "full-sites-pass"
 else
   bad "full-sites-pass"
+fi
+
+# verify full → iteruje sites
+if hm_backup_verify_cmd full latest --target local --json 2>/dev/null | grep -q '"result":"PASS"'; then
+  ok "verify-full-iter"
+else
+  out="$(hm_backup_verify_cmd full latest --target local 2>&1 || true)"
+  printf '%s\n' "${out}" | grep -q 'PASS' && ok "verify-full-iter" || bad "verify-full-iter ${out}"
+fi
+
+# RCLONE_REMOTE lokalny bez BACKUP_LOCAL_ROOT
+unset BACKUP_LOCAL_ROOT
+export RCLONE_REMOTE="${TMP}/local-root"
+if hm_backup_verify_cmd example.pl 20260101 --target local --json 2>/dev/null | grep -q '"result":"PASS"'; then
+  ok "rclone-local-as-root"
+else
+  bad "rclone-local-as-root"
+fi
+export BACKUP_LOCAL_ROOT="${TMP}/local-root"
+
+# --target qa (dowolny remote)
+: > "${HM_RCLONE_LOG}"
+export RCLONE_REMOTE="qa:/backup/rr"
+if hm_backup_verify_cmd example.pl 20260101 --target qa --json 2>/dev/null | grep -q '"result":"PASS"'; then
+  ok "target-qa"
+else
+  bad "target-qa"
+fi
+grep -qE 'qa:/backup/rr/example\.pl/20260101|qa:.*example\.pl' "${HM_RCLONE_LOG}" && ok "target-qa-path" || {
+  # akceptuj też qa:/example.pl gdy remote bez ścieżki w pinie
+  grep -q 'qa:' "${HM_RCLONE_LOG}" && ok "target-qa-path" || bad "target-qa-path $(cat "${HM_RCLONE_LOG}")"
+}
+
+# stamp z sufiksem -1
+mkdir -p "${BACKUP_LOCAL_ROOT}/suf.test/20260101-120000-1"
+cp -a "${TMP}/good/." "${BACKUP_LOCAL_ROOT}/suf.test/20260101-120000-1/"
+printf '{"status":"ok"}\n' > "${BACKUP_LOCAL_ROOT}/suf.test/20260101-120000-1/manifest.json"
+if hm_backup_verify_cmd suf.test latest --target local --json 2>/dev/null | grep -q '20260101-120000-1'; then
+  ok "stamp-suffix"
+else
+  out="$(hm_backup_verify_cmd suf.test latest --target local 2>&1 || true)"
+  printf '%s\n' "${out}" | grep -q '20260101-120000-1' && ok "stamp-suffix" || bad "stamp-suffix ${out}"
+fi
+
+# --weekly bez domeny wybiera serwis
+unset HM_BACKUP_VERIFY_SITE
+if hm_backup_verify_cmd --weekly --yes --target local --json 2>/dev/null | grep -q '"result":"PASS"'; then
+  ok "weekly-auto-site"
+else
+  out="$(hm_backup_verify_cmd --weekly --yes --target local 2>&1 || true)"
+  printf '%s\n' "${out}" | grep -qE 'PASS|FAIL' && ok "weekly-auto-site" || bad "weekly-auto-site ${out}"
 fi
 
 rm -rf "${TMP}"

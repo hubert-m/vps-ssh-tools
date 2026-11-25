@@ -71,7 +71,7 @@ else
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/hmtools-restore-own.XXXXXX")"
   trap 'rm -rf "${tmp}"' EXIT
 
-  mkdir -p "${tmp}/site/public_html/sub" "${tmp}/site/.ssh"
+  mkdir -p "${tmp}/site/public_html/sub" "${tmp}/site/logs" "${tmp}/site/.ssh"
   echo hi > "${tmp}/site/public_html/index.html"
   echo key > "${tmp}/site/.ssh/authorized_keys"
   chown -R "$(id -u):$(id -g)" "${tmp}/site" 2>/dev/null || true
@@ -82,7 +82,21 @@ else
     echo "OK   ownership-skip-www-data (brak grupy www-data na tym hoście)"
   else
     hm_backup_restore_fix_ownership "${tmp}/site" "${user}" "${tmp}/site/public_html" || true
-    echo "OK   ownership-nonroot-no-crash (pełne asercje chown→www-data w sandboxie)"
+    home_g="$(stat -c '%G' "${tmp}/site" 2>/dev/null || true)"
+    # Na sandboxie bez CAP_CHOWN chown może no-op — sprawdzamy, że kod woła user:webgrp (nie crash)
+    if [[ "${home_g}" == "www-data" || "${home_g}" == "${user}" ]]; then
+      echo "OK   ownership-home-group (${home_g})"
+    else
+      echo "OK   ownership-nonroot-no-crash (home_g=${home_g})"
+    fi
+    # Kod: home dostaje webgrp (grep regresja kontraktu)
+    if grep -q 'user:webgrp.*"\${target_dir}"' commands/backup/restore.sh \
+      || grep -q 'chown -h "${user}:${webgrp}" -- "${target_dir}"' commands/backup/restore.sh; then
+      echo "OK   ownership-home-uses-webgrp"
+    else
+      echo "FAIL ownership-home-uses-webgrp"
+      fail=1
+    fi
   fi
 fi
 

@@ -120,7 +120,7 @@ hm_backup_restore_files() {
       return 1
     }
     if hm_have_cmd rsync; then
-      if ! rsync -aH --numeric-ids "${target_dir}/" "${pre_bak}/"; then
+      if ! rsync -aHAXS --numeric-ids "${target_dir}/" "${pre_bak}/"; then
         hm_err "Kopia pre-restore plików nieudana — target nietknięty."
         rm -rf -- "${staging}" "${pre_bak}"
         return 1
@@ -133,11 +133,12 @@ hm_backup_restore_files() {
         return 1
       fi
     fi
-    hm_ok "Kopia przed restore: ${pre_bak} (cofnięcie: rsync -aH --delete ${pre_bak}/ ${target_dir}/)."
+    hm_ok "Kopia przed restore: ${pre_bak} (cofnięcie: rsync -aHAXS --delete ${pre_bak}/ ${target_dir}/)."
   fi
 
   if hm_have_cmd rsync; then
-    local -a rsync_opts=(-aH --numeric-ids)
+    # -A -X -S: ACL, xattr, sparse (tar odtwarza w stagingu — rsync bez tego je gubi)
+    local -a rsync_opts=(-aHAXS --numeric-ids)
     # --overwrite-files: usuń obce pliki nieobecne w snapshocie (anti-webshell)
     if [[ "${overwrite_files}" -eq 1 && "${keep_extra}" -ne 1 ]]; then
       rsync_opts+=(--delete)
@@ -256,26 +257,31 @@ hm_backup_restore_fix_ownership() {
     webgrp="${user}"
   fi
 
-  hm_info "chown -h plików → ${user}:${user} (docroot/public_html: ${user}:${webgrp})"
-  # root katalogu strony
-  chown -h "${user}:${user}" -- "${target_dir}" 2>/dev/null || chown "${user}:${user}" -- "${target_dir}" 2>/dev/null || true
+  hm_info "chown -h plików → ${user}:${user} (home/docroot/public_html/logs: ${user}:${webgrp})"
+  # Katalog serwisu: user:webgrp (nie user:user) — nginx/apache musi wejść do home (750)
+  chown -h "${user}:${webgrp}" -- "${target_dir}" 2>/dev/null \
+    || chown "${user}:${webgrp}" -- "${target_dir}" 2>/dev/null \
+    || chown "${user}:${user}" -- "${target_dir}" 2>/dev/null || true
 
-  # zawartość — nie zmieniaj grupy samego public_html/docroot w tym samym przebiegu
+  # zawartość — public_html/logs/releases/tmp: katalog → webgrp; wnętrze → user:user
   local ent base
   while IFS= read -r -d '' ent; do
     base="$(basename "${ent}")"
-    if [[ "${base}" == "public_html" ]]; then
-      # wnętrze public_html → user:user (symlinki: -h); sam katalog → user:webgrp
-      find -P "${ent}" -xdev -mindepth 1 -print0 2>/dev/null \
-        | while IFS= read -r -d '' inner; do
-            chown -h "${user}:${user}" -- "${inner}" 2>/dev/null \
-              || chown "${user}:${user}" -- "${inner}" 2>/dev/null || true
-          done
-      chown -h "${user}:${webgrp}" -- "${ent}" 2>/dev/null \
-        || chown "${user}:${webgrp}" -- "${ent}" 2>/dev/null \
-        || chown "${user}:${user}" -- "${ent}" 2>/dev/null || true
-      continue
-    fi
+    case "${base}" in
+      public_html|logs|releases|tmp|shared)
+        if [[ -d "${ent}" && ! -L "${ent}" ]]; then
+          find -P "${ent}" -xdev -mindepth 1 -print0 2>/dev/null \
+            | while IFS= read -r -d '' inner; do
+                chown -h "${user}:${user}" -- "${inner}" 2>/dev/null \
+                  || chown "${user}:${user}" -- "${inner}" 2>/dev/null || true
+              done
+          chown -h "${user}:${webgrp}" -- "${ent}" 2>/dev/null \
+            || chown "${user}:${webgrp}" -- "${ent}" 2>/dev/null \
+            || chown "${user}:${user}" -- "${ent}" 2>/dev/null || true
+          continue
+        fi
+        ;;
+    esac
     if [[ -L "${ent}" ]]; then
       chown -h "${user}:${user}" -- "${ent}" 2>/dev/null || true
       continue
@@ -714,6 +720,11 @@ hm_backup_restore_webstack_from_archive() {
         break
       done
     fi
+    # Ustaw PHP z puli / manif. — reload nie dostaje pustego „php-fpm ?”
+    if [[ -n "${ver}" ]]; then
+      HM_SITE_PHP="${ver}"
+      export HM_SITE_PHP
+    fi
     if [[ -n "${ver}" ]] && declare -F hm_pkg_php_fpm_check >/dev/null 2>&1; then
       pool=""
       if declare -F hm_pkg_php_pool_dir >/dev/null 2>&1; then
@@ -1100,6 +1111,22 @@ hm_backup_restore_unix_account() {
     fi
   else
     hm_info "Brak użytecznego hasha shadow dla ${name} (konto bez hasła / zablokowane w snapshocie)."
+  fi
+
+  # Pliki mogły być rsyncowane wcześniej (root:root) — authorized_keys wymaga home=.user.
+  if [[ -d "${home}" && ! -L "${home}" ]]; then
+    local home_owner
+    home_owner="$(stat -c '%U' "${home}" 2>/dev/null || true)"
+    if [[ -n "${home_owner}" && "${home_owner}" != "${name}" ]]; then
+      hm_info "Poprawiam właściciela home przed kluczami: ${home} (${home_owner} → ${name}:${group})"
+      if ! chown -h "${name}:${group}" "${home}" 2>/dev/null && ! chown "${name}:${group}" "${home}" 2>/dev/null; then
+        hm_err "chown ${home} → ${name} nieudany — odmowa authorized_keys."
+        return 1
+      fi
+    fi
+    if [[ -e "${home}/.ssh" && ! -L "${home}/.ssh" ]]; then
+      chown -h "${name}:${group}" "${home}/.ssh" 2>/dev/null || chown "${name}:${group}" "${home}/.ssh" 2>/dev/null || true
+    fi
   fi
 
   keys_tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-unix-keys.XXXXXX")"

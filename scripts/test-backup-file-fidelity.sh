@@ -105,6 +105,14 @@ else
   bad "sparse-extracted"
 fi
 
+# staging→cel: rsync musi mieć -A -X -S (inakcze ACL/xattr/sparse giną po tar)
+if grep -q 'rsync_opts=(-aHAXS --numeric-ids)' commands/backup/restore.sh \
+  || grep -qE 'rsync -aHAXS' commands/backup/restore.sh; then
+  ok "rsync-AXS-staging"
+else
+  bad "rsync-AXS-staging"
+fi
+
 if [[ "${fail}" -ne 0 ]]; then
   echo FAILED
   exit 1

@@ -35,3 +35,11 @@
 - Fix: backup site/full — bez `local IFS=','` w `hm_backup_run_on_targets`; tar przez tablice argv; test-backup-targets
 - Fix: restore-full `--system` — nie nadpisuje etc/passwd|group|shadow|gshadow; błąd tar ⇒ rc≠0; test-restore-full
 - Fix: backup restore — kopia `.hm-pre-restore-*` przed rsync; `--overwrite-db` ⇒ dump pre-restore + DROP/CREATE (bez tabel spoza snapshota); test-restore-atomic
+- Fix: backup local --keep — `gzip -t` files/DB (ucięty status=ok nie liczy się do N); test-backup-local-keep
+- Fix: backup restore archive — chown home przed authorized_keys (po rsync root:root); `HM_SITE_PHP` z puli FPM; test-archive-restore-nginx
+- Fix: test-site-manifest-journal — stub `id` + HOME dla idempotent; osobny case stale-manifest (rc≠0)
+- Fix: restore/clone ownership — katalog serwisu + logs/releases/tmp → `user:webgrp` (nie degradacja do user:user); test-backup-restore-ownership
+- Fix: backup local — `HM_BACKUP_FORCE_REMOTE` przeżywa `hm_load_config` w `hm_backup_site`; config przed planem; test-backup-local-force-remote
+- Fix: docker compose update — rollback też przy błędzie `up -d` (nie tylko zły health); test-docker-ops
+- Fix: backup verify — lokalny root z `RCLONE_REMOTE`; `--target` dowolny remote; `full` iteruje sites; `--weekly` bez domeny; stamp `-N` + status=ok; test-backup-verify
+- Fix: backup restore — rsync staging→cel `-aHAXS` (ACL/xattr/sparse nie giną po tar); test-backup-file-fidelity

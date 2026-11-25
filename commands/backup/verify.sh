@@ -55,28 +55,69 @@ hm_backup_drill_history() {
   printf '%s\n' "${line}" >> "${file}"
 }
 
+# Root lokalnych snapshotów: jawny BACKUP_LOCAL_ROOT, inaczej lokalny RCLONE_REMOTE, inaczej /backup/hmtools.
+hm_backup_verify_local_root() {
+  if [[ -n "${BACKUP_LOCAL_ROOT:-}" ]]; then
+    printf '%s' "${BACKUP_LOCAL_ROOT}"
+    return 0
+  fi
+  if [[ "${RCLONE_REMOTE:-}" == /* ]]; then
+    printf '%s' "${RCLONE_REMOTE}"
+    return 0
+  fi
+  printf '%s' "/backup/hmtools"
+}
+
+# Stamp: YYYYMMDD | YYYYMMDD-HHMMSS | YYYYMMDD-HHMMSS-N
+hm_backup_verify_is_stamp() {
+  [[ "${1:-}" =~ ^[0-9]{8}(-[0-9]{6}(-[0-9]+)?)?$ ]]
+}
+
+# Najnowszy stamp z manifestem status=ok/partial/brak (pomija orphan bez manifestu).
+hm_backup_verify_pick_ok_stamp() {
+  local base="$1" s man st
+  local -a cands=()
+  [[ -d "${base}" ]] || return 1
+  while IFS= read -r s; do
+    [[ -n "${s}" ]] || continue
+    hm_backup_verify_is_stamp "${s}" || continue
+    man="${base}/${s}/manifest.json"
+    [[ -f "${man}" ]] || continue
+    st="$(sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${man}" | head -1)"
+    [[ -z "${st}" || "${st}" == "ok" || "${st}" == "partial" ]] || continue
+    cands+=("${s}")
+  done < <(find "${base}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -r)
+  [[ "${#cands[@]}" -gt 0 ]] || return 1
+  printf '%s' "${cands[0]}"
+}
+
 hm_backup_drill_resolve_stamp() {
-  local scope="$1" stamp="$2" target="${3:-local}" base found=""
+  local scope="$1" stamp="$2" target="${3:-local}" base found="" root
   [[ -n "${stamp}" && "${stamp}" != "latest" ]] && { printf '%s' "${stamp}"; return 0; }
+  root="$(hm_backup_verify_local_root)"
   if [[ "${target}" == "local" ]]; then
-    base="${BACKUP_LOCAL_ROOT:-/backup/hmtools}/${scope}"
-    if [[ -d "${base}" ]]; then
-      found="$(find "${base}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null \
-        | grep -E '^[0-9]{8}(-[0-9]{6})?$' | sort -r | head -1 || true)"
-      if [[ -z "${found}" ]]; then
+    if [[ "${scope}" == "full" ]]; then
+      base="${root}/full"
+      found="$(hm_backup_verify_pick_ok_stamp "${base}" 2>/dev/null || true)"
+      if [[ -z "${found}" && -d "${base}" ]]; then
         found="$(find "${base}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null \
-          | grep -Ev '^(partial|archive)$' | sort -r | head -1 || true)"
+          | grep -E '^[0-9]{8}(-[0-9]{6}(-[0-9]+)?)?$' | sort -r | head -1 || true)"
       fi
-    fi
-    # full/<stamp>/sites/<scope>
-    if [[ -z "${found}" ]]; then
-      base="${BACKUP_LOCAL_ROOT:-/backup/hmtools}/full"
-      if [[ -d "${base}" ]]; then
-        found="$(find "${base}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null \
-          | grep -E '^[0-9]{8}(-[0-9]{6})?$' | sort -r | head -1 || true)"
-        if [[ -n "${found}" && ! -d "${base}/${found}/sites/${scope}" \
-              && ! -d "${BACKUP_LOCAL_ROOT:-/backup/hmtools}/${scope}/${found}" ]]; then
-          found=""
+    else
+      base="${root}/${scope}"
+      found="$(hm_backup_verify_pick_ok_stamp "${base}" 2>/dev/null || true)"
+      # full/<stamp>/sites/<scope>
+      if [[ -z "${found}" ]]; then
+        base="${root}/full"
+        if [[ -d "${base}" ]]; then
+          while IFS= read -r s; do
+            [[ -n "${s}" ]] || continue
+            [[ -d "${base}/${s}/sites/${scope}" ]] || continue
+            [[ -f "${base}/${s}/sites/${scope}/manifest.json" || -f "${base}/${s}/manifest.json" ]] || continue
+            found="${s}"
+            break
+          done < <(find "${base}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null \
+            | grep -E '^[0-9]{8}(-[0-9]{6}(-[0-9]+)?)?$' | sort -r)
         fi
       fi
     fi
@@ -91,11 +132,16 @@ hm_backup_drill_resolve_stamp() {
 }
 
 hm_backup_drill_fetch_local() {
-  local scope="$1" stamp="$2" dest="$3" src
-  src="${BACKUP_LOCAL_ROOT:-/backup/hmtools}/${scope}/${stamp}"
-  if [[ ! -d "${src}" ]]; then
-    # full/<stamp>/sites/<domena>
-    src="${BACKUP_LOCAL_ROOT:-/backup/hmtools}/full/${stamp}/sites/${scope}"
+  local scope="$1" stamp="$2" dest="$3" src root
+  root="$(hm_backup_verify_local_root)"
+  if [[ "${scope}" == "full" ]]; then
+    # meta full — bez plików site; caller iteruje sites/
+    src="${root}/full/${stamp}"
+  else
+    src="${root}/${scope}/${stamp}"
+    if [[ ! -d "${src}" ]]; then
+      src="${root}/full/${stamp}/sites/${scope}"
+    fi
   fi
   [[ -d "${src}" ]] || {
     HM_DRILL_REASON="brak lokalnego snapshotu"
@@ -123,18 +169,31 @@ hm_backup_drill_fetch_rclone() {
   local target="$1" scope="$2" stamp="$3" dest="$4" remote bin rc=0
   if [[ -n "${HM_BACKUP_VERIFY_REMOTE:-}" ]]; then
     remote="${HM_BACKUP_VERIFY_REMOTE}"
-  elif [[ -n "${RCLONE_REMOTE:-}" ]] && { [[ "${RCLONE_REMOTE}" == "${target}:"* ]] \
-      || [[ "${target}" == "gdrive" || "${target}" == "drive" ]]; }; then
+  elif [[ -n "${RCLONE_REMOTE:-}" ]] && [[ "${RCLONE_REMOTE}" == "${target}:"* ]]; then
     remote="${RCLONE_REMOTE}"
+  elif [[ -n "${RCLONE_REMOTE:-}" ]] && [[ "${RCLONE_REMOTE%%:*}" == "${target}" ]]; then
+    remote="${RCLONE_REMOTE}"
+  elif [[ "${target}" == "gdrive" || "${target}" == "drive" ]] && [[ "${RCLONE_REMOTE:-}" == gdrive:* || "${RCLONE_REMOTE:-}" == drive:* ]]; then
+    remote="${RCLONE_REMOTE}"
+  elif [[ "${target}" =~ ^(gdrive|s3|b2|sftp|drive)$ ]]; then
+    # legacy mock/test prefix
+    remote="hmtools-${target}:backup"
+  elif [[ "${target}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    # dowolny remote z rclone (np. qa:)
+    remote="${target}:"
   else
     remote="hmtools-${target}:backup"
   fi
   bin="${HM_BACKUP_VERIFY_RCLONE_BIN:-rclone}"
-  hm_backup_drill_exec_bin "${bin}" copy "${remote}/${scope}/${stamp}" "${dest}" || rc=$?
-  # Fallback full/<stamp>/sites/<scope>
-  if [[ "${rc}" -ne 0 ]] || [[ ! -e "${dest}/manifest.json" && ! -e "${dest}/files.tar.gz" && ! -d "${dest}/files.chunks" ]]; then
-    rc=0
-    hm_backup_drill_exec_bin "${bin}" copy "${remote}/full/${stamp}/sites/${scope}" "${dest}" || rc=$?
+  if [[ "${scope}" == "full" ]]; then
+    hm_backup_drill_exec_bin "${bin}" copy "${remote}/full/${stamp}" "${dest}" || rc=$?
+  else
+    hm_backup_drill_exec_bin "${bin}" copy "${remote}/${scope}/${stamp}" "${dest}" || rc=$?
+    # Fallback full/<stamp>/sites/<scope>
+    if [[ "${rc}" -ne 0 ]] || [[ ! -e "${dest}/manifest.json" && ! -e "${dest}/files.tar.gz" && ! -d "${dest}/files.chunks" ]]; then
+      rc=0
+      hm_backup_drill_exec_bin "${bin}" copy "${remote}/full/${stamp}/sites/${scope}" "${dest}" || rc=$?
+    fi
   fi
   if [[ "${rc}" -eq 127 ]]; then
     HM_DRILL_REASON="brak rclone"
@@ -191,12 +250,14 @@ hm_backup_drill_fetch() {
   case "${target}" in
     local) hm_backup_drill_fetch_local "${scope}" "${stamp}" "${dest}" ;;
     restic|inc) hm_backup_drill_fetch_restic "${scope}" "${stamp}" "${dest}" ;;
-    gdrive|s3|b2|sftp|drive)
-      hm_backup_drill_fetch_rclone "${target}" "${scope}" "${stamp}" "${dest}"
-      ;;
     *)
-      HM_DRILL_REASON="nieznany cel ${target}"
-      return 1
+      # dowolny rclone remote (gdrive/s3/qa/…) — nie whitelist
+      if [[ "${target}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+        hm_backup_drill_fetch_rclone "${target}" "${scope}" "${stamp}" "${dest}"
+      else
+        HM_DRILL_REASON="nieznany cel ${target}"
+        return 1
+      fi
       ;;
   esac
 }
@@ -543,6 +604,19 @@ hm_backup_verify_cmd() {
     elif [[ -n "${HM_BACKUP_VERIFY_SITES:-}" && -f "${HM_BACKUP_VERIFY_SITES}" ]]; then
       picked="$(grep -v '^[[:space:]]*$' "${HM_BACKUP_VERIFY_SITES}" | head -1 || true)"
       scope="${picked}"
+    else
+      # round-robin / pierwsza domena z katalogu snapshotów (nie full/)
+      local _root _d
+      _root="$(hm_backup_verify_local_root)"
+      if [[ -d "${_root}" ]]; then
+        while IFS= read -r _d; do
+          [[ -n "${_d}" && "${_d}" != "full" ]] || continue
+          [[ -d "${_root}/${_d}" ]] || continue
+          scope="${_d}"
+          break
+        done < <(find "${_root}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort)
+      fi
+      [[ -n "${scope}" ]] || scope="full"
     fi
   fi
   if [[ -z "${scope}" ]]; then
@@ -561,24 +635,77 @@ hm_backup_verify_cmd() {
       while IFS= read -r t; do
         [[ -n "${t}" ]] && targets+=("${t}")
       done < <(hm_backup_drill_split_targets "${HM_BACKUP_VERIFY_TARGETS}")
+    elif [[ -n "${RCLONE_REMOTE:-}" && "${RCLONE_REMOTE}" != /* ]]; then
+      # zdalny rclone (np. qa:/backup) — domyślny cel = nazwa remote
+      targets=("${RCLONE_REMOTE%%:*}")
     else
+      # lokalny RCLONE_REMOTE lub BACKUP_LOCAL_ROOT
       targets=(local)
     fi
   fi
   if [[ "${json}" -eq 1 ]]; then
     printf '['
   fi
-  for t in "${targets[@]}"; do
-    if [[ "${json}" -eq 1 ]]; then
-      [[ "${first}" -eq 1 ]] || printf ','
-      first=0
-    fi
-    hm_backup_drill_exec "${t}" "${scope}" "${stamp}" "${json}" || rc=$?
-    if [[ "${rc}" -ne 0 ]]; then
-      any=1
-    fi
-    rc=0
-  done
+
+  # scope=full → weryfikuj każdą domenę w full/<stamp>/sites/*
+  if [[ "${scope}" == "full" ]]; then
+    local fstamp site sites_root _root
+    for t in "${targets[@]}"; do
+      fstamp=""
+      if ! fstamp="$(hm_backup_drill_resolve_stamp full "${stamp}" "${t}")"; then
+        if [[ "${json}" -eq 1 ]]; then
+          [[ "${first}" -eq 1 ]] || printf ','
+          first=0
+          printf '{"result":"FAIL","scope":"full","stamp":"%s","target":"%s","reason":"%s"}' \
+            "$(hm_backup_drill_json_escape "${stamp}")" \
+            "$(hm_backup_drill_json_escape "${t}")" \
+            "$(hm_backup_drill_json_escape "${HM_DRILL_REASON:-brak stampów}")"
+        else
+          printf 'backup verify full @ %s/%s: FAIL  %s\n' "${t}" "${stamp}" "${HM_DRILL_REASON:-brak stampów}"
+        fi
+        any=1
+        continue
+      fi
+      _root="$(hm_backup_verify_local_root)"
+      sites_root="${_root}/full/${fstamp}/sites"
+      if [[ "${t}" == "local" && -d "${sites_root}" ]]; then
+        while IFS= read -r site; do
+          [[ -n "${site}" ]] || continue
+          if [[ "${json}" -eq 1 ]]; then
+            [[ "${first}" -eq 1 ]] || printf ','
+            first=0
+          fi
+          hm_backup_drill_exec "${t}" "${site}" "${fstamp}" "${json}" || rc=$?
+          [[ "${rc}" -ne 0 ]] && any=1
+          rc=0
+        done < <(find "${sites_root}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort)
+      else
+        # remote: bez listingu sites — jeden komunikat
+        if [[ "${json}" -eq 1 ]]; then
+          [[ "${first}" -eq 1 ]] || printf ','
+          first=0
+          printf '{"result":"FAIL","scope":"full","stamp":"%s","target":"%s","reason":"użyj backup verify <domena> <stamp> (full/sites)"}' \
+            "$(hm_backup_drill_json_escape "${fstamp}")" \
+            "$(hm_backup_drill_json_escape "${t}")"
+        else
+          hm_info "verify full @ ${t}: wskaż domenę (backup verify <d> ${fstamp}) — remote bez auto-list sites."
+        fi
+        any=1
+      fi
+    done
+  else
+    for t in "${targets[@]}"; do
+      if [[ "${json}" -eq 1 ]]; then
+        [[ "${first}" -eq 1 ]] || printf ','
+        first=0
+      fi
+      hm_backup_drill_exec "${t}" "${scope}" "${stamp}" "${json}" || rc=$?
+      if [[ "${rc}" -ne 0 ]]; then
+        any=1
+      fi
+      rc=0
+    done
+  fi
   if [[ "${json}" -eq 1 ]]; then
     printf ']\n'
   fi

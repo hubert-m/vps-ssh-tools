@@ -769,9 +769,15 @@ hm_write_manifest_and_upload() {
 
 hm_backup_site() {
   local domain="${1:-${HM_SITE_DOMAIN}}"
+  local _force_remote="${HM_BACKUP_FORCE_REMOTE:-}"
   [[ -n "${domain}" ]] || { hm_err "Podaj domenę lub wejdź w kontekst (use)."; return 1; }
 
   hm_load_config
+  # backup local: hm_load_config nadpisuje RCLONE_REMOTE z conf — przywróć pin
+  if [[ -n "${_force_remote}" ]]; then
+    RCLONE_REMOTE="${_force_remote}"
+    export RCLONE_REMOTE
+  fi
   hm_detect_all
   if ! hm_rclone_root_is_local; then
     hm_rclone_check || return 1

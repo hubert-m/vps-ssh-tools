@@ -200,7 +200,11 @@ hm_docker_compose_update() {
     return 1
   }
   hm_docker_compose_exec pull || return 1
-  hm_docker_compose_exec up -d || return 1
+  if ! hm_docker_compose_exec up -d; then
+    hm_warn "compose up -d nieudany. Przywracam zapisane digesty (tag + force-recreate)."
+    hm_docker_rollback_digests "${digests}" || true
+    return 1
+  fi
   if ! hm_docker_health_ok "${_hm_dc_project}"; then
     hm_warn "Health nie przeszedł. Przywracam zapisane digesty (tag + force-recreate)."
     hm_docker_rollback_digests "${digests}" || rc=1

@@ -130,6 +130,14 @@ if grep -q 'ols' "${RELOAD_LOG}"; then fail "(4) niechciany OLS reload"; else pa
 hm_backup_reload_webstack ols ""
 if grep -q 'ols' "${RELOAD_LOG}"; then pass "(5) OLS reload dla ols"; else fail "(5) brak OLS"; fi
 
+# --- (6) po plikach root:root — unix_account poprawia home przed authorized_keys ---
+if grep -q 'Poprawiam właściciela home przed kluczami' commands/backup/restore.sh \
+  && grep -q 'HM_SITE_PHP="${ver}"' commands/backup/restore.sh; then
+  pass "(6) chown home przed kluczami + export HM_SITE_PHP z puli"
+else
+  fail "(6) brak chown-przed-kluczami / HM_SITE_PHP w restore.sh"
+fi
+
 if [[ "${FAIL}" -eq 0 ]]; then
   echo "ALL PASSED (${PASS})"
 else

@@ -128,10 +128,33 @@ EOF
 cmd_site_new spa.example --from "${root}/spa.json" --save-profile "${root}/out.json" --yes >/dev/null
 grep -q '"type":"static"' "$(hm_site_manifest_path spa.example)" && ok profile-new || bad profile-new
 if grep -q 'secret-token' "${root}/out.json" || ! grep -q '"runtime":"static"' "${root}/out.json"; then bad profile-saved; else ok profile-saved; fi
+# Sandbox bez prawdziwego Unix usera — stub `id` + upewnij się, że HOME istnieje
+spa_home="$(hm_site_home spa.example 2>/dev/null || true)"
+mkdir -p "${spa_home:-${HM_SITE_HOME_BASE}/spa.example}"
+spa_user="$(sed -n 's/.*"user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$(hm_site_manifest_path spa.example)" | head -1)"
+id() {
+  if [[ "${1:-}" == "${spa_user}" || "${1:-}" == "-u" ]]; then
+    return 0
+  fi
+  command id "$@" 2>/dev/null
+}
 before="$(cat "$(hm_site_manifest_path spa.example)")"
 second="$(cmd_site_new spa.example --from "${root}/spa.json" --yes 2>&1 || true)"
-printf '%s\n' "${second}" | grep -q 'pomijam — już jest' && ok idempotent || bad idempotent
+printf '%s\n' "${second}" | grep -q 'pomijam — już jest' && ok idempotent || bad "idempotent: expected 'pomijam', got '${second}'"
 [[ "$(cat "$(hm_site_manifest_path spa.example)")" == "${before}" ]] && ok idempotent-file || bad idempotent-file
+
+# stale manifest: HOME/user brak → rc≠0 + komunikat (nie „pomijam”)
+mkdir -p "${HM_SITE_MANIFEST_DIR}"
+printf '{"schema":1,"domain":"stale.example","user":"staleu","runtime":{"type":"static"}}\n' \
+  > "$(hm_site_manifest_path stale.example)"
+unset -f id 2>/dev/null || true
+stale_rc=0
+stale_out="$(cmd_site_new stale.example --db none --yes 2>&1)" || stale_rc=$?
+if [[ "${stale_rc}" -ne 0 ]] && printf '%s\n' "${stale_out}" | grep -qi 'Stale manifest'; then
+  ok stale-manifest
+else
+  bad "stale-manifest: rc=${stale_rc} out=${stale_out}"
+fi
 
 # --resume domyka otwarty journal (katalog per domena)
 dom="go.example"

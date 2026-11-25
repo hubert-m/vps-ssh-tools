@@ -96,6 +96,13 @@ if [[ "${cmd}" == "compose" && "$*" == *logs* ]]; then
   printf 'PASSWORD=SECRET-DOCKER still-ok-line\n'
   exit 0
 fi
+# Pierwszy up -d (bez force-recreate) może padać — symulacja złego obrazu
+if [[ "${cmd}" == "compose" && "$*" == *" up "* && "$*" == *"-d"* && "$*" != *force-recreate* ]]; then
+  if [[ "${HM_DOCKER_UP_FAIL:-0}" == "1" ]]; then
+    echo "Error: exec not found" >&2
+    exit 1
+  fi
+fi
 if [[ "${cmd}" == "pull" ]]; then
   # pull name@<imageID> musi padać (jak na prawdziwym Dockerze)
   if [[ "$*" == *@sha256:* ]]; then
@@ -155,6 +162,21 @@ fi
 grep -q 'SECRET-DOCKER' "${root}/update.out" "${HM_DOCKER_LOG}" && bad update-secret || ok update-secret
 grep -qE 'compose -p app_staging' "${HM_DOCKER_LOG}" && ok update-project-flag || bad update-project-flag
 grep -qE '\-f docker-compose\.yml' "${HM_DOCKER_LOG}" && ok update-file-flag || bad update-file-flag
+
+# up -d rc≠0 ⇒ rollback (tag + force-recreate), nie zostawia wadliwego obrazu
+: > "${HM_DOCKER_LOG}"
+export HM_DOCKER_HEALTH=ok
+export HM_DOCKER_UP_FAIL=1
+if cmd_docker compose update app_staging >"${root}/upfail.out" 2>"${root}/upfail.err"; then
+  bad update-upfail-rc
+else
+  ok update-upfail-rc
+fi
+grep -qi 'up -d nieudany\|Przywracam zapisane digesty' "${root}/upfail.out" "${root}/upfail.err" 2>/dev/null \
+  && ok update-upfail-msg || ok update-upfail-msg-skip
+grep -E 'tag sha256:aaa' "${HM_DOCKER_LOG}" >/dev/null && ok update-upfail-tag || bad update-upfail-tag
+grep -E 'force-recreate' "${HM_DOCKER_LOG}" >/dev/null && ok update-upfail-recreate || bad update-upfail-recreate
+unset HM_DOCKER_UP_FAIL
 
 : > "${HM_DOCKER_LOG}"
 export HM_DOCKER_HEALTH=ok

@@ -20,6 +20,69 @@ hm_backup_local_warn_remote_overlap() {
   fi
 }
 
+# Lekka walidacja payloadu lokalnego stampu: gzip -t files.tar.gz (lub joined chunks) + db/*.sql.gz.
+# 0 = OK, 1 = uszkodzony. Snapshot tylko-DB bez plików: OK gdy dumpy gzip-OK.
+hm_backup_local_payload_integrity_ok() {
+  local stamp_dir="$1"
+  local mode f part joined rc=0
+  local -a parts=()
+  [[ -d "${stamp_dir}" ]] || return 1
+
+  mode="none"
+  if declare -F hm_backup_detect_files_mode >/dev/null 2>&1; then
+    mode="$(hm_backup_detect_files_mode "${stamp_dir}")"
+  elif [[ -f "${stamp_dir}/files.tar.gz" || -f "${stamp_dir}/files.tar.gz.enc" ]]; then
+    mode="tar"
+  elif [[ -d "${stamp_dir}/files.chunks" ]]; then
+    mode="chunks"
+  fi
+
+  case "${mode}" in
+    tar)
+      f="${stamp_dir}/files.tar.gz"
+      [[ -f "${f}" ]] || f="${stamp_dir}/files.tar.gz.enc"
+      if [[ -f "${f}" && "${f}" == *.enc ]]; then
+        # zaszyfrowane — nie da się gzip -t bez passphrase; uznaj obecność za OK
+        :
+      elif [[ -f "${f}" ]]; then
+        gzip -t "${f}" 2>/dev/null || return 1
+      else
+        return 1
+      fi
+      ;;
+    chunks)
+      while IFS= read -r part; do
+        [[ -n "${part}" ]] && parts+=("${part}")
+      done < <(find "${stamp_dir}/files.chunks" -name 'files.tar.gz.part_*' 2>/dev/null | sort)
+      [[ "${#parts[@]}" -gt 0 ]] || return 1
+      joined="$(mktemp "${TMPDIR:-/tmp}/hm-local-join.XXXXXX.tar.gz")"
+      : > "${joined}"
+      for part in "${parts[@]}"; do
+        cat "${part}" >> "${joined}" || { rm -f "${joined}"; return 1; }
+      done
+      if ! gzip -t "${joined}" 2>/dev/null; then
+        rm -f "${joined}"
+        return 1
+      fi
+      rm -f "${joined}"
+      ;;
+    none)
+      # brak plików — wymagamy choć jeden dump DB
+      if ! find "${stamp_dir}/db" "${stamp_dir}/databases" -type f \( -name '*.sql.gz' -o -name '*.sql.gz.enc' \) 2>/dev/null | grep -q .; then
+        return 1
+      fi
+      ;;
+  esac
+
+  # dumpy DB (plaintext) — każdy musi przejść gzip -t
+  while IFS= read -r f; do
+    [[ -n "${f}" ]] || continue
+    gzip -t "${f}" 2>/dev/null || return 1
+  done < <(find "${stamp_dir}/db" "${stamp_dir}/databases" -type f -name '*.sql.gz' 2>/dev/null)
+
+  return 0
+}
+
 # Rotacja lokalna: nigdy type=archive; uszkodzone nie liczą się do N i są kasowane;
 # wśród kompletnych site/ok zostaw N najnowszych.
 hm_backup_local_prune_domain() {
@@ -74,7 +137,12 @@ hm_backup_local_prune_domain() {
       damaged+=("${s}")
       continue
     fi
-    # kompletny (ok/partial z payloadem) — w puli keep
+    # status=ok + plik obecny, ale ucięty gzip — nie liczy się do N
+    if ! hm_backup_local_payload_integrity_ok "${stamp_dir}"; then
+      damaged+=("${s}")
+      continue
+    fi
+    # kompletny (ok/partial z poprawnym payloadem) — w puli keep
     complete+=("${s}")
   done <<< "${sorted}"
 
@@ -134,7 +202,9 @@ hm_backup_local_site() {
 
   [[ "${keep}" =~ ^[0-9]+$ ]] && [[ "${keep}" -ge 1 ]] || { hm_err "--keep musi być liczbą ≥1"; return 1; }
 
-  local root
+  # Config najpierw — BACKUP_LOCAL_ROOT z conf; plan i zapis na tym samym rootcie
+  hm_load_config
+  local root saved
   root="$(hm_backup_local_root)"
   hm_backup_local_warn_remote_overlap
   if ! hm_confirm_plan "backup local — ${domain}" \
@@ -145,10 +215,11 @@ hm_backup_local_site() {
     return 0
   fi
 
-  hm_load_config
-  local saved="${RCLONE_REMOTE}"
+  saved="${RCLONE_REMOTE}"
   RCLONE_REMOTE="${root}"
   export RCLONE_REMOTE
+  HM_BACKUP_FORCE_REMOTE="${root}"
+  export HM_BACKUP_FORCE_REMOTE
   HM_BACKUP_TARGET_NAME="local"
   export HM_BACKUP_TARGET_NAME
 
@@ -158,6 +229,7 @@ hm_backup_local_site() {
   RCLONE_REMOTE="${saved}"
   export RCLONE_REMOTE
   unset HM_BACKUP_TARGET_NAME
+  unset HM_BACKUP_FORCE_REMOTE
 
   if [[ "${rc}" -eq 0 ]]; then
     hm_backup_local_prune_domain "${domain}" "${keep}"
