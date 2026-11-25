@@ -782,7 +782,7 @@ hm_backup_site() {
   if ! hm_rclone_root_is_local; then
     hm_rclone_check || return 1
   fi
-  hm_backup_check_space || return 1
+  hm_backup_check_space / || return 1
   hm_backup_acquire_lock || return 1
   trap 'hm_backup_release_lock' RETURN
 
@@ -1013,7 +1013,7 @@ hm_backup_full() {
   if ! hm_rclone_root_is_local; then
     hm_rclone_check || return 1
   fi
-  hm_backup_check_space || return 1
+  hm_backup_check_space / || return 1
   hm_backup_acquire_lock || return 1
   trap 'hm_backup_release_lock' RETURN
 

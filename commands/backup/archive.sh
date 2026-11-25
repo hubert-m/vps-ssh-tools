@@ -145,7 +145,7 @@ hm_backup_verify_remote_archive() {
         sum="$(printf '%s' "${sums_line}" | awk '{print $1}')"
         path="$(printf '%s' "${sums_line}" | awk '{print $2}')"
         [[ "${sum}" =~ ^[0-9a-fA-F]{64}$ && -n "${path}" ]] || continue
-        # „… files.tar.gz (joined)” = suma całego archiwum po sklejeniu (nie plik na remote)
+        # "... files.tar.gz (joined)" = suma całego archiwum po sklejeniu (nie plik na remote)
         if [[ "${sums_line}" == *" (joined)"* ]]; then
           joined_want="${sum}"
           continue
@@ -560,18 +560,90 @@ hm_archive_pack_ssl() {
   tar -czf "${out_tar}" "${paths[@]}" 2>/dev/null
 }
 
-# Usuń kolumnę `id` z INSERT … (`id`, …) VALUES (N, …) — uniknij kolizji PK przy restore.
+# Usuń kolumnę `id` z INSERT … (`id`, …) VALUES (N, …)[, (M, …)] — uniknij kolizji PK.
+# Obsługuje extended-insert (wiele krotek w jednym VALUES).
 hm_archive_cp_sql_strip_explicit_ids() {
   local f="$1"
   local tmp
   [[ -f "${f}" ]] || return 1
   tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-cp-noid.XXXXXX.sql")"
-  # Tylko complete-insert z nazwanymi kolumnami; pierwsze pole = id
-  sed -E \
-    -e 's/^(INSERT INTO `[^`]+` )\( `id`,/\1(/' \
-    -e 's/^(INSERT INTO `[^`]+` )\(`id`,/\1(/' \
-    -e 's/^(INSERT INTO `[^`]+` \([^)]*\)) VALUES \([0-9]+,/\1 VALUES (/' \
-    "${f}" > "${tmp}" || { rm -f "${tmp}"; return 1; }
+  awk '
+    function trim(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); return s }
+    function split_csv(s, a,    n, i, q, ch, cur) {
+      n = 0; cur = ""; q = 0
+      for (i = 1; i <= length(s); i++) {
+        ch = substr(s, i, 1)
+        if (ch == "'\''") { q = 1 - q; cur = cur ch; continue }
+        if (ch == "," && q == 0) { a[++n] = trim(cur); cur = ""; continue }
+        cur = cur ch
+      }
+      a[++n] = trim(cur)
+      return n
+    }
+    function strip_tuple(t,    n, a, i, out) {
+      # t bez otaczających nawiasów
+      n = split_csv(t, a)
+      if (n < 1) return "(" t ")"
+      out = ""
+      for (i = 2; i <= n; i++) {
+        if (out != "") out = out ", "
+        out = out a[i]
+      }
+      return "(" out ")"
+    }
+    /^INSERT INTO/ {
+      line = $0
+      vi = index(line, ") VALUES (")
+      vlen = 10
+      if (vi == 0) { vi = index(line, ") VALUES("); vlen = 9 }
+      if (vi == 0) { print; next }
+      head = substr(line, 1, vi - 1)
+      oi = 0
+      for (i = 1; i <= length(head); i++) if (substr(head, i, 1) == "(") oi = i
+      if (oi == 0) { print; next }
+      prefix = substr(head, 1, oi - 1)
+      colpart = substr(head, oi + 1)
+      ncol = split_csv(colpart, cols)
+      c0 = cols[1]; gsub(/`/, "", c0); c0 = trim(c0)
+      if (c0 != "id") { print; next }
+      # nowe kolumny bez id
+      ncolstr = ""
+      for (i = 2; i <= ncol; i++) {
+        if (ncolstr != "") ncolstr = ncolstr ", "
+        ncolstr = ncolstr cols[i]
+      }
+      # match ") VALUES (" zjada otwarcie 1. krotki — doklej "(" z powrotem
+      rest = "(" substr(line, vi + vlen)
+      # rest = (tup1),(tup2);
+      semi = 0
+      if (substr(rest, length(rest), 1) == ";") { semi = 1; rest = substr(rest, 1, length(rest) - 1) }
+      # rozbij krotki na poziomie nawiasów
+      depth = 0; q = 0; cur = ""; ntu = 0
+      for (i = 1; i <= length(rest); i++) {
+        ch = substr(rest, i, 1)
+        if (ch == "'\''") { q = 1 - q; cur = cur ch; continue }
+        if (q) { cur = cur ch; continue }
+        if (ch == "(") {
+          if (depth == 0) { cur = ""; depth = 1; continue }
+          depth++; cur = cur ch; continue
+        }
+        if (ch == ")") {
+          depth--
+          if (depth == 0) { tuples[++ntu] = cur; cur = ""; continue }
+          cur = cur ch; continue
+        }
+        if (depth > 0) cur = cur ch
+      }
+      outv = ""
+      for (i = 1; i <= ntu; i++) {
+        if (outv != "") outv = outv ", "
+        outv = outv strip_tuple(tuples[i])
+      }
+      printf "%s(%s) VALUES %s%s\n", prefix, ncolstr, outv, (semi ? ";" : "")
+      next
+    }
+    { print }
+  ' "${f}" > "${tmp}" || { rm -f "${tmp}"; return 1; }
   mv -f "${tmp}" "${f}"
 }
 
@@ -592,12 +664,16 @@ hm_archive_export_cyberpanel_sql() {
   {
     echo "-- hmtools archive: CyberPanel rows for ${domain} (source id=${id}; id stripped for restore)"
     echo "USE \`cyberpanel\`;"
+    # --skip-extended-insert: jedna krotka / INSERT (strip id + parsowanie restore)
     "${dumpcli}" "${sock[@]}" cyberpanel websiteFunctions_websites \
-      --where="id=${id}" --no-create-info --complete-insert --skip-lock-tables --skip-comments 2>/dev/null || true
+      --where="id=${id}" --no-create-info --complete-insert --skip-extended-insert \
+      --skip-lock-tables --skip-comments 2>/dev/null || true
     "${dumpcli}" "${sock[@]}" cyberpanel websiteFunctions_childdomains \
-      --where="master_id=${id}" --no-create-info --complete-insert --skip-lock-tables --skip-comments 2>/dev/null || true
+      --where="master_id=${id}" --no-create-info --complete-insert --skip-extended-insert \
+      --skip-lock-tables --skip-comments 2>/dev/null || true
     "${dumpcli}" "${sock[@]}" cyberpanel databases_databases \
-      --where="website_id=${id}" --no-create-info --complete-insert --skip-lock-tables --skip-comments 2>/dev/null || true
+      --where="website_id=${id}" --no-create-info --complete-insert --skip-extended-insert \
+      --skip-lock-tables --skip-comments 2>/dev/null || true
   } > "${out_sql}"
   [[ -s "${out_sql}" ]] || return 1
   hm_archive_cp_sql_strip_explicit_ids "${out_sql}" || true
@@ -802,7 +878,7 @@ _hm_backup_archive_site_body() {
   if ! hm_rclone_root_is_local; then
     hm_rclone_check || return 1
   fi
-  hm_backup_check_space || return 1
+  hm_backup_check_space / || return 1
   hm_backup_acquire_lock || return 1
   trap 'hm_backup_release_lock' RETURN
 

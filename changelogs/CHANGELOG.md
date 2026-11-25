@@ -59,6 +59,12 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: docker compose update — rollback też przy błędzie `up -d` (nie tylko zły health); test-docker-ops
 - Fix: backup verify — lokalny root z `RCLONE_REMOTE`; `--target` dowolny remote; `full` iteruje sites; `--weekly` bez domeny; stamp `-N` + status=ok; test-backup-verify
 - Fix: backup restore — rsync staging→cel `-aHAXS` (ACL/xattr/sparse nie giną po tar); test-backup-file-fidelity
+- Fix: backup restore CP — strip `id` ze wszystkich krotek extended INSERT; dump `--skip-extended-insert`; parsery multi-row; DELETE+INSERT+re-link w jednej transakcji; SSL `skip_live -eq 1`; test-restore-cp-ssl
+- Fix: openvpn uninstall — `hm_os_firewall_remove` / ufw tylko przy `FW_HAD_PORT_RULE≠1` i komentarz `hmtools-openvpn`; firewalld bez końcowego remove przy HAD=1; test-openvpn-uninstall
+- Fix: mail delete — rollback Maildir przy pustym stubie CP/Dovecot (`hm_mail_maildir_rollback`); bez chowania poczty w podkatalogu; test-mail-accounts
+- Fix: site new `--runtime php` + nginx/apache bez `--php` — `php_on=1` + domyślna active (pula FPM); test-site-wizard-php
+- Fix: clone — na nginx/apache `hm_clone_ensure_target_site` → `site new` (nie OLS `site create`/lsphp); test-clone-staging
+- Fix: backup quality — `hm_backup_check_space /` (SC2120); ASCII cudzysłowy w restore (SC1111); `bin/hmtools` 100755
 
 ## [v0.1.15]
 

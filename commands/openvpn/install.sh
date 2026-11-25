@@ -445,7 +445,6 @@ hm_ovpn_fw_cleanup() {
   case "${fw}" in
     ufw)
       # Nie: surowe `ufw delete allow` — usuwa też reguły sprzed instalacji.
-      # Port: tylko reguły z komentarzem hmtools (hm_os_firewall_remove).
       hm_ovpn_fw_exec ufw delete route allow in on tun0 out on "${iface}" || true
       ;;
     firewalld)
@@ -464,12 +463,56 @@ hm_ovpn_fw_cleanup() {
       fi
       ;;
   esac
-  # ufw/firewalld: zdejmij wyłącznie ALLOW z komentarzem hmtools (nie deny / nie cudze)
-  if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
-    hm_ovpn_fw_exec hm_os_firewall_remove "${port}/${proto}" || true
-  elif declare -F hm_os_firewall_remove >/dev/null 2>&1; then
-    hm_os_firewall_remove "${port}/${proto}" || true
+  # Port: tylko gdy my go dodaliśmy (FW_HAD_PORT_RULE≠1). Inaczej zdejmuje cudzy
+  # `firewall allow` / wcześniej otwarty port (HTTPS!) albo firewalld --remove-port ponownie.
+  if [[ "${had_port}" != "1" ]]; then
+    case "${fw}" in
+      ufw)
+        # tylko komentarz hmtools-openvpn (nie ogólne „hmtools” z innej usługi)
+        if [[ "${HMTOOLS_TEST:-}" == "1" ]]; then
+          hm_ovpn_fw_exec hm_os_firewall_remove "${port}/${proto}" || true
+        else
+          hm_ovpn_ufw_remove_openvpn_port "${port}" "${proto}" || true
+        fi
+        ;;
+      firewalld)
+        # --remove-port już wyżej; bez hm_os_firewall_remove (też robi --remove-port)
+        ;;
+    esac
   fi
+}
+
+# Usuń z ufw wyłącznie ALLOW z komentarzem hmtools-openvpn dla port/proto.
+hm_ovpn_ufw_remove_openvpn_port() {
+  local port="$1" proto="$2" line num rest cmt to_field
+  local -a nums=()
+  [[ -n "${port}" && -n "${proto}" ]] || return 1
+  hm_have_cmd ufw || return 1
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ "${line}" =~ ^\[[[:space:]]*([0-9]+)\][[:space:]]+(.*)$ ]] || continue
+    num="${BASH_REMATCH[1]}"
+    rest="${BASH_REMATCH[2]}"
+    [[ "${rest}" == *ALLOW* ]] || continue
+    [[ "${rest}" == *"#"* ]] || continue
+    cmt="${rest#*#}"
+    case "${cmt}" in
+      *hmtools-openvpn*) ;;
+      *) continue ;;
+    esac
+    to_field="$(printf '%s' "${rest}" | awk '{print $1}')"
+    to_field="${to_field%(v6)}"
+    to_field="${to_field%)}"
+    [[ "${to_field}" == "${port}/${proto}" || "${to_field}" == "${port}/${proto}(v6)" ]] || continue
+    nums+=("${num}")
+  done < <(ufw status numbered 2>/dev/null || true)
+  [[ "${#nums[@]}" -gt 0 ]] || return 1
+  local i
+  for ((i = ${#nums[@]} - 1; i >= 0; i--)); do
+    printf 'y\n' | ufw delete "${nums[i]}" >/dev/null 2>&1 \
+      || ufw --force delete "${nums[i]}" >/dev/null 2>&1 \
+      || true
+  done
+  return 0
 }
 
 hm_ovpn_uninstall() {

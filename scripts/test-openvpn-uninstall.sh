@@ -142,6 +142,27 @@ hm_ovpn_uninstall --yes --no-backup --keep-pki --keep-profiles >/dev/null
 grep -q -- '--remove-masquerade' "${HM_OVPN_CALL_LOG}" && bad fwd-keep-masq || ok fwd-keep-masq
 grep -q -- '--remove-port=1194/udp' "${HM_OVPN_CALL_LOG}" && bad fwd-keep-port || ok fwd-keep-port
 grep -q -- '--remove-interface=tun0' "${HM_OVPN_CALL_LOG}" && ok fwd-drop-tun || bad fwd-drop-tun
+grep -q 'hm_os_firewall_remove' "${HM_OVPN_CALL_LOG}" && bad fwd-keep-os-remove || ok fwd-keep-os-remove
+
+# ufw: FW_HAD_PORT_RULE=1 → nie wołaj hm_os_firewall_remove (cudzy hmtools allow zostaje)
+seed
+cat > "${HM_OVPN_ETC}/hmtools.state" <<EOF
+PORT=443
+PROTO=tcp
+SUBNET=10.8.0.0/24
+ENDPOINT=vpn.test
+PKI=${HM_OVPN_PKI}
+PREV_FORWARD=0
+FW=ufw
+IFACE=eth0
+FW_HAD_PORT_RULE=1
+FW_HAD_MASQ=0
+PACKAGES=no
+EOF
+: > "${HM_OVPN_CALL_LOG}"
+hm_ovpn_uninstall --yes --no-backup --keep-pki --keep-profiles >/dev/null
+grep -q 'hm_os_firewall_remove' "${HM_OVPN_CALL_LOG}" && bad ufw-keep-os-remove || ok ufw-keep-os-remove
+grep -q 'ufw delete allow 443/tcp' "${HM_OVPN_CALL_LOG}" && bad ufw-keep-raw-delete || ok ufw-keep-raw-delete
 
 # firewalld: FW_HAD_*=0 → wolno usunąć nasze
 seed
@@ -162,6 +183,7 @@ EOF
 hm_ovpn_uninstall --yes --no-backup --keep-pki --keep-profiles >/dev/null
 grep -q -- '--remove-masquerade' "${HM_OVPN_CALL_LOG}" && ok fwd-drop-masq || bad fwd-drop-masq
 grep -q -- '--remove-port=443/tcp' "${HM_OVPN_CALL_LOG}" && ok fwd-drop-port || bad fwd-drop-port
+grep -q 'hm_os_firewall_remove' "${HM_OVPN_CALL_LOG}" && bad fwd-drop-no-os-remove || ok fwd-drop-no-os-remove
 
 if hm_ovpn_uninstall --yes >/dev/null 2>&1; then bad nomanifest; else ok nomanifest; fi
 grep -q 'dport 22' "${HM_OVPN_UFW_RULES}" && ok nomanifest-ssh || bad nomanifest-ssh

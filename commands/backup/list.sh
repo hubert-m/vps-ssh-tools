@@ -57,7 +57,8 @@ hm_backup_cat_manifest() {
     printf '%s' "${out}"
     return 0
   fi
-  # Plik istnieje, ale cat się wyłożył (403, timeout, …) ≠ „nie ma snapshotu”.
+  # Plik istnieje, ale cat się wyłożył (403, timeout, ...) != "nie ma snapshotu".
+
   if rclone lsf "${remote_base}/" 2>/dev/null | grep -qxF 'manifest.json' \
     || rclone lsf "${remote_base}/manifest.json" >/dev/null 2>&1; then
     hm_err "Błąd odczytu manifestu: ${remote_base}/manifest.json ($(tr '\n' ' ' < "${errf}"))"

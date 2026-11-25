@@ -325,6 +325,55 @@ else
   fail=1
 fi
 
+# --- ensure target: nginx → site new; OLS → site create ---
+SITE_NEW_LOG="${tmpdir}/site-new.log"
+: > "${SITE_NEW_LOG}"
+cmd_site_new() {
+  printf 'site_new:%s\n' "$*" >> "${SITE_NEW_LOG}"
+  mkdir -p "${FAKE_HOME}/$1/public_html"
+  return 0
+}
+cmd_site_create() {
+  printf 'site_create:%s\n' "$*" >> "${SITE_NEW_LOG}"
+  mkdir -p "${FAKE_HOME}/$1/public_html"
+  return 0
+}
+hm_find_site_by_arg_exact() {
+  case "$1" in
+    newstg.blog.test) return 1 ;;
+    *) printf '%s' "$1"; return 0 ;;
+  esac
+}
+hm_site_manifest_path() { printf '%s' "${tmpdir}/manifests/$1.json"; }
+mkdir -p "${tmpdir}/manifests"
+printf '{"webserver":"nginx","runtime":{"type":"php","version":"8.3"}}' > "${tmpdir}/manifests/blog.test.json"
+export WEBSERVER=nginx
+if hm_clone_ensure_target_site blog.test newstg.blog.test 8.3 >/dev/null \
+  && grep -q 'site_new:newstg.blog.test' "${SITE_NEW_LOG}" \
+  && grep -q -- '--webserver nginx' "${SITE_NEW_LOG}" \
+  && grep -q -- '--php 8.3' "${SITE_NEW_LOG}" \
+  && ! grep -q 'site_create:' "${SITE_NEW_LOG}"; then
+  echo "OK   ensure-nginx-site-new"
+else
+  echo "FAIL ensure-nginx-site-new"
+  cat "${SITE_NEW_LOG}" >&2 || true
+  fail=1
+fi
+: > "${SITE_NEW_LOG}"
+rm -f "${tmpdir}/manifests/blog.test.json"
+export WEBSERVER=ols
+if hm_clone_ensure_target_site blog.test newstg.blog.test 8.2 >/dev/null \
+  && grep -q 'site_create:newstg.blog.test' "${SITE_NEW_LOG}" \
+  && ! grep -q 'site_new:' "${SITE_NEW_LOG}"; then
+  echo "OK   ensure-ols-site-create"
+else
+  echo "FAIL ensure-ols-site-create"
+  cat "${SITE_NEW_LOG}" >&2 || true
+  fail=1
+fi
+unset WEBSERVER
+hm_find_site_by_arg_exact() { printf '%s' "$1"; }
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED=${fail}"
   exit 1

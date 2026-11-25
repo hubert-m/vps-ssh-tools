@@ -401,6 +401,59 @@ hm_mail_account_passwd() {
     "  ${C_BOLD}Hasło:${C_RESET} ${pass}"
 }
 
+# Pusty stub Maildir (tylko puste cur/new/tmp) — typowo odtworzony przez Dovecot/CP w trakcie deleteEmail.
+hm_mail_maildir_is_hollow() {
+  local p="$1" e base
+  [[ -d "${p}" ]] || return 1
+  shopt -s nullglob
+  for e in "${p}"/*; do
+    base="${e##*/}"
+    case "${base}" in
+      cur|new|tmp) [[ -d "${e}" ]] || { shopt -u nullglob; return 1; } ;;
+      *) shopt -u nullglob; return 1 ;;
+    esac
+  done
+  shopt -u nullglob
+  if find "${p}/cur" "${p}/new" "${p}/tmp" -mindepth 1 2>/dev/null | head -1 | grep -q .; then
+    return 1
+  fi
+  return 0
+}
+
+# Przywróć trash → path. Gdy path to pusty stub — usuń i mv.
+# Gdy path ma treść — scal cur/new (mv -n); nie twierdź „przywrócono” przy konflikcie.
+# rc: 0=pełne przywrócenie, 2=częściowe/archiwum zostaje, 1=błąd
+hm_mail_maildir_rollback() {
+  local trash="$1" path="$2" sub f
+  [[ -e "${trash}" ]] || return 1
+  mkdir -p -- "$(dirname "${path}")" 2>/dev/null || true
+  if [[ -e "${path}" ]]; then
+    if hm_mail_maildir_is_hollow "${path}"; then
+      rm -rf -- "${path}" || return 1
+    else
+      for sub in cur new tmp; do
+        [[ -d "${trash}/${sub}" ]] || continue
+        mkdir -p -- "${path}/${sub}" || return 1
+        shopt -s nullglob
+        for f in "${trash}/${sub}"/*; do
+          [[ -e "${f}" ]] || continue
+          mv -n -- "${f}" "${path}/${sub}/" 2>/dev/null || true
+        done
+        shopt -u nullglob
+      done
+      if find "${trash}/cur" "${trash}/new" -type f 2>/dev/null | head -1 | grep -q .; then
+        return 2
+      fi
+      rm -rf -- "${trash}" 2>/dev/null || true
+      return 0
+    fi
+  fi
+  if mv -- "${trash}" "${path}" 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
 hm_mail_account_delete() {
   local domain="${HM_SITE_DOMAIN:-}" local_arg="${1:-}"
   shift || true
@@ -435,7 +488,7 @@ hm_mail_account_delete() {
     [[ "${exists}" == "1" ]] || { hm_err "Brak skrzynki: ${email}"; return 1; }
   fi
 
-  local trash stamp trash_root moved=0 copied=0
+  local trash stamp trash_root moved=0 copied=0 rb
   stamp="$(date +%Y%m%d-%H%M%S)"
   trash_root="${HM_MAIL_TRASH_ROOT:-/home/vmail/.hmtools-trash}"
   trash="${trash_root}/${stamp}-${localpart}@${domain}"
@@ -498,12 +551,16 @@ hm_mail_account_delete() {
       rm -rf -- "${trash}" 2>/dev/null || true
       hm_err "cyberpanel deleteEmail nieudane — Maildir nietknięty: ${path}"
     elif [[ "${moved}" -eq 1 && -e "${trash}" ]]; then
-      mkdir -p -- "$(dirname "${path}")" 2>/dev/null || true
-      if mv -- "${trash}" "${path}" 2>/dev/null; then
-        hm_err "cyberpanel deleteEmail nieudane — przywrócono Maildir: ${path}"
-      else
-        hm_err "cyberpanel deleteEmail nieudane — Maildir w trash: ${trash} (przywrócenie nieudane)"
-      fi
+      rb=0
+      hm_mail_maildir_rollback "${trash}" "${path}" && rb=0 || rb=$?
+      case "${rb}" in
+        0) hm_err "cyberpanel deleteEmail nieudane — przywrócono Maildir: ${path}" ;;
+        2)
+          hm_err "cyberpanel deleteEmail nieudane — konflikt Maildir (CP/Dovecot odtworzył skrzynkę). Poczta w: ${trash}"
+          hm_warn "Nie twierdzę, że przywrócono — sprawdź ${path} i archiwum ${trash}."
+          ;;
+        *) hm_err "cyberpanel deleteEmail nieudane — Maildir w trash: ${trash} (przywrócenie nieudane)" ;;
+      esac
     else
       hm_err "cyberpanel deleteEmail nieudane."
     fi

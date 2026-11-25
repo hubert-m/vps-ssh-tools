@@ -492,9 +492,6 @@ cmd_site_new() {
   if [[ -n "${node_spec}${node_default}${pkg}${process}${start}${port}${preset}" ]]; then
     plan+=("Node: ${node_spec:-Active LTS} (default ${node_default:-pierwsza}), proces ${process:-pm2}")
   fi
-  if [[ "${php_on}" -eq 1 ]]; then
-    plan+=("PHP: ${php_ver:-domyślna active} (${php_sapi}, preset ${php_preset:-minimal})")
-  fi
   if [[ "${web_on}" -eq 1 && -z "${vhost_kind}" ]]; then
     case "${runtime}" in
       php) vhost_kind="php-fpm" ;;
@@ -507,6 +504,16 @@ cmd_site_new() {
     elif [[ "${preset}" == "static" || "${preset}" == "spa" ]]; then
       vhost_kind="${preset}"
     fi
+  fi
+  # php-fpm vhost bez --php ⇒ 502 (sock bez puli). Włącz provision + domyślna active.
+  if [[ "${web_on}" -eq 1 && "${vhost_kind}" == "php-fpm" && "${php_on}" -eq 0 ]]; then
+    php_on=1
+    if [[ -z "${php_ver}" ]] && declare -F hm_site_php_default_version >/dev/null 2>&1; then
+      php_ver="$(hm_site_php_default_version 2>/dev/null || true)"
+    fi
+  fi
+  if [[ "${php_on}" -eq 1 ]]; then
+    plan+=("PHP: ${php_ver:-domyślna active} (${php_sapi}, preset ${php_preset:-minimal})")
   fi
   if [[ "${web_on}" -eq 1 ]]; then
     plan+=("Vhost: ${webserver:-nginx} / ${vhost_kind:-auto}")

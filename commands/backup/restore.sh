@@ -720,7 +720,7 @@ hm_backup_restore_webstack_from_archive() {
         break
       done
     fi
-    # Ustaw PHP z puli / manif. — reload nie dostaje pustego „php-fpm ?”
+    # Ustaw PHP z puli / manif. — reload nie dostaje pustego "php-fpm ?"
     if [[ -n "${ver}" ]]; then
       HM_SITE_PHP="${ver}"
       export HM_SITE_PHP
@@ -892,7 +892,7 @@ hm_backup_restore_authorized_keys_safe() {
   }
   owner="$(stat -c '%U' "${home}" 2>/dev/null || stat -f '%Su' "${home}" 2>/dev/null || true)"
   if [[ -n "${owner}" && "${owner}" != "${user}" ]]; then
-    hm_err "Odmowa: home ${home} należy do „${owner}”, nie „${user}”."
+    hm_err "Odmowa: home ${home} należy do \"${owner}\", nie \"${user}\"."
     return 1
   fi
   home_rp="$(realpath -m "${home}" 2>/dev/null || echo "${home}")"
@@ -930,7 +930,7 @@ hm_backup_restore_authorized_keys_safe() {
   fi
   owner="$(stat -c '%U' "${sshdir}" 2>/dev/null || true)"
   if [[ -n "${owner}" && "${owner}" != "${user}" ]]; then
-    hm_err "Odmowa: ${sshdir} należy do „${owner}”."
+    hm_err "Odmowa: ${sshdir} należy do \"${owner}\"."
     return 1
   fi
 
@@ -1403,7 +1403,11 @@ hm_backup_restore_ssl() {
     fi
   done
   rm -f "${tarf}"; rm -rf "${stage}"
-  hm_ok "SSL odtworzony (whitelist${skip_live:+; nowszy live zachowany})."
+  if [[ "${skip_live}" -eq 1 ]]; then
+    hm_ok "SSL odtworzony (whitelist; nowszy live zachowany)."
+  else
+    hm_ok "SSL odtworzony (whitelist)."
+  fi
   return 0
 }
 
@@ -1462,14 +1466,38 @@ hm_backup_restore_pm2_hint() {
 
 hm_backup_cp_snap_child_domains() {
   local sqlf="$1"
-  grep -E '^INSERT INTO `websiteFunctions_childdomains`' "${sqlf}" 2>/dev/null \
-    | grep -oE "'[^']+\.[^']+'" | tr -d "'" | awk 'NF && !seen[$0]++'
+  # INSERT + kontynuacje extended-insert (linie zaczynające się od '(')
+  awk '
+    BEGIN { ign = 1 }
+    /^INSERT INTO `websiteFunctions_childdomains`/ { ign = 0 }
+    /^INSERT INTO `/ && $0 !~ /websiteFunctions_childdomains/ { ign = 1 }
+    ign { next }
+    {
+      while (match($0, /'\''[^'\'']+\.[^'\'']+'\''/)) {
+        d = substr($0, RSTART + 1, RLENGTH - 2)
+        if (!seen[d]++) print d
+        $0 = substr($0, RSTART + RLENGTH)
+      }
+    }
+  ' "${sqlf}" 2>/dev/null
 }
 
 hm_backup_cp_snap_db_names() {
   local sqlf="$1"
-  grep -E '^INSERT INTO `databases_databases`' "${sqlf}" 2>/dev/null \
-    | grep -oE "'[A-Za-z0-9_]{2,64}'" | tr -d "'" | awk 'NF && !seen[$0]++'
+  awk '
+    BEGIN { ign = 1 }
+    /^INSERT INTO `databases_databases`/ { ign = 0 }
+    /^INSERT INTO `/ && $0 !~ /databases_databases/ { ign = 1 }
+    ign { next }
+    {
+      while (match($0, /'\''[A-Za-z0-9_]{2,64}'\''/)) {
+        d = substr($0, RSTART + 1, RLENGTH - 2)
+        if (d ~ /\./) { $0 = substr($0, RSTART + RLENGTH); continue }
+        if (!seen[d]++) print d
+        $0 = substr($0, RSTART + RLENGTH)
+      }
+    }
+  ' "${sqlf}" 2>/dev/null
 }
 
 # Lista child domen live (master = domain) — jedna na linię.
@@ -1571,8 +1599,8 @@ hm_backup_restore_cyberpanel_site() {
     fi
 
     hm_info "Czyszczenie wpisu CP dla ${domain} przed importem snapshota…"
-    # FK off: zachowane child/DB zostają (stary master_id) → re-link po imporcie
-    local del_sql="SET FOREIGN_KEY_CHECKS=0;"
+    # FK off: zachowane child/DB zostają (stary master_id) → re-link w tej samej transakcji
+    local del_sql=""
     if [[ "${#keep_db[@]}" -eq 0 ]]; then
       del_sql+="
 DELETE d FROM databases_databases d
@@ -1600,70 +1628,57 @@ DELETE c FROM websiteFunctions_childdomains c
       done
     fi
     del_sql+="
-DELETE FROM websiteFunctions_websites WHERE domain = ${dq};
-SET FOREIGN_KEY_CHECKS=1;"
-    if ! "${cli}" "${sock_args[@]}" cyberpanel -e "${del_sql}"; then
-      rm -f "${sqlf}" "${web_sql}" "${rest_sql}"
-      hm_err "DELETE CyberPanel dla ${domain} nieudany."
-      return 1
-    fi
+DELETE FROM websiteFunctions_websites WHERE domain = ${dq};"
   fi
 
-  # 1) website INSERT (bez id) → nowy autoincrement
   grep -E '^INSERT INTO `websiteFunctions_websites`' "${sqlf}" > "${web_sql}" || true
   grep -Ev '^INSERT INTO `websiteFunctions_websites`' "${sqlf}" > "${rest_sql}" || true
-  hm_info "Import cyberpanel-site.sql (website → mapowanie FK)…"
-  if [[ -s "${web_sql}" ]]; then
-    if ! "${cli}" "${sock_args[@]}" cyberpanel < "${web_sql}"; then
-      rm -f "${sqlf}" "${web_sql}" "${rest_sql}"
-      hm_err "Import CyberPanel website nieudany."
-      return 1
+
+  # Jedna sesja + transakcja: DELETE + website + rest + re-link; błąd → ROLLBACK (bez sierot FK)
+  local txf
+  txf="$(mktemp "${TMP_DIR:-/tmp}/hmtools-cp-tx.XXXXXX.sql")"
+  chmod 600 "${txf}"
+  {
+    echo "START TRANSACTION;"
+    echo "SET FOREIGN_KEY_CHECKS=0;"
+    [[ -n "${del_sql:-}" ]] && printf '%s\n' "${del_sql}"
+    [[ -s "${web_sql}" ]] && cat "${web_sql}"
+    echo "SET @hm_cp_nid = LAST_INSERT_ID();"
+    if [[ -n "${domain}" ]] && hm_is_valid_domain "${domain}"; then
+      echo "SELECT id INTO @hm_cp_nid FROM websiteFunctions_websites WHERE domain=${dq} LIMIT 1;"
     fi
+    # Rest z FK ze snapshota (stary src_id) — FK off; zaraz UPDATE na @hm_cp_nid
+    [[ -s "${rest_sql}" ]] && cat "${rest_sql}"
+    if [[ -n "${src_id}" && "${src_id}" =~ ^[0-9]+$ ]]; then
+      echo "UPDATE websiteFunctions_childdomains SET master_id=@hm_cp_nid WHERE master_id=${src_id};"
+      echo "UPDATE databases_databases SET website_id=@hm_cp_nid WHERE website_id=${src_id};"
+    fi
+    if [[ "${#keep_ch[@]}" -gt 0 ]]; then
+      for ch in "${keep_ch[@]}"; do
+        echo "UPDATE websiteFunctions_childdomains SET master_id=@hm_cp_nid WHERE domain=$(hm_sql_quote "${ch}");"
+      done
+    fi
+    if [[ "${#keep_db[@]}" -gt 0 ]]; then
+      for db in "${keep_db[@]}"; do
+        echo "UPDATE databases_databases SET website_id=@hm_cp_nid WHERE dbName=$(hm_sql_quote "${db}");"
+      done
+    fi
+    echo "SET FOREIGN_KEY_CHECKS=1;"
+    echo "COMMIT;"
+  } > "${txf}"
+
+  hm_info "Import cyberpanel-site.sql (DELETE+INSERT+re-link w transakcji)…"
+  if ! "${cli}" "${sock_args[@]}" cyberpanel < "${txf}"; then
+    "${cli}" "${sock_args[@]}" cyberpanel -e "ROLLBACK; SET FOREIGN_KEY_CHECKS=1;" 2>/dev/null || true
+    rm -f "${sqlf}" "${web_sql}" "${rest_sql}" "${txf}"
+    hm_err "Import CyberPanel nieudany — ROLLBACK (stan CP bez zmian z tej transakcji)."
+    return 1
   fi
   if [[ -n "${domain}" ]] && hm_is_valid_domain "${domain}"; then
-    dq="$(hm_sql_quote "${domain}")"
     new_id="$("${cli}" "${sock_args[@]}" cyberpanel -N -B -e "SELECT id FROM websiteFunctions_websites WHERE domain=${dq} LIMIT 1;" 2>/dev/null | tr -d '[:space:]')"
   fi
-  if [[ -n "${src_id}" && -n "${new_id}" && "${src_id}" != "${new_id}" && -s "${rest_sql}" ]]; then
-    local mapped
-    mapped="$(mktemp "${TMP_DIR:-/tmp}/hmtools-cp-map.XXXXXX.sql")"
-    # complete-insert: (col…, website_id, …) VALUES (…, OLD, …) — nie „website_id=OLD”
-    if hm_backup_cp_sql_remap_fk_ids "${rest_sql}" "${mapped}" "${src_id}" "${new_id}"; then
-      mv -f "${mapped}" "${rest_sql}"
-    else
-      sed -E \
-        -e "s/(master_id=)${src_id}/\1${new_id}/g" \
-        -e "s/(website_id=)${src_id}/\1${new_id}/g" \
-        -e "s/\(${src_id},/(${new_id},/g" \
-        "${rest_sql}" > "${mapped}" && mv -f "${mapped}" "${rest_sql}" || true
-      rm -f "${mapped}" 2>/dev/null || true
-    fi
-  fi
-  if [[ -s "${rest_sql}" ]]; then
-    if ! "${cli}" "${sock_args[@]}" cyberpanel < "${rest_sql}"; then
-      rm -f "${sqlf}" "${web_sql}" "${rest_sql}"
-      hm_err "Import CyberPanel childdomains/databases nieudany (FK?)."
-      return 1
-    fi
-  fi
 
-  # Re-link nadmiarowych child/DB do nowego website_id
-  if [[ -n "${new_id}" && "${#keep_ch[@]}" -gt 0 ]]; then
-    for ch in "${keep_ch[@]}"; do
-      "${cli}" "${sock_args[@]}" cyberpanel -e \
-        "UPDATE websiteFunctions_childdomains SET master_id=${new_id} WHERE domain=$(hm_sql_quote "${ch}");" \
-        || hm_warn "Re-link child ${ch} → id=${new_id} nieudany."
-    done
-  fi
-  if [[ -n "${new_id}" && "${#keep_db[@]}" -gt 0 ]]; then
-    for db in "${keep_db[@]}"; do
-      "${cli}" "${sock_args[@]}" cyberpanel -e \
-        "UPDATE databases_databases SET website_id=${new_id} WHERE dbName=$(hm_sql_quote "${db}");" \
-        || hm_warn "Re-link DB ${db} → id=${new_id} nieudany."
-    done
-  fi
-
-  rm -f "${sqlf}" "${web_sql}" "${rest_sql}"
+  rm -f "${sqlf}" "${web_sql}" "${rest_sql}" "${txf}"
   hm_ok "Wpis CyberPanel odtworzony${new_id:+ (id=${new_id})}${keep_list:+; zachowano: ${keep_list}}."
   return 0
 }
@@ -1736,7 +1751,7 @@ hm_backup_cp_sql_remap_fk_ids() {
   [[ -s "${outf}" ]]
 }
 
-# Wstaw mapy do listenerów. Plik maps: linie „listener<TAB>mapline”
+# Wstaw mapy do listenerów. Plik maps: linie "listener<TAB>mapline"
 # (listener=* → wszystkie listenery; deduplikacja per listener).
 hm_ols_insert_maps_into_listeners() {
   local conf="$1"
@@ -2041,7 +2056,7 @@ _hm_backup_restore_body() {
     domain="${domain_arg}"
     hm_info "Domena ${domain} nie jest lokalnie (dokładna nazwa) — szukam snapshotów na Drive…"
     if [[ -z "$(hm_backup_list_stamps "${domain}" | head -1)" ]]; then
-      hm_err "Brak snapshotów na Drive dla „${domain}” i brak lokalnej strony o tej dokładnej nazwie."
+      hm_err "Brak snapshotów na Drive dla \"${domain}\" i brak lokalnej strony o tej dokładnej nazwie."
       return 1
     fi
   fi

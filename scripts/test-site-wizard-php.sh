@@ -215,6 +215,23 @@ else
   bad "site-new-secret"
 fi
 
+# --runtime php --webserver nginx BEZ --php → pulę tworzy (domyślna active), nie 502
+hm_site_php_default_version() { printf '8.4'; }
+hm_site_web_provision() { printf 'web:%s\n' "$*" >> "${HM_SITE_PHP_LOG}"; return 0; }
+: > "${HM_SITE_PHP_LOG}"
+out2="${root}/nophp.out"
+cmd_site_new phpno.example.pl --runtime php --db none --webserver nginx --yes >"${out2}" 2>&1 \
+  || { bad "site-new-nophp-flag"; cat "${out2}" >&2; exit 1; }
+if [[ -f "${HM_PKG_ROOT}/etc/php/8.4/fpm/pool.d/phpno.example.pl.conf" ]] \
+  && grep -q '^web:phpno.example.pl nginx php-fpm' "${HM_SITE_PHP_LOG}"; then
+  ok "site-new-runtime-php-default-pool"
+else
+  bad "site-new-runtime-php-default-pool"
+  cat "${out2}" >&2
+  ls -la "${HM_PKG_ROOT}/etc/php/"/*/fpm/pool.d/ 2>/dev/null >&2 || true
+  cat "${HM_SITE_PHP_LOG}" >&2
+fi
+
 probe="$(mktemp)"
 chmod 0750 "${probe}" 2>/dev/null || true
 mode="$(stat -c '%a' "${probe}" 2>/dev/null || echo '')"

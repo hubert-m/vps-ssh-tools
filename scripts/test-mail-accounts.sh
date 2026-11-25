@@ -402,6 +402,31 @@ else
   fail=1
 fi
 
+# CP fail + Dovecot odtwarza pusty Maildir w trakcie deleteEmail → rollback nie chowa poczty w podkatalogu
+rm -rf -- "${md}" "${TRASH_ROOT}"
+mkdir -p "${md}/cur" "${md}/new" "${md}/tmp"
+printf 'msg-body\n' > "${md}/cur/1."
+hm_run() {
+  printf '%s\n' "$*" >> "${RUN_LOG}"
+  if [[ "$*" == *deleteEmail* ]]; then
+    # stub: CP/Dovecot tworzy pusty Maildir pod path, potem rc=1
+    mkdir -p "${md}/cur" "${md}/new" "${md}/tmp"
+    return 1
+  fi
+  return 0
+}
+: > "${RUN_LOG}"
+if hm_mail_account_delete biuro --yes >/dev/null 2>&1; then
+  echo "FAIL delete-hollow-cp-fail-should-rc"
+  fail=1
+elif [[ -f "${md}/cur/1." ]] \
+  && [[ -z "$(find "${md}" -mindepth 1 -type d ! -name cur ! -name new ! -name tmp 2>/dev/null | head -1 || true)" ]]; then
+  echo "OK   delete-hollow-cp-fail-restored"
+else
+  echo "FAIL delete-hollow-cp-fail-restored (md=$(ls -laR "${md}" 2>/dev/null | head -40))"
+  fail=1
+fi
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED=${fail}"
   exit 1

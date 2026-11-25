@@ -377,23 +377,70 @@ hm_clone_wp_search_replace() {
 
 # --- ensure target site ------------------------------------------------------
 
+hm_clone_src_webserver() {
+  local src="$1" path web=""
+  if declare -F hm_site_manifest_path >/dev/null 2>&1; then
+    path="$(hm_site_manifest_path "${src}" 2>/dev/null || true)"
+  fi
+  [[ -z "${path}" ]] && path="/etc/hmtools/sites/${src}.json"
+  if [[ -f "${path}" ]]; then
+    web="$(sed -n 's/.*"webserver"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${path}" | head -1)"
+  fi
+  [[ -n "${web}" ]] || web="${WEBSERVER:-}"
+  printf '%s' "${web}"
+}
+
+hm_clone_src_runtime() {
+  local src="$1" path rt=""
+  if declare -F hm_site_manifest_path >/dev/null 2>&1; then
+    path="$(hm_site_manifest_path "${src}" 2>/dev/null || true)"
+  fi
+  [[ -z "${path}" ]] && path="/etc/hmtools/sites/${src}.json"
+  if [[ -f "${path}" ]]; then
+    rt="$(sed -n 's/.*"runtime"[[:space:]]*:[[:space:]]*{[[:space:]]*"type"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${path}" | head -1)"
+    [[ -n "${rt}" ]] || rt="$(sed -n 's/.*"runtime"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${path}" | head -1)"
+  fi
+  printf '%s' "${rt}"
+}
+
 hm_clone_ensure_target_site() {
   local src="$1" dst="$2" php_ver="${3:-}"
+  local ws runtime=""
+  local -a args=()
   if hm_find_site_by_arg_exact "${dst}" >/dev/null 2>&1; then
     hm_info "Cel ${dst} już istnieje — używam."
     return 0
   fi
   [[ -n "${php_ver}" && "${php_ver}" != "?" ]] || php_ver="8.2"
-  if ! declare -F cmd_site_create >/dev/null 2>&1; then
-    hm_err "Brak site create — utwórz najpierw domenę ${dst}."
-    return 1
-  fi
-  hm_info "Tworzę stronę docelową ${dst} (php ${php_ver})…"
-  if hm_clone_is_staging_name "${src}" "${dst}"; then
-    cmd_site_create "${dst}" --child-of "${src}" --php "${php_ver}" --yes || return 1
-  else
-    cmd_site_create "${dst}" --php "${php_ver}" --yes || return 1
-  fi
+  ws="$(hm_clone_src_webserver "${src}")"
+  case "${ws}" in
+    nginx|apache)
+      if ! declare -F cmd_site_new >/dev/null 2>&1; then
+        hm_err "Brak site new — utwórz najpierw domenę ${dst} (webserver=${ws})."
+        return 1
+      fi
+      runtime="$(hm_clone_src_runtime "${src}")"
+      [[ -n "${runtime}" ]] || runtime="php"
+      hm_info "Tworzę stronę docelową ${dst} (site new, ${ws}, ${runtime}, php ${php_ver})…"
+      args=("${dst}" --runtime "${runtime}" --webserver "${ws}" --db none --php "${php_ver}" --yes)
+      if hm_clone_is_staging_name "${src}" "${dst}"; then
+        args+=(--child-of "${src}")
+      fi
+      cmd_site_new "${args[@]}" || return 1
+      ;;
+    *)
+      if ! declare -F cmd_site_create >/dev/null 2>&1; then
+        hm_err "Brak site create — utwórz najpierw domenę ${dst}."
+        return 1
+      fi
+      hm_info "Tworzę stronę docelową ${dst} (site create / OLS, php ${php_ver})…"
+      if hm_clone_is_staging_name "${src}" "${dst}"; then
+        cmd_site_create "${dst}" --child-of "${src}" --php "${php_ver}" --yes || return 1
+      else
+        cmd_site_create "${dst}" --php "${php_ver}" --yes || return 1
+      fi
+      ;;
+  esac
 }
 
 # --- clone core --------------------------------------------------------------
