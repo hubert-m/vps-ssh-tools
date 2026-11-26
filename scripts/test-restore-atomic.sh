@@ -22,6 +22,10 @@ fail() { echo "FAIL: $*"; FAIL=$((FAIL + 1)); }
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/hm-restore-atomic.XXXXXX")"
 trap 'rm -rf "${TMP}"' EXIT
+export HM_BACKUP_PRE_RESTORE_FILES_DIR="${TMP}/pre-restore"
+export BACKUP_PRE_RESTORE_FILES_DIR="${TMP}/pre-restore"
+export HM_BACKUP_PRE_RESTORE_KEEP=1
+export BACKUP_PRE_RESTORE_KEEP=1
 
 # shellcheck disable=SC1091
 source commands/backup/list.sh
@@ -30,7 +34,7 @@ source commands/backup/restore.sh
 
 REMOTE="${TMP}/snap"
 TARGET="${TMP}/site"
-mkdir -p "${REMOTE}" "${TARGET}/public_html"
+mkdir -p "${REMOTE}" "${TARGET}/public_html" "${HM_BACKUP_PRE_RESTORE_FILES_DIR}"
 
 # --- (a) ucięty files.tar.gz ⇒ rc≠0, drzewo nietknięte ---
 printf 'keep-me\n' > "${TARGET}/public_html/index.html"
@@ -121,36 +125,48 @@ else
 fi
 rm -f "${db_tmp}"
 
-# --- (d) po udanym restore istnieje .hm-pre-restore-* ---
+# --- (d) po udanym restore kopia w BACKUP_PRE_RESTORE_FILES_DIR/<slug>/<stamp> ---
 cp "${REMOTE}/files.tar.gz.bak" "${REMOTE}/files.tar.gz"
 TARGET2="${TMP}/site2"
+export HM_SITE_DOMAIN="site2.example.test"
 mkdir -p "${TARGET2}/public_html"
 printf 'live\n' > "${TARGET2}/public_html/index.html"
 printf 'extra\n' > "${TARGET2}/public_html/keep-extra.txt"
+# legacy zaśmiecenie w /home-like parent — powinno zniknąć przy prune
+mkdir -p "${TMP}/.hm-pre-restore-site2.example.test-old"
+printf 'legacy\n' > "${TMP}/.hm-pre-restore-site2.example.test-old/x"
 if hm_backup_restore_files "${REMOTE}" "${TARGET2}" 1 >/dev/null 2>&1; then
-  if compgen -G "${TMP}/.hm-pre-restore-*" >/dev/null \
-      && [[ -f "$(echo "${TMP}"/.hm-pre-restore-*/public_html/keep-extra.txt)" ]]; then
-    pass "(d) kopia .hm-pre-restore-* z plikami sprzed restore"
+  if [[ -d "${HM_BACKUP_PRE_RESTORE_FILES_DIR}/site2.example.test" ]] \
+      && [[ -f "$(echo "${HM_BACKUP_PRE_RESTORE_FILES_DIR}"/site2.example.test/*/public_html/keep-extra.txt)" ]] \
+      && [[ ! -d "${TMP}/.hm-pre-restore-site2.example.test-old" ]]; then
+    pass "(d) kopia pre-restore poza /home + usunięcie legacy"
   else
-    fail "(d) brak .hm-pre-restore-* lub brak pliku z kopii"
+    fail "(d) brak kopii w pre-restore dir lub legacy zostało"
   fi
 else
   fail "(d) restore nieudany"
 fi
 
-# --- (f) rotacja: zostaje 1 kopia pre-restore na slug ---
+# --- (f) rotacja: 3× restore → 1 kopia (keep=1) ---
 export HM_BACKUP_PRE_RESTORE_KEEP=1
+export BACKUP_PRE_RESTORE_KEEP=1
+export HM_SITE_DOMAIN="site3.example.test"
 TARGET3="${TMP}/site3"
 mkdir -p "${TARGET3}/public_html"
 printf 'a\n' > "${TARGET3}/public_html/index.html"
 hm_backup_restore_files "${REMOTE}" "${TARGET3}" 1 >/dev/null 2>&1 || true
+sleep 1
 printf 'b\n' > "${TARGET3}/public_html/index.html"
 hm_backup_restore_files "${REMOTE}" "${TARGET3}" 1 >/dev/null 2>&1 || true
-n_pre="$(find "${TMP}" -maxdepth 1 -type d -name '.hm-pre-restore-site3-*' 2>/dev/null | wc -l | tr -d ' ')"
-if [[ "${n_pre}" -eq 1 ]]; then
-  pass "(f) rotacja pre-restore keep=1"
+sleep 1
+printf 'c\n' > "${TARGET3}/public_html/index.html"
+hm_backup_restore_files "${REMOTE}" "${TARGET3}" 1 >/dev/null 2>&1 || true
+n_pre="$(find "${HM_BACKUP_PRE_RESTORE_FILES_DIR}/site3.example.test" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+n_home="$(find "${TMP}" -maxdepth 1 -type d -name '.hm-pre-restore-*' 2>/dev/null | wc -l | tr -d ' ')"
+if [[ "${n_pre}" -eq 1 && "${n_home}" -eq 0 ]]; then
+  pass "(f) rotacja pre-restore keep=1 (3× → 1), brak kopii w parent"
 else
-  fail "(f) oczekiwano 1 katalog pre-restore, jest ${n_pre}"
+  fail "(f) oczekiwano 1 katalog pre-restore i 0 legacy, jest n_pre=${n_pre} n_home=${n_home}"
 fi
 
 # --- (e) recreate_db: DROP + CREATE (lustro snapshotu) ---

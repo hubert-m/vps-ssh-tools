@@ -85,7 +85,54 @@ printf '%s\n' "${cat}" | grep -q $'^8.4\tzainstalowana\tactive' && ok "status-in
 printf '%s\n' "${cat}" | grep -q $'^8.5\twymaga dodania repo\tactive' && ok "status-extra" || { bad "status-extra"; printf '%s\n' "${cat}" >&2; }
 printf '%s\n' "${cat}" | grep -q '8.2' && printf '%s\n' "${cat}" | grep '8.2' | grep -q 'security (do 2026-12-31)' \
   && ok "status-security-until" || bad "status-security-until"
-[[ "$(hm_site_php_default_version)" == "8.5" ]] && ok "default-active" || bad "default-active"
+# Preferuj zainstalowaną active (8.4) nad nieinstalowaną 8.5 z EXTRA
+[[ "$(hm_site_php_default_version)" == "8.4" ]] && ok "default-active" || bad "default-active"
+
+# Tylko security (stock Ubuntu 24.04) → nadal wybiera zainstalowaną 8.3
+_saved_support="${HM_PHP_SUPPORT_FILE}"
+_saved_policy="${HM_PHP_POLICY_FILE}"
+_saved_extra="${HM_PHP_EXTRA_FILE:-}"
+_saved_inst="${HM_PHP_INSTALLED_LIST:-}"
+cat > "${root}/support-sec-only.txt" <<'EOF'
+8.3 security 2027-12-31
+8.1 eol 2025-12-31
+EOF
+cat > "${root}/policy-sec-only.txt" <<'EOF'
+php8.3-fpm:
+  Installed: 8.3.6-0ubuntu0
+  Candidate: 8.3.6-0ubuntu0
+php8.1-fpm:
+  Installed: (none)
+  Candidate: (none)
+EOF
+HM_PHP_SUPPORT_FILE="${root}/support-sec-only.txt"
+HM_PHP_POLICY_FILE="${root}/policy-sec-only.txt"
+unset HM_PHP_EXTRA_FILE
+printf '%s\n' php8.3-fpm > "${root}/installed-sec.txt"
+HM_PHP_INSTALLED_LIST="${root}/installed-sec.txt"
+[[ "$(hm_site_php_default_version)" == "8.3" ]] && ok "default-security-installed" || bad "default-security-installed"
+# Tylko eol → brak domyślnej
+cat > "${root}/support-eol.txt" <<'EOF'
+8.1 eol 2025-12-31
+EOF
+cat > "${root}/policy-eol.txt" <<'EOF'
+php8.1-fpm:
+  Installed: 8.1.0
+  Candidate: 8.1.0
+EOF
+HM_PHP_SUPPORT_FILE="${root}/support-eol.txt"
+HM_PHP_POLICY_FILE="${root}/policy-eol.txt"
+printf '%s\n' php8.1-fpm > "${root}/installed-eol.txt"
+HM_PHP_INSTALLED_LIST="${root}/installed-eol.txt"
+if hm_site_php_default_version >/dev/null 2>&1; then
+  bad "default-eol-refuse"
+else
+  ok "default-eol-refuse"
+fi
+HM_PHP_SUPPORT_FILE="${_saved_support}"
+HM_PHP_POLICY_FILE="${_saved_policy}"
+[[ -n "${_saved_extra}" ]] && HM_PHP_EXTRA_FILE="${_saved_extra}" || unset HM_PHP_EXTRA_FILE
+HM_PHP_INSTALLED_LIST="${_saved_inst}"
 
 hm_confirm_plan() { return 1; }
 if hm_site_php_ensure_repo 8.5 0 >/dev/null 2>&1; then

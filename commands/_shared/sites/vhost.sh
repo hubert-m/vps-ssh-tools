@@ -82,11 +82,11 @@ hm_parse_vhost_php() {
   local conf="$1"
   [[ -f "${conf}" ]] || return 0
   # szukaj lsphpXX w path / extProcessor
-  local php
+  local php ver
   php="$(grep -Eo 'lsphp[0-9]+' "${conf}" 2>/dev/null | head -1 || true)"
   if [[ -n "${php}" ]]; then
     # lsphp82 -> 8.2
-    local ver="${php#lsphp}"
+    ver="${php#lsphp}"
     if [[ "${#ver}" -eq 2 ]]; then
       echo "${ver:0:1}.${ver:1:1}"
       return
@@ -94,6 +94,16 @@ hm_parse_vhost_php() {
     echo "${php}"
     return
   fi
+  # jawna wersja w ścieżce (php/8.3/…, php8.3-fpm) — nie zwracaj surowego wiersza vhosta
+  ver="$(grep -Eo '/php/[0-9]+\.[0-9]+/|php[0-9]+\.[0-9]+-fpm' "${conf}" 2>/dev/null | head -1 || true)"
+  if [[ "${ver}" =~ ([0-9]+\.[0-9]+) ]]; then
+    echo "${BASH_REMATCH[1]}"
+    return
+  fi
   php="$(grep -Ei 'php[ _]version|phpPath' "${conf}" 2>/dev/null | head -1 || true)"
-  echo "${php:-?}"
+  if [[ -n "${php}" ]]; then
+    ver="$(echo "${php}" | grep -Eo '[0-9]+\.[0-9]+' | head -1 || true)"
+    [[ -n "${ver}" ]] && { echo "${ver}"; return; }
+  fi
+  echo "?"
 }

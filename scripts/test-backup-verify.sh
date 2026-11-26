@@ -285,13 +285,29 @@ fi
 
 # RCLONE_REMOTE lokalny bez BACKUP_LOCAL_ROOT
 unset BACKUP_LOCAL_ROOT
+unset HM_BACKUP_LOCAL_ROOT_EXPLICIT
 export RCLONE_REMOTE="${TMP}/local-root"
 if hm_backup_verify_cmd example.pl 20260101 --target local --json 2>/dev/null | grep -q '"result":"PASS"'; then
   ok "rclone-local-as-root"
 else
   bad "rclone-local-as-root"
 fi
+
+# Symulacja hm_load_config: fabryczny BACKUP_LOCAL_ROOT + lokalny RCLONE_REMOTE
+export BACKUP_LOCAL_ROOT="/backup/hmtools"
+export HM_BACKUP_LOCAL_ROOT_EXPLICIT=0
+export RCLONE_REMOTE="${TMP}/local-root"
+[[ "$(hm_backup_verify_local_root)" == "${TMP}/local-root" ]] \
+  && ok "load-config-default-blr-uses-rclone" \
+  || bad "load-config-default-blr-uses-rclone ($(hm_backup_verify_local_root))"
+# Jawny BACKUP_LOCAL_ROOT wygrywa
+export HM_BACKUP_LOCAL_ROOT_EXPLICIT=1
 export BACKUP_LOCAL_ROOT="${TMP}/local-root"
+[[ "$(hm_backup_verify_local_root)" == "${TMP}/local-root" ]] \
+  && ok "explicit-blr-wins" \
+  || bad "explicit-blr-wins"
+export BACKUP_LOCAL_ROOT="${TMP}/local-root"
+export HM_BACKUP_LOCAL_ROOT_EXPLICIT=1
 
 # --target qa (dowolny remote)
 : > "${HM_RCLONE_LOG}"

@@ -89,15 +89,29 @@ else
     else
       echo "OK   ownership-nonroot-no-crash (home_g=${home_g})"
     fi
-    # Kod: home dostaje webgrp (grep regresja kontraktu)
-    if grep -q 'user:webgrp.*"\${target_dir}"' commands/backup/restore.sh \
-      || grep -q 'chown -h "${user}:${webgrp}" -- "${target_dir}"' commands/backup/restore.sh; then
-      echo "OK   ownership-home-uses-webgrp"
-    else
-      echo "FAIL ownership-home-uses-webgrp"
-      fail=1
-    fi
   fi
+fi
+
+# Kontrakt kodu (zawsze): home + wnętrze public_html → webgrp
+if grep -q 'chown -h "${user}:${webgrp}" -- "${target_dir}"' commands/backup/restore.sh; then
+  echo "OK   ownership-home-uses-webgrp"
+else
+  echo "FAIL ownership-home-uses-webgrp"
+  fail=1
+fi
+if grep -A3 'public_html|logs|releases|tmp|shared' commands/backup/restore.sh \
+     | grep -q 'user}:${webgrp}'; then
+  echo "OK   ownership-public_html-webgrp"
+else
+  echo "FAIL ownership-public_html-webgrp"
+  fail=1
+fi
+if grep -q 'find -P "${ent}" -xdev -mindepth 1 -print0' commands/backup/restore.sh \
+  && grep -q 'chown -h "${user}:${user}" -- "${inner}"' commands/backup/restore.sh; then
+  echo "FAIL ownership-still-inner-user-user"
+  fail=1
+else
+  echo "OK   ownership-no-inner-user-user"
 fi
 
 if [[ "${fail}" -ne 0 ]]; then

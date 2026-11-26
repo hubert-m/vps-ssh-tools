@@ -401,47 +401,69 @@ hm_mail_account_passwd() {
     "  ${C_BOLD}Hasło:${C_RESET} ${pass}"
 }
 
-# Pusty stub Maildir (tylko puste cur/new/tmp) — typowo odtworzony przez Dovecot/CP w trakcie deleteEmail.
+# Stub Maildir odtworzony przez Dovecot/CP: puste cur/new/tmp (+ opcjonalnie dovecot*/maildirfolder).
+# Wiadomości w cur/new (także w .Sent/…) albo foldery IMAP / subscriptions ⇒ nie hollow.
 hm_mail_maildir_is_hollow() {
   local p="$1" e base
   [[ -d "${p}" ]] || return 1
-  shopt -s nullglob
+  if find "${p}" \( -path '*/cur/*' -o -path '*/new/*' \) -type f 2>/dev/null | head -1 | grep -q .; then
+    return 1
+  fi
+  shopt -s nullglob dotglob
   for e in "${p}"/*; do
     base="${e##*/}"
     case "${base}" in
-      cur|new|tmp) [[ -d "${e}" ]] || { shopt -u nullglob; return 1; } ;;
-      *) shopt -u nullglob; return 1 ;;
+      .|..) continue ;;
+      cur|new|tmp)
+        [[ -d "${e}" ]] || { shopt -u nullglob dotglob; return 1; }
+        ;;
+      dovecot*|maildirfolder|maildirsize)
+        [[ -e "${e}" ]] || { shopt -u nullglob dotglob; return 1; }
+        ;;
+      *)
+        shopt -u nullglob dotglob
+        return 1
+        ;;
     esac
   done
-  shopt -u nullglob
-  if find "${p}/cur" "${p}/new" "${p}/tmp" -mindepth 1 2>/dev/null | head -1 | grep -q .; then
-    return 1
-  fi
+  shopt -u nullglob dotglob
   return 0
 }
 
-# Przywróć trash → path. Gdy path to pusty stub — usuń i mv.
-# Gdy path ma treść — scal cur/new (mv -n); nie twierdź „przywrócono” przy konflikcie.
+# Scal drzewo trash → path bez nadpisywania (foldery IMAP, subscriptions, cur/new).
+hm_mail_maildir_merge_tree() {
+  local src="$1" dst="$2" e base
+  mkdir -p -- "${dst}" || return 1
+  shopt -s nullglob dotglob
+  for e in "${src}"/*; do
+    base="${e##*/}"
+    case "${base}" in .|..) continue ;; esac
+    if [[ -d "${e}" && ! -L "${e}" ]]; then
+      hm_mail_maildir_merge_tree "${e}" "${dst}/${base}" || true
+      rmdir "${e}" 2>/dev/null || true
+    else
+      if [[ ! -e "${dst}/${base}" ]]; then
+        mv -- "${e}" "${dst}/${base}" 2>/dev/null || true
+      fi
+    fi
+  done
+  shopt -u nullglob dotglob
+  return 0
+}
+
+# Przywróć trash → path. Hollow stub (także z plikami dovecot*) — usuń i mv.
+# Niepusty path — scal całe drzewo; archiwum zostaje gdy zostały pliki.
 # rc: 0=pełne przywrócenie, 2=częściowe/archiwum zostaje, 1=błąd
 hm_mail_maildir_rollback() {
-  local trash="$1" path="$2" sub f
+  local trash="$1" path="$2"
   [[ -e "${trash}" ]] || return 1
   mkdir -p -- "$(dirname "${path}")" 2>/dev/null || true
   if [[ -e "${path}" ]]; then
     if hm_mail_maildir_is_hollow "${path}"; then
       rm -rf -- "${path}" || return 1
     else
-      for sub in cur new tmp; do
-        [[ -d "${trash}/${sub}" ]] || continue
-        mkdir -p -- "${path}/${sub}" || return 1
-        shopt -s nullglob
-        for f in "${trash}/${sub}"/*; do
-          [[ -e "${f}" ]] || continue
-          mv -n -- "${f}" "${path}/${sub}/" 2>/dev/null || true
-        done
-        shopt -u nullglob
-      done
-      if find "${trash}/cur" "${trash}/new" -type f 2>/dev/null | head -1 | grep -q .; then
+      hm_mail_maildir_merge_tree "${trash}" "${path}" || return 1
+      if find "${trash}" -type f 2>/dev/null | head -1 | grep -q .; then
         return 2
       fi
       rm -rf -- "${trash}" 2>/dev/null || true

@@ -118,22 +118,41 @@ hm_backup_rsync_protect_excludes() {
   done
 }
 
-# Sprzątnij stare .hm-pre-restore-<slug>-* (zostaw keep najnowszych).
+# Katalog bazowy kopii plików przed restore (0700; nie w /home).
+hm_backup_pre_restore_files_root() {
+  local root="${HM_BACKUP_PRE_RESTORE_FILES_DIR:-${BACKUP_PRE_RESTORE_FILES_DIR:-/var/lib/hmtools/pre-restore}}"
+  printf '%s' "${root}"
+}
+
+# Sprzątnij stare stampy w root/<slug>/* oraz legacy .hm-pre-restore-<slug>-* obok targetu.
 hm_backup_prune_pre_restore_dirs() {
-  local parent="$1" slug="$2"
-  local keep="${HM_BACKUP_PRE_RESTORE_KEEP:-1}"
+  local slug="$1"
+  local legacy_parent="${2:-}"
+  local keep="${HM_BACKUP_PRE_RESTORE_KEEP:-${BACKUP_PRE_RESTORE_KEEP:-1}}"
+  local root d i
   local -a dirs=()
-  local d i
-  [[ -n "${parent}" && -n "${slug}" && -d "${parent}" ]] || return 0
+  [[ -n "${slug}" ]] || return 0
   [[ "${keep}" =~ ^[0-9]+$ ]] || keep=1
-  shopt -s nullglob
-  # sortowanie leksykograficzne = chronologiczne przy stampie YYYYMMDD-HHMMSS
-  dirs=( "${parent}/.hm-pre-restore-${slug}-"* )
-  shopt -u nullglob
-  [[ "${#dirs[@]}" -gt "${keep}" ]] || return 0
-  for ((i = 0; i < ${#dirs[@]} - keep; i++)); do
-    rm -rf -- "${dirs[i]}" 2>/dev/null || true
-  done
+  root="$(hm_backup_pre_restore_files_root)"
+  if [[ -d "${root}/${slug}" ]]; then
+    shopt -s nullglob
+    dirs=( "${root}/${slug}/"* )
+    shopt -u nullglob
+    if [[ "${#dirs[@]}" -gt "${keep}" ]]; then
+      for ((i = 0; i < ${#dirs[@]} - keep; i++)); do
+        rm -rf -- "${dirs[i]}" 2>/dev/null || true
+      done
+    fi
+  fi
+  # legacy: /home/.hm-pre-restore-<slug>-<stamp>
+  if [[ -n "${legacy_parent}" && -d "${legacy_parent}" ]]; then
+    shopt -s nullglob
+    dirs=( "${legacy_parent}/.hm-pre-restore-${slug}-"* )
+    shopt -u nullglob
+    for d in "${dirs[@]+"${dirs[@]}"}"; do
+      rm -rf -- "${d}" 2>/dev/null || true
+    done
+  fi
 }
 
 hm_backup_restore_files() {
@@ -141,6 +160,7 @@ hm_backup_restore_files() {
   local overwrite_files="${3:-${HM_BACKUP_OVERWRITE_FILES:-0}}"
   local keep_extra="${HM_BACKUP_KEEP_EXTRA:-0}"
   local staging pre_bak tarf parent stamp slug need_kb avail_kb excl_mode="backup"
+  local pre_root pre_slug_dir keep_n
   local -a protect_opts=()
   mkdir -p "${target_dir}"
 
@@ -156,14 +176,18 @@ hm_backup_restore_files() {
   slug="${HM_SITE_DOMAIN:-$(basename -- "${target_dir}")}"
   slug="${slug//\//_}"
   staging="${parent}/.hm-restore-${stamp}"
-  pre_bak="${parent}/.hm-pre-restore-${slug}-${stamp}"
+  pre_root="$(hm_backup_pre_restore_files_root)"
+  pre_slug_dir="${pre_root}/${slug}"
+  pre_bak="${pre_slug_dir}/${stamp}"
+  keep_n="${HM_BACKUP_PRE_RESTORE_KEEP:-${BACKUP_PRE_RESTORE_KEEP:-1}}"
   rm -rf -- "${staging}"
   mkdir -p "${staging}" || { rm -f "${tarf}"; return 1; }
 
   hm_info "Odtwarzanie plików (staging) → ${staging}"
-  local meta_x=""
+  local meta_x="" meta_c=""
   if declare -F hm_backup_tar_meta_opts >/dev/null 2>&1; then
     meta_x="$(hm_backup_tar_meta_opts extract)"
+    meta_c="$(hm_backup_tar_meta_opts create)"
   fi
   # shellcheck disable=SC2086
   if ! tar --no-same-owner ${meta_x} -xzf "${tarf}" -C "${staging}"; then
@@ -174,24 +198,34 @@ hm_backup_restore_files() {
   fi
   rm -f "${tarf}"
 
-  # Kopia bezpieczeństwa bieżącego drzewa (przed rsync) — rollback ręczny
+  # Kopia bezpieczeństwa bieżącego drzewa (przed rsync) — poza /home, retencja KEEP
   if [[ -d "${target_dir}" ]] && find "${target_dir}" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
     need_kb="$(du -sk "${target_dir}" 2>/dev/null | awk '{print $1}')"
-    avail_kb="$(df -Pk "${parent}" 2>/dev/null | awk 'NR==2 {print $4}')"
+    mkdir -p "${pre_root}" 2>/dev/null || true
+    chmod 0700 "${pre_root}" 2>/dev/null || true
+    avail_kb="$(df -Pk "${pre_root}" 2>/dev/null | awk 'NR==2 {print $4}')"
+    [[ -n "${avail_kb}" ]] || avail_kb="$(df -Pk "${parent}" 2>/dev/null | awk 'NR==2 {print $4}')"
     if [[ -n "${need_kb}" && -n "${avail_kb}" && "${need_kb}" =~ ^[0-9]+$ && "${avail_kb}" =~ ^[0-9]+$ ]]; then
       if [[ "${avail_kb}" -le "${need_kb}" ]]; then
-        hm_err "Za mało miejsca na pre-restore (~${need_kb} KiB potrzeba, ${avail_kb} KiB wolne w ${parent}) — target nietknięty."
+        hm_err "Za mało miejsca na pre-restore (~${need_kb} KiB potrzeba, ${avail_kb} KiB wolne) — target nietknięty."
         rm -rf -- "${staging}"
         return 1
       fi
     fi
     hm_info "Kopia bezpieczeństwa plików → ${pre_bak}"
     rm -rf -- "${pre_bak}"
+    mkdir -p "${pre_slug_dir}" || {
+      hm_err "Nie można utworzyć ${pre_slug_dir} — target nietknięty."
+      rm -rf -- "${staging}"
+      return 1
+    }
+    chmod 0700 "${pre_slug_dir}" 2>/dev/null || true
     mkdir -p "${pre_bak}" || {
       hm_err "Nie można utworzyć ${pre_bak} — target nietknięty."
       rm -rf -- "${staging}"
       return 1
     }
+    chmod 0700 "${pre_bak}" 2>/dev/null || true
     if hm_have_cmd rsync; then
       if ! rsync -aHAXS --numeric-ids "${target_dir}/" "${pre_bak}/"; then
         hm_err "Kopia pre-restore plików nieudana — target nietknięty."
@@ -199,15 +233,16 @@ hm_backup_restore_files() {
         return 1
       fi
     else
+      # create+extract meta — bez --acls/--sparse po stronie -cf ACL/xattr/sparse giną
       # shellcheck disable=SC2086
-      if ! tar -C "${target_dir}" -cf - . | tar --no-same-owner ${meta_x} -C "${pre_bak}" -xf -; then
+      if ! tar -C "${target_dir}" ${meta_c} -cf - . | tar --no-same-owner ${meta_x} -C "${pre_bak}" -xf -; then
         hm_err "Kopia pre-restore plików nieudana — target nietknięty."
         rm -rf -- "${staging}" "${pre_bak}"
         return 1
       fi
     fi
-    hm_backup_prune_pre_restore_dirs "${parent}" "${slug}"
-    hm_ok "Kopia przed restore: ${pre_bak} (cofnięcie: rsync -aHAXS --delete ${pre_bak}/ ${target_dir}/)."
+    hm_backup_prune_pre_restore_dirs "${slug}" "${parent}"
+    hm_ok "Kopia przed restore: ${pre_bak} (keep=${keep_n}; cofnięcie: rsync -aHAXS --delete ${pre_bak}/ ${target_dir}/; sprzątanie: rm -rf ${pre_bak})."
   fi
 
   if hm_backup_restore_snap_is_archive "${remote_base}"; then
@@ -232,12 +267,12 @@ hm_backup_restore_files() {
       return 1
     fi
   else
-    # Fallback bez rsync: tar już w staging — mv zawartości (bez --delete obcych)
+    # Fallback bez rsync: potok tar z meta po obu stronach (ACL/xattr/sparse)
     if [[ "${overwrite_files}" -eq 1 && "${keep_extra}" -ne 1 ]]; then
       hm_warn "Brak rsync — nie usuwam obcych plików (--overwrite-files wymaga rsync)."
     fi
     # shellcheck disable=SC2086
-    if ! tar -C "${staging}" -cf - . | tar --no-same-owner ${meta_x} -C "${target_dir}" -xf -; then
+    if ! tar -C "${staging}" ${meta_c} -cf - . | tar --no-same-owner ${meta_x} -C "${target_dir}" -xf -; then
       hm_err "Kopiowanie staging → target nieudane."
       rm -rf -- "${staging}"
       return 1
@@ -340,27 +375,24 @@ hm_backup_restore_fix_ownership() {
     webgrp="${user}"
   fi
 
-  hm_info "chown -h plików → ${user}:${user} (home/docroot/public_html/logs: ${user}:${webgrp})"
+  hm_info "chown -h plików → ${user}:${webgrp} (public_html/releases/shared/logs; reszta home: ${user}:${user})"
   # Katalog serwisu: user:webgrp (nie user:user) — nginx/apache musi wejść do home (750)
   chown -h "${user}:${webgrp}" -- "${target_dir}" 2>/dev/null \
     || chown "${user}:${webgrp}" -- "${target_dir}" 2>/dev/null \
     || chown "${user}:${user}" -- "${target_dir}" 2>/dev/null || true
 
-  # zawartość — public_html/logs/releases/tmp: katalog → webgrp; wnętrze → user:user
+  # public_html/releases/shared (+ logs/tmp): całość user:webgrp (setgid jak site new).
+  # Wcześniej wnętrze dostawało user:user → pliki 640 / kat. 750 niewidoczne dla nginx.
   local ent base
   while IFS= read -r -d '' ent; do
     base="$(basename "${ent}")"
     case "${base}" in
       public_html|logs|releases|tmp|shared)
         if [[ -d "${ent}" && ! -L "${ent}" ]]; then
-          find -P "${ent}" -xdev -mindepth 1 -print0 2>/dev/null \
-            | while IFS= read -r -d '' inner; do
-                chown -h "${user}:${user}" -- "${inner}" 2>/dev/null \
-                  || chown "${user}:${user}" -- "${inner}" 2>/dev/null || true
-              done
-          chown -h "${user}:${webgrp}" -- "${ent}" 2>/dev/null \
-            || chown "${user}:${webgrp}" -- "${ent}" 2>/dev/null \
-            || chown "${user}:${user}" -- "${ent}" 2>/dev/null || true
+          find -P "${ent}" -xdev -exec chown -h "${user}:${webgrp}" -- {} + 2>/dev/null \
+            || find -P "${ent}" -xdev -exec chown "${user}:${webgrp}" -- {} + 2>/dev/null \
+            || chown -hR "${user}:${webgrp}" -- "${ent}" 2>/dev/null \
+            || chown -R "${user}:${webgrp}" -- "${ent}" 2>/dev/null || true
           continue
         fi
         ;;
@@ -369,11 +401,8 @@ hm_backup_restore_fix_ownership() {
       chown -h "${user}:${user}" -- "${ent}" 2>/dev/null || true
       continue
     fi
-    find -P "${ent}" -xdev -print0 2>/dev/null \
-      | while IFS= read -r -d '' inner; do
-          chown -h "${user}:${user}" -- "${inner}" 2>/dev/null \
-            || chown "${user}:${user}" -- "${inner}" 2>/dev/null || true
-        done
+    find -P "${ent}" -xdev -exec chown -h "${user}:${user}" -- {} + 2>/dev/null \
+      || find -P "${ent}" -xdev -exec chown "${user}:${user}" -- {} + 2>/dev/null || true
   done < <(find -P "${target_dir}" -xdev -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
 
   if [[ -n "${docroot}" && -d "${docroot}" ]]; then
@@ -1582,15 +1611,17 @@ hm_backup_cp_snap_child_domains() {
 
 hm_backup_cp_snap_db_names() {
   local sqlf="$1"
+  # mawk (Debian 12): bez {2,64} — length() zamiast kwantyfikatora
   awk '
     BEGIN { ign = 1 }
     /^INSERT INTO `databases_databases`/ { ign = 0 }
     /^INSERT INTO `/ && $0 !~ /databases_databases/ { ign = 1 }
     ign { next }
     {
-      while (match($0, /'\''[A-Za-z0-9_]{2,64}'\''/)) {
+      while (match($0, /'\''[A-Za-z0-9_]+'\''/)) {
         d = substr($0, RSTART + 1, RLENGTH - 2)
-        if (d ~ /\./) { $0 = substr($0, RSTART + RLENGTH); continue }
+        L = length(d)
+        if (L < 2 || L > 64 || d ~ /\./) { $0 = substr($0, RSTART + RLENGTH); continue }
         if (!seen[d]++) print d
         $0 = substr($0, RSTART + RLENGTH)
       }
@@ -1731,6 +1762,28 @@ DELETE FROM websiteFunctions_websites WHERE domain = ${dq};"
 
   grep -E '^INSERT INTO `websiteFunctions_websites`' "${sqlf}" > "${web_sql}" || true
   grep -Ev '^INSERT INTO `websiteFunctions_websites`' "${sqlf}" > "${rest_sql}" || true
+  # Stare dumpy: LOCK TABLES zatwierdza transakcję — wyfiltruj
+  if grep -qE '^(LOCK TABLES|UNLOCK TABLES)' "${rest_sql}" 2>/dev/null \
+      || grep -qE '^(LOCK TABLES|UNLOCK TABLES)' "${web_sql}" 2>/dev/null; then
+    grep -Ev '^(LOCK TABLES|UNLOCK TABLES)' "${web_sql}" > "${web_sql}.x" 2>/dev/null || true
+    mv -f "${web_sql}.x" "${web_sql}" 2>/dev/null || true
+    grep -Ev '^(LOCK TABLES|UNLOCK TABLES)' "${rest_sql}" > "${rest_sql}.x" 2>/dev/null || true
+    mv -f "${rest_sql}.x" "${rest_sql}" 2>/dev/null || true
+  fi
+
+  # FK ze snapshota → placeholder (NIE UPDATE po src_id — na DR/innym CP to ID cudzej strony)
+  local fk_ph=2147483000
+  if [[ -n "${src_id}" && "${src_id}" =~ ^[0-9]+$ && -s "${rest_sql}" ]]; then
+    if declare -F hm_backup_cp_sql_remap_fk_ids >/dev/null 2>&1; then
+      local rest_remap
+      rest_remap="$(mktemp "${TMP_DIR:-/tmp}/hmtools-cp-remap.XXXXXX.sql")"
+      if hm_backup_cp_sql_remap_fk_ids "${rest_sql}" "${rest_remap}" "${src_id}" "${fk_ph}"; then
+        mv -f "${rest_remap}" "${rest_sql}"
+      else
+        rm -f "${rest_remap}"
+      fi
+    fi
+  fi
 
   # Jedna sesja + transakcja: DELETE + website + rest + re-link; błąd → ROLLBACK (bez sierot FK)
   local txf
@@ -1745,12 +1798,10 @@ DELETE FROM websiteFunctions_websites WHERE domain = ${dq};"
     if [[ -n "${domain}" ]] && hm_is_valid_domain "${domain}"; then
       echo "SELECT id INTO @hm_cp_nid FROM websiteFunctions_websites WHERE domain=${dq} LIMIT 1;"
     fi
-    # Rest z FK ze snapshota (stary src_id) — FK off; zaraz UPDATE na @hm_cp_nid
+    # Rest z FK=placeholder — tylko nasze wiersze, nie cudze master_id=src_id
     [[ -s "${rest_sql}" ]] && cat "${rest_sql}"
-    if [[ -n "${src_id}" && "${src_id}" =~ ^[0-9]+$ ]]; then
-      echo "UPDATE websiteFunctions_childdomains SET master_id=@hm_cp_nid WHERE master_id=${src_id};"
-      echo "UPDATE databases_databases SET website_id=@hm_cp_nid WHERE website_id=${src_id};"
-    fi
+    echo "UPDATE websiteFunctions_childdomains SET master_id=@hm_cp_nid WHERE master_id=${fk_ph};"
+    echo "UPDATE databases_databases SET website_id=@hm_cp_nid WHERE website_id=${fk_ph};"
     if [[ "${#keep_ch[@]}" -gt 0 ]]; then
       for ch in "${keep_ch[@]}"; do
         echo "UPDATE websiteFunctions_childdomains SET master_id=@hm_cp_nid WHERE domain=$(hm_sql_quote "${ch}");"

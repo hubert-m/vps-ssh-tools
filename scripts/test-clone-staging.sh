@@ -340,7 +340,7 @@ cmd_site_create() {
 }
 hm_find_site_by_arg_exact() {
   case "$1" in
-    newstg.blog.test) return 1 ;;
+    newstg.blog.test|newstg2.blog.test) return 1 ;;
     *) printf '%s' "$1"; return 0 ;;
   esac
 }
@@ -348,14 +348,28 @@ hm_site_manifest_path() { printf '%s' "${tmpdir}/manifests/$1.json"; }
 mkdir -p "${tmpdir}/manifests"
 printf '{"webserver":"nginx","runtime":{"type":"php","version":"8.3"}}' > "${tmpdir}/manifests/blog.test.json"
 export WEBSERVER=nginx
-if hm_clone_ensure_target_site blog.test newstg.blog.test 8.3 >/dev/null \
+# HM_SITE_PHP=? (jak webs na nginx) → wersja z manifestu, nie stałe 8.2
+if hm_clone_ensure_target_site blog.test newstg.blog.test '?' >/dev/null \
   && grep -q 'site_new:newstg.blog.test' "${SITE_NEW_LOG}" \
   && grep -q -- '--webserver nginx' "${SITE_NEW_LOG}" \
   && grep -q -- '--php 8.3' "${SITE_NEW_LOG}" \
+  && ! grep -q -- '--php 8.2' "${SITE_NEW_LOG}" \
   && ! grep -q 'site_create:' "${SITE_NEW_LOG}"; then
   echo "OK   ensure-nginx-site-new"
 else
   echo "FAIL ensure-nginx-site-new"
+  cat "${SITE_NEW_LOG}" >&2 || true
+  fail=1
+fi
+: > "${SITE_NEW_LOG}"
+# brak wersji w manifeście → site new bez --php (domyślna active)
+printf '{"webserver":"nginx","runtime":{"type":"php"}}' > "${tmpdir}/manifests/blog.test.json"
+if hm_clone_ensure_target_site blog.test newstg2.blog.test '?' >/dev/null \
+  && grep -q 'site_new:newstg2.blog.test' "${SITE_NEW_LOG}" \
+  && ! grep -q -- '--php ' "${SITE_NEW_LOG}"; then
+  echo "OK   ensure-nginx-no-php-flag"
+else
+  echo "FAIL ensure-nginx-no-php-flag"
   cat "${SITE_NEW_LOG}" >&2 || true
   fail=1
 fi

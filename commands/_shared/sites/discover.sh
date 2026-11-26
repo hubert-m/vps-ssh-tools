@@ -121,6 +121,40 @@ hm_tsv_unfield() {
   fi
 }
 
+# Wersja PHP poza CyberPanel/OLS: manifest → pula FPM (Debian/Ubuntu + Remi).
+hm_discover_site_php_version() {
+  local domain="$1"
+  local man="" ver="" pool
+  if declare -F hm_site_manifest_path >/dev/null 2>&1; then
+    man="$(hm_site_manifest_path "${domain}" 2>/dev/null || true)"
+  fi
+  [[ -z "${man}" ]] && man="/etc/hmtools/sites/${domain}.json"
+  if [[ -f "${man}" ]]; then
+    if declare -F hm_site_runtime_version >/dev/null 2>&1; then
+      ver="$(hm_site_runtime_version "${man}" 2>/dev/null || true)"
+    fi
+    [[ -n "${ver}" ]] || ver="$(sed -n 's/.*"type":"php","version":"\([^"]*\)".*/\1/p' "${man}" | head -1)"
+    [[ -n "${ver}" ]] || ver="$(sed -n 's/.*"runtime":{"type":"[^"]*","version":"\([^"]*\)".*/\1/p' "${man}" | head -1)"
+    [[ "${ver}" == "?" || "${ver}" == "*" ]] && ver=""
+    if [[ "${ver}" =~ ^[0-9]+\.[0-9]+$ ]]; then
+      printf '%s' "${ver}"
+      return 0
+    fi
+  fi
+  for pool in /etc/php/*/fpm/pool.d/"${domain}".conf /etc/opt/remi/php*/php-fpm.d/"${domain}".conf; do
+    [[ -f "${pool}" ]] || continue
+    if [[ "${pool}" =~ /php/([0-9]+\.[0-9]+)/ ]]; then
+      printf '%s' "${BASH_REMATCH[1]}"
+      return 0
+    fi
+    if [[ "${pool}" =~ /php([0-9])([0-9]+)/php-fpm\.d/ ]]; then
+      printf '%s.%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+      return 0
+    fi
+  done
+  printf ''
+}
+
 hm_resolve_site_paths() {
   local domain="$1"
   local root="" docroot="" logs="" vhost="" php="?" user="" status="active"
@@ -222,18 +256,12 @@ hm_resolve_site_paths() {
     fi
   fi
 
-  # Normalizacja PHP (PHP 8.2 -> 8.2)
+  # Normalizacja PHP (PHP 8.2 -> 8.2); śmieci z vhosta nginx ≠ wersja
   php="$(echo "${php}" | sed -E 's/.*PHP[[:space:]]*//; s/lsphp//; s/^([0-9])([0-9])$/\1.\2/')"
-  # nginx/apache: wersja z puli FPM (OLS externalApp bywa puste → placeholder "?")
-  if [[ -z "${php}" || "${php}" == "?" ]]; then
-    local _pp
-    for _pp in /etc/php/*/fpm/pool.d/"${domain}".conf; do
-      [[ -f "${_pp}" ]] || continue
-      if [[ "${_pp}" =~ /php/([0-9]+\.[0-9]+)/ ]]; then
-        php="${BASH_REMATCH[1]}"
-        break
-      fi
-    done
+  [[ "${php}" =~ ^[0-9]+\.[0-9]+$ ]] || php=""
+  # nginx/apache bez CP: manifest runtime.version → pula FPM (Debian + Remi)
+  if [[ -z "${php}" ]]; then
+    php="$(hm_discover_site_php_version "${domain}")"
   fi
   [[ -n "${php}" ]] || php="?"
 

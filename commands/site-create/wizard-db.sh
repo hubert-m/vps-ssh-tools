@@ -505,15 +505,19 @@ cmd_site_new() {
       vhost_kind="${preset}"
     fi
   fi
-  # php-fpm vhost bez --php ⇒ 502 (sock bez puli). Włącz provision + domyślna active.
+  # php-fpm vhost bez --php ⇒ 502 (sock bez puli). Włącz provision + domyślna active/security.
   if [[ "${web_on}" -eq 1 && "${vhost_kind}" == "php-fpm" && "${php_on}" -eq 0 ]]; then
     php_on=1
     if [[ -z "${php_ver}" ]] && declare -F hm_site_php_default_version >/dev/null 2>&1; then
       php_ver="$(hm_site_php_default_version 2>/dev/null || true)"
     fi
   fi
+  if [[ "${php_on}" -eq 1 && -z "${php_ver}" ]]; then
+    hm_err "Brak wspieranej wersji PHP — podaj --php X.Y albo zainstaluj: php install X.Y"
+    return 1
+  fi
   if [[ "${php_on}" -eq 1 ]]; then
-    plan+=("PHP: ${php_ver:-domyślna active} (${php_sapi}, preset ${php_preset:-minimal})")
+    plan+=("PHP: ${php_ver} (${php_sapi}, preset ${php_preset:-minimal})")
   fi
   if [[ "${web_on}" -eq 1 ]]; then
     plan+=("Vhost: ${webserver:-nginx} / ${vhost_kind:-auto}")

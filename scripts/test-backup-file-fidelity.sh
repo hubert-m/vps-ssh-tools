@@ -113,6 +113,36 @@ else
   bad "rsync-AXS-staging"
 fi
 
+# Fallback bez rsync: meta create na stronie -cf (nie tylko extract)
+if grep -qE 'tar -C "\$\{staging\}" \$\{meta_c\} -cf -' commands/backup/restore.sh \
+  && grep -qE 'tar -C "\$\{target_dir\}" \$\{meta_c\} -cf -' commands/backup/restore.sh; then
+  ok "tar-fallback-meta-create"
+else
+  bad "tar-fallback-meta-create"
+fi
+
+# Round-trip potokiem tar→tar (jak fallback bez rsync)
+pipe_dst="${TMP}/pipe-dst"
+mkdir -p "${pipe_dst}"
+# shellcheck disable=SC2086
+if tar -C "${src}" ${opts_c} -cf - . | tar --no-same-owner ${opts_x} -C "${pipe_dst}" -xf -; then
+  ok "tar-pipe-copy"
+  if [[ "${HAVE_ACL}" -eq 1 ]] && hm_have_cmd getfacl; then
+    getfacl -c "${pipe_dst}/private.txt" 2>/dev/null | grep -q "user:" \
+      && ok "tar-pipe-acl" || ok "tar-pipe-acl-soft"
+  else
+    ok "tar-pipe-acl-skip"
+  fi
+  if [[ "${HAVE_XATTR}" -eq 1 ]] && hm_have_cmd getfattr; then
+    getfattr -d "${pipe_dst}/index.php" 2>/dev/null | grep -q 'user.hmtest' \
+      && ok "tar-pipe-xattr" || ok "tar-pipe-xattr-soft"
+  else
+    ok "tar-pipe-xattr-skip"
+  fi
+else
+  bad "tar-pipe-copy"
+fi
+
 if [[ "${fail}" -ne 0 ]]; then
   echo FAILED
   exit 1

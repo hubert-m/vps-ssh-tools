@@ -13,7 +13,7 @@ Użycie:
                             Pełna kopia → full/<stamp>/ (multi-cel: 1× backup + replikacja)
   backup site <domena> [--target n|--targets a,b]
                             Kopia strony → <domena>/<stamp>/
-  backup local <domena> [--keep N]
+  backup local <domena> [--keep N] [--yes]
                             Szybka kopia lokalna (/backup/hmtools/…) — ten sam format co Drive
   backup inc init|site|list|restore|forget
                             Inkrementalne (restic + rclone backend; hasło w restic.pass 0600)
@@ -126,6 +126,7 @@ cmd_backup() {
       echo "  RCLONE_REMOTE : ${RCLONE_REMOTE:-brak}"
       echo "  BACKUP_LOCAL_ROOT=${BACKUP_LOCAL_ROOT:-/backup/hmtools}"
       echo "  BACKUP_KEEP_DAYS=${BACKUP_KEEP_DAYS:-14}  BACKUP_KEEP_MIN=${BACKUP_KEEP_MIN:-3}"
+      echo "  BACKUP_PRE_RESTORE_KEEP=${BACKUP_PRE_RESTORE_KEEP:-1}  BACKUP_PRE_RESTORE_FILES_DIR=${BACKUP_PRE_RESTORE_FILES_DIR:-/var/lib/hmtools/pre-restore}"
       echo "  Struktura:"
       echo "    ${RCLONE_REMOTE}/full/<stamp>/     — pełne kopie"
       echo "    ${RCLONE_REMOTE}/<domena>/<stamp>/ — kopie stron"

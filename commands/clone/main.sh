@@ -403,6 +403,37 @@ hm_clone_src_runtime() {
   printf '%s' "${rt}"
 }
 
+# Wersja PHP źródła: argument → manifest runtime.version → pula FPM (bez stałego 8.2).
+hm_clone_src_php_version() {
+  local src="$1" hint="${2:-}" path ver="" pool
+  ver="${hint}"
+  [[ "${ver}" == "?" || "${ver}" == "*" ]] && ver=""
+  if [[ -z "${ver}" ]]; then
+    if declare -F hm_site_manifest_path >/dev/null 2>&1; then
+      path="$(hm_site_manifest_path "${src}" 2>/dev/null || true)"
+    fi
+    [[ -z "${path}" ]] && path="/etc/hmtools/sites/${src}.json"
+    if [[ -f "${path}" ]]; then
+      if declare -F hm_site_runtime_version >/dev/null 2>&1; then
+        ver="$(hm_site_runtime_version "${path}" 2>/dev/null || true)"
+      fi
+      [[ -n "${ver}" ]] || ver="$(sed -n 's/.*"type":"php","version":"\([^"]*\)".*/\1/p' "${path}" | head -1)"
+      [[ -n "${ver}" ]] || ver="$(sed -n 's/.*"runtime":{"type":"[^"]*","version":"\([^"]*\)".*/\1/p' "${path}" | head -1)"
+    fi
+  fi
+  [[ "${ver}" == "?" || "${ver}" == "*" ]] && ver=""
+  if [[ -z "${ver}" ]]; then
+    for pool in /etc/php/*/fpm/pool.d/"${src}".conf; do
+      [[ -f "${pool}" ]] || continue
+      if [[ "${pool}" =~ /php/([0-9]+\.[0-9]+)/ ]]; then
+        ver="${BASH_REMATCH[1]}"
+        break
+      fi
+    done
+  fi
+  printf '%s' "${ver}"
+}
+
 hm_clone_ensure_target_site() {
   local src="$1" dst="$2" php_ver="${3:-}"
   local ws runtime=""
@@ -411,7 +442,7 @@ hm_clone_ensure_target_site() {
     hm_info "Cel ${dst} już istnieje — używam."
     return 0
   fi
-  [[ -n "${php_ver}" && "${php_ver}" != "?" ]] || php_ver="8.2"
+  php_ver="$(hm_clone_src_php_version "${src}" "${php_ver}")"
   ws="$(hm_clone_src_webserver "${src}")"
   case "${ws}" in
     nginx|apache)
@@ -421,8 +452,13 @@ hm_clone_ensure_target_site() {
       fi
       runtime="$(hm_clone_src_runtime "${src}")"
       [[ -n "${runtime}" ]] || runtime="php"
-      hm_info "Tworzę stronę docelową ${dst} (site new, ${ws}, ${runtime}, php ${php_ver})…"
-      args=("${dst}" --runtime "${runtime}" --webserver "${ws}" --db none --php "${php_ver}" --yes)
+      args=("${dst}" --runtime "${runtime}" --webserver "${ws}" --db none --yes)
+      if [[ -n "${php_ver}" ]]; then
+        hm_info "Tworzę stronę docelową ${dst} (site new, ${ws}, ${runtime}, php ${php_ver})…"
+        args+=(--php "${php_ver}")
+      else
+        hm_info "Tworzę stronę docelową ${dst} (site new, ${ws}, ${runtime}, bez --php)…"
+      fi
       if hm_clone_is_staging_name "${src}" "${dst}"; then
         args+=(--child-of "${src}")
       fi
@@ -433,6 +469,8 @@ hm_clone_ensure_target_site() {
         hm_err "Brak site create — utwórz najpierw domenę ${dst}."
         return 1
       fi
+      # OLS/CyberPanel wymaga --php; bez źródła zostaje historyczne 8.2
+      [[ -n "${php_ver}" ]] || php_ver="8.2"
       hm_info "Tworzę stronę docelową ${dst} (site create / OLS, php ${php_ver})…"
       if hm_clone_is_staging_name "${src}" "${dst}"; then
         cmd_site_create "${dst}" --child-of "${src}" --php "${php_ver}" --yes || return 1

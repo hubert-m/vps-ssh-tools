@@ -6,17 +6,36 @@ hm_backup_local_root() {
   printf '%s' "${BACKUP_LOCAL_ROOT:-/backup/hmtools}"
 }
 
+# Znormalizuj ścieżkę lokalną do porównania (local:/… → /…, bez końcowego /).
+hm_backup_local_norm_path() {
+  local p="${1:-}"
+  if declare -F hm_backup_spec_normalize >/dev/null 2>&1; then
+    p="$(hm_backup_spec_normalize "${p}")"
+  elif [[ "${p}" == local:/* ]]; then
+    p="${p#local:}"
+  fi
+  p="${p%/}"
+  if command -v realpath >/dev/null 2>&1; then
+    p="$(realpath -m "${p}" 2>/dev/null || printf '%s' "${p}")"
+  fi
+  printf '%s' "${p}"
+}
+
 # Ostrzeżenie gdy lokalny root pokrywa się ze ścieżką rclone (ta sama przestrzeń).
 hm_backup_local_warn_remote_overlap() {
-  local root remote
-  root="$(hm_backup_local_root)"
+  local root remote rr
+  root="$(hm_backup_local_norm_path "$(hm_backup_local_root)")"
   remote="${RCLONE_REMOTE:-}"
   [[ -n "${remote}" ]] || return 0
-  # lokalny rclone: ścieżka absolutna
-  if [[ "${remote}" == /* ]]; then
-    if [[ "${root}" == "${remote}" || "${root}" == "${remote}/"* || "${remote}" == "${root}/"* ]]; then
-      hm_warn "BACKUP_LOCAL_ROOT (${root}) pokrywa się z RCLONE_REMOTE (${remote}) — rotacja local może dotyczyć tych samych snapshotów co Drive."
-    fi
+  if declare -F hm_backup_spec_is_local >/dev/null 2>&1; then
+    hm_backup_spec_is_local "${remote}" || return 0
+  else
+    [[ "${remote}" == /* || "${remote}" == local:/* || "${remote}" == local: ]] || return 0
+  fi
+  rr="$(hm_backup_local_norm_path "${remote}")"
+  [[ -n "${root}" && -n "${rr}" ]] || return 0
+  if [[ "${root}" == "${rr}" || "${root}" == "${rr}/"* || "${rr}" == "${root}/"* ]]; then
+    hm_warn "BACKUP_LOCAL_ROOT (${root}) pokrywa się z RCLONE_REMOTE (${remote}) — rotacja local może dotyczyć tych samych snapshotów co Drive."
   fi
 }
 
@@ -174,16 +193,20 @@ hm_backup_local_prune_domain() {
 }
 
 hm_backup_local_site() {
-  local domain="${1:-${HM_SITE_DOMAIN}}"
-  local keep=3
-  shift || true
+  local domain="${HM_SITE_DOMAIN:-}"
+  local keep=3 yes=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --keep) keep="${2:-3}"; shift 2 || true ;;
       --keep=*) keep="${1#*=}"; shift ;;
+      --yes|-y) yes=1; shift ;;
       --help|-h)
-        echo "Użycie: backup local <domena> [--keep N]  (domyślnie keep=3)"
+        echo "Użycie: backup local <domena> [--keep N] [--yes]  (domyślnie keep=3)"
         return 0
+        ;;
+      -*)
+        hm_err "Nieznana flaga: $1"
+        return 1
         ;;
       *)
         if hm_is_valid_domain "$1" 2>/dev/null || [[ "$1" =~ ^[0-9]+$ ]]; then
@@ -195,7 +218,7 @@ hm_backup_local_site() {
     esac
   done
 
-  [[ -n "${domain}" ]] || { hm_err "Użycie: backup local <domena> [--keep N]"; return 1; }
+  [[ -n "${domain}" ]] || { hm_err "Użycie: backup local <domena> [--keep N] [--yes]"; return 1; }
   if [[ -z "${HM_SITE_DOMAIN}" || "${HM_SITE_DOMAIN}" != "${domain}" ]]; then
     domain="$(hm_find_site_by_arg "${domain}")" || return 1
   fi
@@ -207,11 +230,14 @@ hm_backup_local_site() {
   local root saved
   root="$(hm_backup_local_root)"
   hm_backup_local_warn_remote_overlap
+  local -a conf_args=()
+  [[ "${yes}" -eq 1 ]] && conf_args+=(--yes)
   if ! hm_confirm_plan "backup local — ${domain}" \
     "Szybka kopia lokalna (format jak Drive → backup restore)." \
     "Root: ${root}/${domain}/<stamp>/" \
     "Kontrola wolnego miejsca (MIN_FREE_PERCENT)" \
-    "Retencja: ${keep} najnowszych kompletnych (type=archive chronione; uszkodzone poza limitem)"; then
+    "Retencja: ${keep} najnowszych kompletnych (type=archive chronione; uszkodzone poza limitem)" \
+    "${conf_args[@]+"${conf_args[@]}"}"; then
     return 0
   fi
 

@@ -69,6 +69,18 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: restore `--overwrite-files` — `rsync --filter=P` dla BACKUP_EXCLUDES; pre-restore ze slugiem + rotacja/miejsce; test-restore-atomic
 - Fix: archive/restore nginx — `php=?` → skan puli + reload `phpX.Y-fpm` (bez fake OK); discovery FPM; test-archive-restore-nginx
 - Fix: archive verify — SHA256SUMS + gzip/tar dla webserver/php-fpm/meta/ssl oraz db-accounts/unix-account/crontab/keys; test-archive-verify-integrity
+- Fix: clone — PHP celu z manifestu/puli FPM (nie stałe 8.2 przy `HM_SITE_PHP=?`); bez `--php` gdy brak wersji; test-clone-staging
+- Fix: site new — `hm_site_php_default_version` też security (stock 8.3/8.2); brak wersji ⇒ odmowa przed planem; test-site-wizard-php
+- Fix: mail delete — hollow stub z plikami dovecot*; rollback scala foldery IMAP/subscriptions; test-mail-accounts
+- Fix: backup verify — fabryczny `BACKUP_LOCAL_ROOT` nie zasłania lokalnego `RCLONE_REMOTE` (`HM_BACKUP_LOCAL_ROOT_EXPLICIT`); test-backup-verify
+- Fix: restore bez rsync — potok tar→tar z `hm_backup_tar_meta_opts create` (ACL/xattr/sparse); test-backup-file-fidelity
+- Fix: restore CP — dump bez LOCK TABLES; re-link FK przez placeholder (nie `src_id`); parser DB mawk-safe; test-restore-cp-ssl
+- Fix: restore/clone ownership — wnętrze `public_html`/`releases`/`shared` → `user:webgrp` (nie `user:user`); test-backup-restore-ownership
+- Fix: `bin/hmtools` — `git update-index --chmod=+x` (100755 w drzewie git)
+- Fix: backup local — `--yes`/`-y` (nie „Nie znaleziono strony: --yes”); overlap RCLONE_REMOTE także dla `local:/…`; test-backup-local-keep
+- Fix: webs/discover — PHP z manifestu `runtime.version`, potem pula FPM (Debian + Remi); `hm_parse_vhost_php` bez śmieci z nginx; test-discover-php
+- Fix: backup restore — pre-restore plików w `/var/lib/hmtools/pre-restore/<domena>/<stamp>` (0700), `BACKUP_PRE_RESTORE_KEEP`, kasuje legacy `.hm-pre-restore-*` z `/home`; `backup list` pokazuje rozmiar; test-restore-atomic
+- Fix: docker compose update — `hm_docker_health_ok` czeka na `healthy` (`starting` OK); timeout/`unhealthy`/restart → rollback; stabilność bez healthchecka; test-docker-ops
 
 ## [v0.1.15]
 

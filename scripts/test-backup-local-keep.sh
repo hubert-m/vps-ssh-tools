@@ -64,13 +64,43 @@ mkdir -p "${BASE}/${A_OK1}"
 mk_ok_tar "${BASE}/${A_OK1}/files.tar.gz"
 printf '%s\n' '{"type":"site","status":"ok"}' > "${BASE}/${A_OK1}/manifest.json"
 
-# overlap warn
+# overlap warn (ścieżka absolutna)
 warn="$(hm_backup_local_warn_remote_overlap 2>&1 || true)"
 if printf '%s' "${warn}" | grep -qi 'pokrywa'; then
   pass "(0) ostrzeżenie overlap BACKUP_LOCAL_ROOT/RCLONE_REMOTE"
 else
   fail "(0) brak ostrzeżenia overlap: ${warn}"
 fi
+# forma local:/… + końcowy /
+export RCLONE_REMOTE="local:${TMP}/remote/"
+warn="$(hm_backup_local_warn_remote_overlap 2>&1 || true)"
+if printf '%s' "${warn}" | grep -qi 'pokrywa'; then
+  pass "(0b) ostrzeżenie overlap local:/…"
+else
+  fail "(0b) brak ostrzeżenia local:/…: ${warn}"
+fi
+export RCLONE_REMOTE="${TMP}/remote"
+
+# --yes w parserze (nie „Nie znaleziono strony: --yes”)
+hm_find_site_by_arg() { printf '%s' "$1"; }
+hm_is_valid_domain() { [[ "$1" == *.* ]]; }
+hm_load_config() { :; }
+hm_confirm_plan() {
+  local a
+  for a in "$@"; do [[ "$a" == "--yes" ]] && return 0; done
+  echo "confirm-missing-yes" >&2
+  return 1
+}
+hm_backup_acquire_lock() { return 0; }
+hm_backup_release_lock() { :; }
+hm_backup_site() { return 0; }
+yes_err="$(hm_backup_local_site shop.example.test --keep 2 --yes 2>&1 || true)"
+if printf '%s' "${yes_err}" | grep -qiE 'Nie znaleziono strony: --yes|Nieznany argument: --yes|confirm-missing-yes'; then
+  fail "(0c) --yes źle sparsowane: ${yes_err}"
+else
+  pass "(0c) --yes rozpoznane w parserze"
+fi
+grep -qE '\-\-yes\|-y' commands/backup/local.sh && pass "(0d) --yes w local.sh" || fail "(0d) brak --yes"
 
 hm_backup_local_prune_domain "${DOMAIN}" 2
 

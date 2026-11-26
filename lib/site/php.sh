@@ -152,19 +152,45 @@ hm_site_php_print_catalog() {
 }
 
 hm_site_php_default_version() {
-  local ver kind st best=""
-  while IFS=$'\t' read -r ver kind; do
-    [[ -n "${ver}" ]] || continue
-    IFS=$'\t' read -r st _ <<<"$(hm_site_php_support_of "${ver}")"
-    [[ "${st}" == "active" ]] || continue
-    if [[ -z "${best}" ]]; then
-      best="${ver}"
-    else
-      best="$(printf '%s\n%s\n' "${best}" "${ver}" | sort -V | tail -1)"
+  # Preferuj zainstalowaną active → zainstalowaną security → dowolną active → security.
+  # Stock Ubuntu/Debian ma dziś PHP w fazie security (8.3/8.2) — nie wolno zwracać pustki.
+  local ver kind st best="" pass
+  for pass in 1 2 3 4; do
+    best=""
+    while IFS=$'\t' read -r ver kind; do
+      [[ -n "${ver}" ]] || continue
+      IFS=$'\t' read -r st _ <<<"$(hm_site_php_support_of "${ver}")"
+      case "${pass}" in
+        1) [[ "${kind}" == "installed" && "${st}" == "active" ]] || continue ;;
+        2) [[ "${kind}" == "installed" && "${st}" == "security" ]] || continue ;;
+        3) [[ "${st}" == "active" ]] || continue ;;
+        4) [[ "${st}" == "security" ]] || continue ;;
+      esac
+      if [[ -z "${best}" ]]; then
+        best="${ver}"
+      else
+        best="$(printf '%s\n%s\n' "${best}" "${ver}" | sort -V | tail -1)"
+      fi
+    done < <(hm_site_php_versions)
+    if [[ -n "${best}" ]]; then
+      printf '%s' "${best}"
+      return 0
     fi
-  done < <(hm_site_php_versions)
-  [[ -n "${best}" ]] || return 1
-  printf '%s' "${best}"
+  done
+  if command -v php >/dev/null 2>&1; then
+    ver="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null || true)"
+    if [[ "${ver}" =~ ^[0-9]+\.[0-9]+$ ]]; then
+      IFS=$'\t' read -r st _ <<<"$(hm_site_php_support_of "${ver}")"
+      kind="$(hm_site_php_kind "${ver}" 2>/dev/null || true)"
+      # Tylko gdy katalog/wersje widzą tę gałąź (nie „obce” CLI poza fixturem/OS).
+      if [[ ("${st}" == "active" || "${st}" == "security") \
+          && ("${kind}" == "installed" || "${kind}" == "repo") ]]; then
+        printf '%s' "${ver}"
+        return 0
+      fi
+    fi
+  fi
+  return 1
 }
 
 hm_site_php_kind() {

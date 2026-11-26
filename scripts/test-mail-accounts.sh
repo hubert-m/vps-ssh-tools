@@ -427,6 +427,65 @@ else
   fail=1
 fi
 
+# CP fail + stub Dovecota (uidlist/index) → hollow; foldery IMAP wracają
+rm -rf -- "${md}" "${TRASH_ROOT}"
+mkdir -p "${md}/cur" "${md}/new" "${md}/tmp" "${md}/.Sent/cur" "${md}/.Drafts/cur"
+printf 'msg-inbox\n' > "${md}/cur/1.mail"
+printf 'msg-new\n' > "${md}/new/2.mail"
+printf 'msg-sent\n' > "${md}/.Sent/cur/3.sent"
+printf 'msg-dr\n' > "${md}/.Drafts/cur/4.dr"
+printf 'Sent\nDrafts\n' > "${md}/subscriptions"
+hm_run() {
+  printf '%s\n' "$*" >> "${RUN_LOG}"
+  if [[ "$*" == *deleteEmail* ]]; then
+    mkdir -p "${md}/cur" "${md}/new" "${md}/tmp"
+    : > "${md}/dovecot-uidlist"
+    : > "${md}/dovecot.index.log"
+    return 1
+  fi
+  return 0
+}
+: > "${RUN_LOG}"
+if hm_mail_account_delete biuro --yes >/dev/null 2>&1; then
+  echo "FAIL delete-dovecot-stub-should-rc"
+  fail=1
+elif [[ -f "${md}/cur/1.mail" && -f "${md}/new/2.mail" \
+    && -f "${md}/.Sent/cur/3.sent" && -f "${md}/.Drafts/cur/4.dr" \
+    && -f "${md}/subscriptions" \
+    && -z "$(find "${TRASH_ROOT}" -type f 2>/dev/null | head -1 || true)" ]]; then
+  echo "OK   delete-dovecot-stub-imap-restored"
+else
+  echo "FAIL delete-dovecot-stub-imap-restored (md=$(ls -laR "${md}" 2>/dev/null | head -50))"
+  fail=1
+fi
+
+# CP fail + nowa wiadomość w stubie → merge: IMAP wraca, nowa zostaje; konflikt ⇒ trash
+rm -rf -- "${md}" "${TRASH_ROOT}"
+mkdir -p "${md}/cur" "${md}/new" "${md}/tmp" "${md}/.Sent/cur"
+printf 'old-inbox\n' > "${md}/cur/1.mail"
+printf 'old-sent\n' > "${md}/.Sent/cur/3.sent"
+printf 'Sent\n' > "${md}/subscriptions"
+hm_run() {
+  printf '%s\n' "$*" >> "${RUN_LOG}"
+  if [[ "$*" == *deleteEmail* ]]; then
+    mkdir -p "${md}/cur" "${md}/new" "${md}/tmp"
+    printf 'fresh\n' > "${md}/new/999.new"
+    return 1
+  fi
+  return 0
+}
+: > "${RUN_LOG}"
+if hm_mail_account_delete biuro --yes >/dev/null 2>&1; then
+  echo "FAIL delete-merge-newmail-should-rc"
+  fail=1
+elif [[ -f "${md}/cur/1.mail" && -f "${md}/.Sent/cur/3.sent" \
+    && -f "${md}/subscriptions" && -f "${md}/new/999.new" ]]; then
+  echo "OK   delete-merge-newmail-imap"
+else
+  echo "FAIL delete-merge-newmail-imap (md=$(ls -laR "${md}" 2>/dev/null | head -50))"
+  fail=1
+fi
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED=${fail}"
   exit 1

@@ -75,8 +75,24 @@ if [[ "${cmd}" == "inspect" ]]; then
     echo 'sha256:aaa'
   elif [[ "${fmt}" == *State.Status* ]]; then
     echo 'running'
+  elif [[ "${fmt}" == *State.Restarting* ]]; then
+    echo 'false'
+  elif [[ "${fmt}" == *RestartCount* ]]; then
+    echo '0'
   elif [[ "${fmt}" == *Health.Status* ]] || [[ "${fmt}" == *State.Health* ]]; then
-    echo 'healthy'
+    if [[ -n "${HM_DOCKER_HEALTH_SEQ:-}" ]]; then
+      # sekwencja: starting,starting,healthy — plik licznika
+      _seqfile="${HM_DOCKER_HEALTH_SEQ_FILE:-${HM_DOCKER_LOG}.healthseq}"
+      _n=0
+      [[ -f "${_seqfile}" ]] && _n="$(cat "${_seqfile}" 2>/dev/null || echo 0)"
+      _n=$((_n + 1))
+      printf '%s' "${_n}" > "${_seqfile}"
+      _line="$(printf '%s' "${HM_DOCKER_HEALTH_SEQ}" | cut -d, -f"${_n}")"
+      [[ -n "${_line}" ]] || _line="$(printf '%s' "${HM_DOCKER_HEALTH_SEQ}" | awk -F, '{print $NF}')"
+      echo "${_line}"
+    else
+      echo 'healthy'
+    fi
   elif [[ "${fmt}" == *RestartPolicy* ]]; then
     if [[ "${target}" == "cid1" ]]; then echo 'no'; else echo 'unless-stopped'; fi
   elif [[ "${fmt}" == *Healthcheck* ]]; then
@@ -231,5 +247,37 @@ export HM_DOCKER_NEWER='nginx:1.25=nginx:1.26'
 upd2="$(cmd_docker updates)"
 printf '%s\n' "${upd2}" | grep -q 'nginx:1.25 -> nginx:1.26' && ok updates-live || bad updates-live
 grep -qE '(^| )pull( |$)' "${HM_DOCKER_LOG}" && bad updates-live-pull || ok updates-live-nopull
+
+# health: starting → healthy (bez rollbacku)
+unset HM_DOCKER_HEALTH
+export HM_DOCKER_HEALTH_TIMEOUT=10
+export HM_DOCKER_HEALTH_INTERVAL=1
+export HM_DOCKER_NOHEALTH_STABLE=0
+export HM_DOCKER_HEALTH_SEQ='starting,starting,healthy'
+export HM_DOCKER_HEALTH_SEQ_FILE="${root}/health.seq"
+: > "${HM_DOCKER_HEALTH_SEQ_FILE}"
+: > "${HM_DOCKER_LOG}"
+if cmd_docker compose update app_staging >"${root}/health-ok.out" 2>"${root}/health-ok.err"; then
+  grep -E 'force-recreate|Przywracam' "${HM_DOCKER_LOG}" "${root}/health-ok.out" "${root}/health-ok.err" >/dev/null 2>&1 \
+    && bad health-wait-ok-rollback || ok health-wait-starting-then-healthy
+else
+  bad health-wait-starting-then-healthy
+  cat "${root}/health-ok.err" || true
+fi
+
+# health: starting aż do timeoutu → rollback
+export HM_DOCKER_HEALTH_TIMEOUT=3
+export HM_DOCKER_HEALTH_INTERVAL=1
+export HM_DOCKER_HEALTH_SEQ='starting,starting,starting,starting,starting,starting'
+: > "${HM_DOCKER_HEALTH_SEQ_FILE}"
+: > "${HM_DOCKER_LOG}"
+if cmd_docker compose update app_staging >"${root}/health-to.out" 2>"${root}/health-to.err"; then
+  bad health-wait-timeout-rc
+else
+  ok health-wait-timeout-rc
+fi
+grep -E 'force-recreate' "${HM_DOCKER_LOG}" >/dev/null && ok health-wait-timeout-rollback || bad health-wait-timeout-rollback
+unset HM_DOCKER_HEALTH_SEQ HM_DOCKER_HEALTH_SEQ_FILE
+export HM_DOCKER_HEALTH=ok
 
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

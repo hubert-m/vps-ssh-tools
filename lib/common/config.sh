@@ -2,10 +2,14 @@
 # Common: ładowanie hmtools.conf
 
 hm_load_config() {
+  # Czy BACKUP_LOCAL_ROOT był już w env (przed defaultami) — verify preferuje wtedy jawny root.
+  local _blr_env_set=0
+  [[ -n "${BACKUP_LOCAL_ROOT+x}" ]] && _blr_env_set=1
+
   # Domyślne wartości
   RCLONE_REMOTE="${RCLONE_REMOTE:-gdrive:vps-backups}"
   BACKUP_TARGETS="${BACKUP_TARGETS:-}"
-  BACKUP_LOCAL_ROOT="${BACKUP_LOCAL_ROOT:-/backup/hmtools}"
+  # BACKUP_LOCAL_ROOT: default dopiero po conf (żeby odróżnić „nie ustawiono” od jawnego)
   RESTIC_PASSWORD_FILE="${RESTIC_PASSWORD_FILE:-/root/.config/hmtools/restic.pass}"
   MIN_FREE_PERCENT="${MIN_FREE_PERCENT:-5}"
   CHUNK_SIZE_MB="${CHUNK_SIZE_MB:-512}"
@@ -19,6 +23,9 @@ hm_load_config() {
   BACKUP_HOST_LABEL="${BACKUP_HOST_LABEL:-}"
   BACKUP_KEEP_DAYS="${BACKUP_KEEP_DAYS:-14}"
   BACKUP_KEEP_MIN="${BACKUP_KEEP_MIN:-3}"
+  # Kopie bezpieczeństwa plików przed restore (nie w /home)
+  BACKUP_PRE_RESTORE_KEEP="${BACKUP_PRE_RESTORE_KEEP:-1}"
+  BACKUP_PRE_RESTORE_FILES_DIR="${BACKUP_PRE_RESTORE_FILES_DIR:-/var/lib/hmtools/pre-restore}"
   # Niepełne snapshoty (bez manifestu) młodsze niż N godzin — NIE kasuj (prune vs trwający backup)
   BACKUP_ORPHAN_GRACE_HOURS="${BACKUP_ORPHAN_GRACE_HOURS:-24}"
   # Opcjonalnie: passphrase openssl (AES-256-CBC) dla db-accounts.sql / unix-account.meta / system-configs
@@ -45,6 +52,15 @@ hm_load_config() {
     # shellcheck disable=SC1090
     source "${HMTOOLS_CONF}"
   fi
+
+  if [[ -n "${BACKUP_LOCAL_ROOT:-}" ]]; then
+    HM_BACKUP_LOCAL_ROOT_EXPLICIT=1
+  else
+    BACKUP_LOCAL_ROOT="/backup/hmtools"
+    HM_BACKUP_LOCAL_ROOT_EXPLICIT=0
+  fi
+  [[ "${_blr_env_set}" -eq 1 ]] && HM_BACKUP_LOCAL_ROOT_EXPLICIT=1
+  export HM_BACKUP_LOCAL_ROOT_EXPLICIT
 
   if [[ -z "${BACKUP_HOST_LABEL}" ]]; then
     BACKUP_HOST_LABEL="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo server)"

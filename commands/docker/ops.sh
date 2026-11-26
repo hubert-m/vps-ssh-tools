@@ -114,28 +114,79 @@ hm_docker_save_digests() {
   return 0
 }
 
+# Czeka aż kontenery projektu będą healthy (albo stabilne running bez healthchecka).
+# starting ≠ fail; unhealthy / exited / restarting / timeout → błąd.
 hm_docker_health_ok() {
-  local project="$1" id st health url code
-  # flaga testowa ma pierwszeństwo
+  local project="$1"
+  local id st health rest rstcnt url code
+  local timeout interval stable_need end all_ok
+  local -A nohc_since=() nohc_restarts=()
+
+  # flaga testowa ma pierwszeństwo (bez pętli)
   if [[ -n "${HM_DOCKER_HEALTH:-}" ]]; then
     [[ "${HM_DOCKER_HEALTH}" == "ok" ]]
     return $?
   fi
-  while IFS= read -r id; do
-    [[ -n "${id}" ]] || continue
-    st="$("${DOCKER_BIN}" inspect -f '{{.State.Status}}' "${id}" 2>/dev/null || true)"
-    [[ "${st}" == "running" ]] || return 1
-    health="$("${DOCKER_BIN}" inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "${id}" 2>/dev/null || true)"
-    if [[ -n "${health}" && "${health}" != "healthy" ]]; then
-      return 1
+
+  timeout="${HM_DOCKER_HEALTH_TIMEOUT:-60}"
+  interval="${HM_DOCKER_HEALTH_INTERVAL:-2}"
+  stable_need="${HM_DOCKER_NOHEALTH_STABLE:-10}"
+  [[ "${timeout}" =~ ^[0-9]+$ ]] || timeout=60
+  [[ "${interval}" =~ ^[0-9]+$ ]] || interval=2
+  [[ "${stable_need}" =~ ^[0-9]+$ ]] || stable_need=10
+  (( interval < 1 )) && interval=1
+  end=$((SECONDS + timeout))
+
+  while (( SECONDS <= end )); do
+    all_ok=1
+    while IFS= read -r id; do
+      [[ -n "${id}" ]] || continue
+      st="$("${DOCKER_BIN}" inspect -f '{{.State.Status}}' "${id}" 2>/dev/null || true)"
+      rest="$("${DOCKER_BIN}" inspect -f '{{.State.Restarting}}' "${id}" 2>/dev/null || true)"
+      rstcnt="$("${DOCKER_BIN}" inspect -f '{{.RestartCount}}' "${id}" 2>/dev/null || true)"
+      [[ "${rstcnt}" =~ ^[0-9]+$ ]] || rstcnt=0
+      health="$("${DOCKER_BIN}" inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "${id}" 2>/dev/null || true)"
+
+      if [[ "${rest}" == "true" || "${st}" == "restarting" ]]; then
+        return 1
+      fi
+      case "${st}" in
+        running) ;;
+        *) return 1 ;;
+      esac
+
+      if [[ -n "${health}" ]]; then
+        case "${health}" in
+          healthy) ;;
+          unhealthy) return 1 ;;
+          *) all_ok=0 ;; # starting / inne — czekaj
+        esac
+      else
+        # bez healthchecka: krótkie okno stabilnego running bez wzrostu RestartCount
+        if [[ -z "${nohc_since[${id}]+x}" ]]; then
+          nohc_since["${id}"]="${SECONDS}"
+          nohc_restarts["${id}"]="${rstcnt}"
+          all_ok=0
+        elif [[ "${nohc_restarts[${id}]}" != "${rstcnt}" ]]; then
+          return 1
+        elif (( SECONDS - nohc_since["${id}"] < stable_need )); then
+          all_ok=0
+        fi
+      fi
+    done < <("${DOCKER_BIN}" ps -aq --filter "label=com.docker.compose.project=${project}" 2>/dev/null)
+
+    if [[ "${all_ok}" -eq 1 ]]; then
+      url="${HM_DOCKER_HEALTH_URL:-}"
+      if [[ -n "${url}" ]]; then
+        code="$("${HM_CF_CURL:-curl}" -fsS -o /dev/null -w '%{http_code}' --max-time 5 -- "${url}" 2>/dev/null || true)"
+        [[ "${code}" =~ ^2[0-9][0-9]$ ]] || return 1
+      fi
+      return 0
     fi
-  done < <("${DOCKER_BIN}" ps -aq --filter "label=com.docker.compose.project=${project}" 2>/dev/null)
-  url="${HM_DOCKER_HEALTH_URL:-}"
-  if [[ -n "${url}" ]]; then
-    code="$("${HM_CF_CURL:-curl}" -fsS -o /dev/null -w '%{http_code}' --max-time 5 -- "${url}" 2>/dev/null || true)"
-    [[ "${code}" =~ ^2[0-9][0-9]$ ]] || return 1
-  fi
-  return 0
+    (( SECONDS + interval > end )) && break
+    sleep "${interval}"
+  done
+  return 1
 }
 
 hm_docker_rollback_digests() {

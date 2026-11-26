@@ -55,14 +55,22 @@ hm_backup_drill_history() {
   printf '%s\n' "${line}" >> "${file}"
 }
 
-# Root lokalnych snapshotów: jawny BACKUP_LOCAL_ROOT, inaczej lokalny RCLONE_REMOTE, inaczej /backup/hmtools.
+# Root lokalnych snapshotów.
+# hm_load_config zawsze ustawia BACKUP_LOCAL_ROOT=/backup/hmtools — gdy to tylko default
+# (HM_BACKUP_LOCAL_ROOT_EXPLICIT≠1), a RCLONE_REMOTE to ścieżka lokalna, użyj RCLONE_REMOTE
+# (domyślna konfiguracja VPS: RCLONE_REMOTE=/backup/remote).
 hm_backup_verify_local_root() {
-  if [[ -n "${BACKUP_LOCAL_ROOT:-}" ]]; then
-    printf '%s' "${BACKUP_LOCAL_ROOT}"
+  local rr="${RCLONE_REMOTE:-}" blr="${BACKUP_LOCAL_ROOT:-}"
+  if [[ "${rr}" == /* && "${HM_BACKUP_LOCAL_ROOT_EXPLICIT:-0}" != "1" ]]; then
+    printf '%s' "${rr}"
     return 0
   fi
-  if [[ "${RCLONE_REMOTE:-}" == /* ]]; then
-    printf '%s' "${RCLONE_REMOTE}"
+  if [[ -n "${blr}" ]]; then
+    printf '%s' "${blr}"
+    return 0
+  fi
+  if [[ "${rr}" == /* ]]; then
+    printf '%s' "${rr}"
     return 0
   fi
   printf '%s' "/backup/hmtools"

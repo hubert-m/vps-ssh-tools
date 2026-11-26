@@ -124,6 +124,48 @@ echo "${ch_line}" | grep -qE "VALUES \('[^']+',[0-9]+\), \('[^']+',[0-9]+\)" \
 [[ "$(declare -f hm_backup_restore_ssl | grep -c 'skip_live.*-eq 1')" -ge 1 ]] \
   && ok "ssl-skip-live-eq1" || bad "ssl-skip-live-eq1"
 
+# Dump/import bez LOCK TABLES; re-link po placeholderze, nie po src_id
+grep -q 'skip-add-locks' commands/backup/archive.sh && ok "cp-dump-skip-locks" || bad "cp-dump-skip-locks"
+if declare -f hm_backup_restore_cyberpanel_site | grep -q 'fk_ph=2147483000' \
+  && declare -f hm_backup_restore_cyberpanel_site | grep -q 'hm_backup_cp_sql_remap_fk_ids' \
+  && ! declare -f hm_backup_restore_cyberpanel_site | grep -qE 'WHERE master_id=\$\{src_id\}'; then
+  ok "cp-relink-placeholder"
+else
+  bad "cp-relink-placeholder"
+fi
+LOCKSQL="${TMP}/cp-lock.sql"
+cat > "${LOCKSQL}" <<'EOF'
+-- source id=5
+LOCK TABLES `websiteFunctions_websites` WRITE;
+INSERT INTO `websiteFunctions_websites` (`domain`) VALUES ('ex.test');
+UNLOCK TABLES;
+INSERT INTO `databases_databases` (`dbName`,`website_id`) VALUES ('ex_old',5);
+EOF
+grep -Ev '^(LOCK TABLES|UNLOCK TABLES)' "${LOCKSQL}" > "${LOCKSQL}.out"
+! grep -qE '^(LOCK TABLES|UNLOCK TABLES)' "${LOCKSQL}.out" \
+  && grep -q 'ex_old' "${LOCKSQL}.out" && ok "cp-filter-locks" || bad "cp-filter-locks"
+
+# Remap FK src→placeholder
+REMAP_IN="${TMP}/remap-in.sql"
+REMAP_OUT="${TMP}/remap-out.sql"
+cat > "${REMAP_IN}" <<'EOF'
+INSERT INTO `websiteFunctions_childdomains` (`domain`,`master_id`) VALUES ('b.ex.test',5);
+INSERT INTO `databases_databases` (`dbName`,`website_id`) VALUES ('ex_b',5);
+EOF
+if hm_backup_cp_sql_remap_fk_ids "${REMAP_IN}" "${REMAP_OUT}" 5 2147483000 \
+  && grep -q '2147483000' "${REMAP_OUT}" && ! grep -qE ',5\)' "${REMAP_OUT}"; then
+  ok "cp-remap-fk"
+else
+  bad "cp-remap-fk $(cat "${REMAP_OUT}" 2>/dev/null || true)"
+fi
+
+# mawk-portable: bez {2,64} w hm_backup_cp_snap_db_names
+if declare -f hm_backup_cp_snap_db_names | grep -q '{2,64}'; then
+  bad "cp-snap-db-mawk-quant"
+else
+  ok "cp-snap-db-mawk-quant"
+fi
+
 if [[ "${fail}" -ne 0 ]]; then
   echo FAILED
   exit 1

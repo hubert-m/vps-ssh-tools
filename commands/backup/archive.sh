@@ -790,19 +790,25 @@ hm_archive_export_cyberpanel_sql() {
   {
     echo "-- hmtools archive: CyberPanel rows for ${domain} (source id=${id}; id stripped for restore)"
     echo "USE \`cyberpanel\`;"
-    # --skip-extended-insert: jedna krotka / INSERT (strip id + parsowanie restore)
+    # --skip-extended-insert / --skip-add-locks: jedna krotka / INSERT; bez LOCK TABLES
+    # (LOCK zatwierdzałby transakcję restore → sieroty przy błędzie importu).
     "${dumpcli}" "${sock[@]}" cyberpanel websiteFunctions_websites \
       --where="id=${id}" --no-create-info --complete-insert --skip-extended-insert \
-      --skip-lock-tables --skip-comments 2>/dev/null || true
+      --skip-lock-tables --skip-add-locks --skip-comments 2>/dev/null || true
     "${dumpcli}" "${sock[@]}" cyberpanel websiteFunctions_childdomains \
       --where="master_id=${id}" --no-create-info --complete-insert --skip-extended-insert \
-      --skip-lock-tables --skip-comments 2>/dev/null || true
+      --skip-lock-tables --skip-add-locks --skip-comments 2>/dev/null || true
     "${dumpcli}" "${sock[@]}" cyberpanel databases_databases \
       --where="website_id=${id}" --no-create-info --complete-insert --skip-extended-insert \
-      --skip-lock-tables --skip-comments 2>/dev/null || true
+      --skip-lock-tables --skip-add-locks --skip-comments 2>/dev/null || true
   } > "${out_sql}"
   [[ -s "${out_sql}" ]] || return 1
   hm_archive_cp_sql_strip_explicit_ids "${out_sql}" || true
+  # Stare snapshoty / mysqldump bez skip-add-locks
+  if grep -qE '^(LOCK TABLES|UNLOCK TABLES)' "${out_sql}" 2>/dev/null; then
+    grep -Ev '^(LOCK TABLES|UNLOCK TABLES)' "${out_sql}" > "${out_sql}.nolock" \
+      && mv -f "${out_sql}.nolock" "${out_sql}"
+  fi
   [[ -s "${out_sql}" ]]
 }
 

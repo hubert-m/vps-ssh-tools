@@ -263,4 +263,19 @@ hm_backup_list() {
   hm_table_print
   echo
   hm_ok "Znaleziono ${count} snapshot(ów)."
+
+  # Kopie bezpieczeństwa plików sprzed restore (poza remote)
+  if [[ "${target}" != "full" ]] && declare -F hm_backup_pre_restore_files_root >/dev/null 2>&1; then
+    local pre_root pre_dir sz n_pre
+    pre_root="$(hm_backup_pre_restore_files_root)"
+    pre_dir="${pre_root}/${target}"
+    if [[ -d "${pre_dir}" ]]; then
+      n_pre="$(find "${pre_dir}" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+      sz="$(du -sh "${pre_dir}" 2>/dev/null | awk '{print $1}')"
+      if [[ "${n_pre}" -gt 0 ]]; then
+        echo
+        hm_info "Pre-restore (lokalnie): ${n_pre} kopi(i), ${sz:-?} w ${pre_dir} (BACKUP_PRE_RESTORE_KEEP=${BACKUP_PRE_RESTORE_KEEP:-1}; sprzątanie: rm -rf ${pre_dir}/<stamp>)."
+      fi
+    fi
+  fi
 }
