@@ -224,6 +224,17 @@ hm_resolve_site_paths() {
 
   # Normalizacja PHP (PHP 8.2 -> 8.2)
   php="$(echo "${php}" | sed -E 's/.*PHP[[:space:]]*//; s/lsphp//; s/^([0-9])([0-9])$/\1.\2/')"
+  # nginx/apache: wersja z puli FPM (OLS externalApp bywa puste → placeholder "?")
+  if [[ -z "${php}" || "${php}" == "?" ]]; then
+    local _pp
+    for _pp in /etc/php/*/fpm/pool.d/"${domain}".conf; do
+      [[ -f "${_pp}" ]] || continue
+      if [[ "${_pp}" =~ /php/([0-9]+\.[0-9]+)/ ]]; then
+        php="${BASH_REMATCH[1]}"
+        break
+      fi
+    done
+  fi
   [[ -n "${php}" ]] || php="?"
 
   # user w rest: też "-" gdy pusty (spójne z display ${user:--})

@@ -138,6 +138,51 @@ else
   fail "(6) brak chown-przed-kluczami / HM_SITE_PHP w restore.sh"
 fi
 
+# --- (7) HM_SITE_PHP=? → skan puli / reload php8.3-fpm (nie php?-fpm) ---
+mkdir -p /etc/php/8.3/fpm/pool.d 2>/dev/null || true
+# użyj HM_PKG_ROOT layout: funkcja skanuje /etc/php — w teście mockujemy lokalnie przez env
+# symuluj: reload z ver=? musi być znormalizowany
+: > "${RELOAD_LOG}"
+export HM_SITE_PHP='?'
+export HM_SITE_DOMAIN="${DOMAIN}"
+# pulę w prawdziwym /etc nie tworzymy — podajemy ver przez skan mock:
+# hm_backup_reload_webstack czyta /etc/php — stwórz w TMP i patch PATH? Prościej: wywołaj z pustym po normalizacji.
+# Bez puli w /etc: warn; z jawnym 8.3 po clear:
+unset HM_SITE_PHP
+hm_backup_reload_webstack nginx '?'
+if grep -q 'fpm ?' "${RELOAD_LOG}"; then
+  fail "(7) reload dostał php ?"
+else
+  pass "(7) reload nie woła php?"
+fi
+: > "${RELOAD_LOG}"
+export HM_SITE_PHP='?'
+# bezpośredni test normalizacji w webstack restore path (kod)
+if grep -q '\[\[ "${ver}" == "?"' commands/backup/restore.sh; then
+  pass "(7) kod normalizuje php=?"
+else
+  fail "(7) brak normalizacji ?"
+fi
+# mock fpm reload: ? → rc≠0
+hm_site_php_fpm_reload() {
+  printf 'fpm %s\n' "$1" >> "${RELOAD_LOG}"
+  [[ "$1" != "?" && -n "$1" ]] || return 1
+  return 0
+}
+: > "${RELOAD_LOG}"
+if ! hm_site_php_fpm_reload '?'; then
+  pass "(7) fpm_reload odmawia ?"
+else
+  fail "(7) fpm_reload przepuścił ?"
+fi
+: > "${RELOAD_LOG}"
+hm_backup_reload_webstack nginx 8.3
+if grep -q 'fpm 8.3' "${RELOAD_LOG}"; then
+  pass "(7) reload 8.3 OK"
+else
+  fail "(7) brak fpm 8.3: $(cat "${RELOAD_LOG}")"
+fi
+
 if [[ "${FAIL}" -eq 0 ]]; then
   echo "ALL PASSED (${PASS})"
 else

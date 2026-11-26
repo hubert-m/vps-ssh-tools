@@ -332,17 +332,26 @@ EOF
 
 hm_site_php_fpm_reload() {
   local ver="$1" unit
+  [[ -n "${ver}" && "${ver}" != "?" && "${ver}" != "*" ]] || return 1
   unit="php${ver}-fpm"
   if [[ "${HM_SITE_PHP_MOCK:-}" == "1" ]]; then
     [[ -n "${HM_SITE_PHP_LOG:-}" ]] && printf 'systemctl reload %s\n' "${unit}" >> "${HM_SITE_PHP_LOG}"
     return 0
   fi
   if hm_have_cmd systemctl; then
-    systemctl reload "${unit}" 2>/dev/null \
-      || systemctl reload "php-fpm${ver}" 2>/dev/null \
-      || systemctl reload php-fpm 2>/dev/null \
-      || true
+    if systemctl reload "${unit}" 2>/dev/null; then
+      return 0
+    fi
+    if systemctl reload "php-fpm${ver}" 2>/dev/null; then
+      return 0
+    fi
+    # bez fallbacku na gołe php-fpm przy konkretnej wersji — mylący „OK”
+    return 1
   fi
+  if hm_have_cmd service; then
+    service "${unit}" reload 2>/dev/null && return 0
+  fi
+  return 1
 }
 
 hm_site_php_composer() {

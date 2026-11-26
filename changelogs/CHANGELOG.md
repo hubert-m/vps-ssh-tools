@@ -65,6 +65,10 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: site new `--runtime php` + nginx/apache bez `--php` — `php_on=1` + domyślna active (pula FPM); test-site-wizard-php
 - Fix: clone — na nginx/apache `hm_clone_ensure_target_site` → `site new` (nie OLS `site create`/lsphp); test-clone-staging
 - Fix: backup quality — `hm_backup_check_space /` (SC2120); ASCII cudzysłowy w restore (SC1111); `bin/hmtools` 100755
+- Fix: restore-full `--system` — bez pakowania `.` (mktemp 0700 nie trafia na `/`); `--no-overwrite-dir`; pre-restore `system-*.tar.gz`; test-restore-full
+- Fix: restore `--overwrite-files` — `rsync --filter=P` dla BACKUP_EXCLUDES; pre-restore ze slugiem + rotacja/miejsce; test-restore-atomic
+- Fix: archive/restore nginx — `php=?` → skan puli + reload `phpX.Y-fpm` (bez fake OK); discovery FPM; test-archive-restore-nginx
+- Fix: archive verify — SHA256SUMS + gzip/tar dla webserver/php-fpm/meta/ssl oraz db-accounts/unix-account/crontab/keys; test-archive-verify-integrity
 
 ## [v0.1.15]
 

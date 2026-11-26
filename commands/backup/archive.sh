@@ -241,7 +241,127 @@ hm_backup_verify_remote_archive() {
     fi
   done
 
+  # Artefakty poboczne (vhost/pula/meta/konta) — bez tego restore kończy się 404/502
+  if ! hm_backup_verify_side_artifacts "${remote_base}"; then
+    return 1
+  fi
+
   hm_ok "Weryfikacja kopii zakończona sukcesem (rozmiar + SHA256 + gzip/tar)."
+  return 0
+}
+
+# SHA256SUMS: dopisz/aktualizuj linię dla pliku na remote (po uploadzie).
+# $1=remote_base $2=relative_name $3=sha256hex
+hm_archive_sha256sums_put() {
+  local remote_base="$1" name="$2" sum="$3"
+  local sums_tmp blob line
+  [[ -n "${name}" && "${sum}" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
+  sums_tmp="$(hm_mktemp .sums)"
+  blob=""
+  if [[ "${remote_base}" == /* && -f "${remote_base}/SHA256SUMS" ]]; then
+    blob="$(cat "${remote_base}/SHA256SUMS" 2>/dev/null || true)"
+  elif [[ "${remote_base}" != /* ]]; then
+    blob="$(rclone cat "${remote_base}/SHA256SUMS" 2>/dev/null || true)"
+  fi
+  {
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+      [[ -n "${line}" ]] || continue
+      # pomiń starą linię dla tej samej nazwy ($2); zachowaj "(joined)"
+      [[ "${line}" == *" (joined)"* ]] && { printf '%s\n' "${line}"; continue; }
+      if [[ "$(printf '%s' "${line}" | awk '{print $2}')" == "${name}" ]]; then
+        continue
+      fi
+      printf '%s\n' "${line}"
+    done <<< "${blob}"
+    printf '%s  %s\n' "${sum}" "${name}"
+  } > "${sums_tmp}"
+  if [[ "${remote_base}" == /* ]]; then
+    mkdir -p "${remote_base}"
+    cp -f "${sums_tmp}" "${remote_base}/SHA256SUMS" || { rm -f "${sums_tmp}"; return 1; }
+  else
+    hm_rclone_copyto "${sums_tmp}" "${remote_base}/SHA256SUMS" \
+      || cat "${sums_tmp}" | hm_rclone_rcat "${remote_base}/SHA256SUMS" \
+      || { rm -f "${sums_tmp}"; return 1; }
+  fi
+  rm -f "${sums_tmp}"
+  return 0
+}
+
+# Po uploadzie lokalnego pliku: SHA256 + wpis w SHA256SUMS.
+hm_archive_register_uploaded_file() {
+  local local_file="$1" remote_base="$2" remote_name="$3"
+  local sum
+  [[ -f "${local_file}" && -n "${remote_name}" ]] || return 1
+  sum="$(hm_backup_sha256_file "${local_file}" || true)"
+  [[ -n "${sum}" ]] || return 1
+  hm_archive_sha256sums_put "${remote_base}" "${remote_name}" "${sum}" || return 1
+  printf '%s' "${sum}"
+}
+
+# Szukaj SHA w blobie SHA256SUMS (stdout=hex; rc=1 gdy brak).
+# $1=blob $2=nazwa pliku
+hm_backup_sums_lookup_in_blob() {
+  local blob="$1" needle="$2" line s p
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ -n "${line}" ]] || continue
+    [[ "${line}" == *" (joined)"* ]] && continue
+    s="$(printf '%s' "${line}" | awk '{print $1}')"
+    p="$(printf '%s' "${line}" | awk '{print $2}')"
+    [[ "${p}" == "${needle}" && "${s}" =~ ^[0-9a-fA-F]{64}$ ]] || continue
+    printf '%s' "${s}"
+    return 0
+  done <<< "${blob}"
+  return 1
+}
+
+# Weryfikuj webserver/php-fpm/meta/*.sql/meta kont — gzip+SHA gdy istnieją na remote.
+hm_backup_verify_side_artifacts() {
+  local remote_base="$1"
+  local sums_blob="" want got f
+  local -a side_tars=(webserver.tar.gz php-fpm.tar.gz meta.tar.gz ssl.tar.gz ols-vhost-dir.tar.gz)
+  local -a side_plain=(
+    db-accounts.sql db-accounts.sql.enc
+    unix-account.meta unix-account.meta.enc
+    crontab.txt unix-authorized_keys
+  )
+
+  if [[ "${remote_base}" == /* && -f "${remote_base}/SHA256SUMS" ]]; then
+    sums_blob="$(cat "${remote_base}/SHA256SUMS" 2>/dev/null || true)"
+  elif [[ "${remote_base}" != /* ]]; then
+    sums_blob="$(rclone cat "${remote_base}/SHA256SUMS" 2>/dev/null || true)"
+  fi
+
+  for f in "${side_tars[@]}"; do
+    hm_rclone_file_nonempty "${remote_base}/${f}" 2>/dev/null || continue
+    if ! hm_backup_gzip_tar_ok "${remote_base}/${f}" 1; then
+      hm_err "WERYFIKACJA NIEUDANA: ${f} uszkodzony (gzip/tar)!"
+      return 1
+    fi
+    want="$(hm_backup_sums_lookup_in_blob "${sums_blob}" "${f}" || true)"
+    if [[ -z "${want}" ]]; then
+      hm_err "WERYFIKACJA NIEUDANA: brak SHA256 dla ${f} w SHA256SUMS!"
+      return 1
+    fi
+    got="$(hm_rclone_sha256_any "${remote_base}/${f}" || true)"
+    if [[ -z "${got}" || "${got}" != "${want}" ]]; then
+      hm_err "WERYFIKACJA NIEUDANA: SHA256 ${f} niezgodny."
+      return 1
+    fi
+  done
+
+  for f in "${side_plain[@]}"; do
+    hm_rclone_file_nonempty "${remote_base}/${f}" 2>/dev/null || continue
+    want="$(hm_backup_sums_lookup_in_blob "${sums_blob}" "${f}" || true)"
+    if [[ -z "${want}" ]]; then
+      hm_err "WERYFIKACJA NIEUDANA: brak SHA256 dla ${f} w SHA256SUMS!"
+      return 1
+    fi
+    got="$(hm_rclone_sha256_any "${remote_base}/${f}" || true)"
+    if [[ -z "${got}" || "${got}" != "${want}" ]]; then
+      hm_err "WERYFIKACJA NIEUDANA: SHA256 ${f} niezgodny."
+      return 1
+    fi
+  done
   return 0
 }
 
@@ -502,6 +622,8 @@ hm_archive_upload_webstack() {
         hm_archive_abort "Upload webserver.tar.gz nieudany. Nic nie usunięto z VPS." "${remote_base}"
         return 1
       }
+      hm_archive_register_uploaded_file "${tarf}" "${remote_base}" "webserver.tar.gz" >/dev/null \
+        || hm_warn "Nie zapisano SHA256 webserver.tar.gz w SHA256SUMS."
       hm_ok "Zarchiwizowano vhost (${#webs[@]} plik(ów))."
     else
       hm_warn "Nie spakowano vhostów nginx/apache."
@@ -523,6 +645,8 @@ hm_archive_upload_webstack() {
         hm_archive_abort "Upload php-fpm.tar.gz nieudany. Nic nie usunięto z VPS." "${remote_base}"
         return 1
       }
+      hm_archive_register_uploaded_file "${tarf}" "${remote_base}" "php-fpm.tar.gz" >/dev/null \
+        || hm_warn "Nie zapisano SHA256 php-fpm.tar.gz w SHA256SUMS."
       hm_ok "Zarchiwizowano php-fpm (${#fpms[@]} plik(ów))."
     fi
     rm -f "${tarf}"
@@ -535,6 +659,8 @@ hm_archive_upload_webstack() {
       hm_archive_abort "Upload meta.tar.gz nieudany. Nic nie usunięto z VPS." "${remote_base}"
       return 1
     }
+    hm_archive_register_uploaded_file "${tarf}" "${remote_base}" "meta.tar.gz" >/dev/null \
+      || hm_warn "Nie zapisano SHA256 meta.tar.gz w SHA256SUMS."
     hm_ok "Zarchiwizowano meta kreatora (manifest/.dbs/resources)."
   fi
   rm -f "${tarf}"
@@ -1071,13 +1197,15 @@ _hm_backup_archive_site_body() {
   done
 
   # Konta MySQL (hasła jako hash + GRANTS) — wymagane do restore 1:1
+  # SHA w SUMS dopiero po uploadzie plików (ten nadpisuje SHA256SUMS).
   local has_db_accounts=0
-  local db_acc_sha="" unix_meta_sha=""
+  local db_acc_sha="" unix_meta_sha="" unix_keys_sha=""
+  local remote_db="" remote_ux=""
   local db_acc_sql
   db_acc_sql="$(hm_mktemp .sql)"
   if [[ "${#archive_db_users[@]}" -gt 0 ]]; then
     if hm_archive_export_mysql_accounts "${db_acc_sql}" --dbs "$(IFS=','; echo "${archive_dbs[*]}")" "${archive_db_users[@]}"; then
-      local enc_db remote_db
+      local enc_db
       if ! enc_db="$(hm_backup_maybe_encrypt_file "${db_acc_sql}")"; then
         rm -f "${db_acc_sql}" "${db_acc_sql}.enc"
         hm_archive_abort "Szyfrowanie db-accounts nieudane — bez plaintext. Nic nie usunięto z VPS." "${remote_base}"
@@ -1111,7 +1239,7 @@ _hm_backup_archive_site_body() {
   if [[ -n "${HM_DEL_USER}" ]] && id "${HM_DEL_USER}" >/dev/null 2>&1 \
       && [[ "${HM_DEL_USER_SHARED:-0}" -eq 0 && "${HM_DEL_USER_PROTECTED:-0}" -eq 0 ]]; then
     if hm_archive_export_unix_account "${HM_DEL_USER}" "${unix_meta}" "${unix_keys}"; then
-      local enc_ux remote_ux
+      local enc_ux
       if ! enc_ux="$(hm_backup_maybe_encrypt_file "${unix_meta}")"; then
         rm -f "${unix_meta}" "${unix_keys}" "${unix_meta}.enc"
         hm_archive_abort "Szyfrowanie unix-account.meta nieudane — bez plaintext. Nic nie usunięto z VPS." "${remote_base}"
@@ -1130,6 +1258,7 @@ _hm_backup_archive_site_body() {
         return 1
       fi
       if [[ -s "${unix_keys}" ]]; then
+        unix_keys_sha="$(hm_backup_sha256_file "${unix_keys}" || true)"
         hm_rclone_copyto "${unix_keys}" "${remote_base}/unix-authorized_keys" \
           || cat "${unix_keys}" | hm_rclone_rcat "${remote_base}/unix-authorized_keys" \
           || {
@@ -1188,6 +1317,20 @@ _hm_backup_archive_site_body() {
   HM_BACKUP_LAST_SHA256="${files_sha256}"
   export HM_BACKUP_LAST_SHA256
 
+  # Dopisz SHA artefaktów wysłanych przed files (upload plików nadpisuje SHA256SUMS).
+  if [[ "${has_db_accounts}" -eq 1 && -n "${db_acc_sha}" && -n "${remote_db}" ]]; then
+    hm_archive_sha256sums_put "${remote_base}" "${remote_db}" "${db_acc_sha}" \
+      || hm_warn "Nie zapisano SHA256 ${remote_db} w SHA256SUMS."
+  fi
+  if [[ "${has_unix_account}" -eq 1 && -n "${unix_meta_sha}" && -n "${remote_ux}" ]]; then
+    hm_archive_sha256sums_put "${remote_base}" "${remote_ux}" "${unix_meta_sha}" \
+      || hm_warn "Nie zapisano SHA256 ${remote_ux} w SHA256SUMS."
+  fi
+  if [[ -n "${unix_keys_sha}" ]]; then
+    hm_archive_sha256sums_put "${remote_base}" "unix-authorized_keys" "${unix_keys_sha}" \
+      || hm_warn "Nie zapisano SHA256 unix-authorized_keys w SHA256SUMS."
+  fi
+
   # vhost + cały katalog OLS vhost
   if [[ -n "${HM_SITE_VHOST:-}" && -f "${HM_SITE_VHOST}" ]]; then
     hm_rclone_copyto "${HM_SITE_VHOST}" "${remote_base}/vhost.conf" 2>/dev/null \
@@ -1203,6 +1346,7 @@ _hm_backup_archive_site_body() {
         hm_archive_abort "Upload ols-vhost-dir.tar.gz nieudany. Nic nie usunięto z VPS." "${remote_base}"
         return 1
       }
+      hm_archive_register_uploaded_file "${vtar}" "${remote_base}" "ols-vhost-dir.tar.gz" >/dev/null || true
       rm -f "${vtar}"
     else
       rm -f "${vtar}"
@@ -1221,6 +1365,7 @@ _hm_backup_archive_site_body() {
         hm_archive_abort "Upload ols-httpd-snippet.conf nieudany. Nic nie usunięto z VPS." "${remote_base}"
         return 1
       }
+    hm_archive_register_uploaded_file "${snip}" "${remote_base}" "ols-httpd-snippet.conf" >/dev/null || true
   fi
   rm -f "${snip}"
 
@@ -1238,6 +1383,8 @@ _hm_backup_archive_site_body() {
       hm_archive_abort "Upload ssl.tar.gz nieudany. Nic nie usunięto z VPS." "${remote_base}"
       return 1
     }
+    hm_archive_register_uploaded_file "${ssl_tar}" "${remote_base}" "ssl.tar.gz" >/dev/null \
+      || hm_warn "Nie zapisano SHA256 ssl.tar.gz w SHA256SUMS."
     rm -f "${ssl_tar}"
   else
     rm -f "${ssl_tar}"
@@ -1261,6 +1408,8 @@ _hm_backup_archive_site_body() {
             hm_archive_abort "Upload crontab.txt nieudany. Nic nie usunięto z VPS." "${remote_base}"
             return 1
           }
+        hm_archive_register_uploaded_file "${cron_txt}" "${remote_base}" "crontab.txt" >/dev/null \
+          || hm_warn "Nie zapisano SHA256 crontab.txt w SHA256SUMS."
       fi
       rm -f "${cron_txt}"
     fi

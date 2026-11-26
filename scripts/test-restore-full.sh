@@ -133,18 +133,30 @@ hm_backup_fetch_maybe_decrypt() {
   fi
   return 1
 }
-# unit: ta sama logika wykluczeń co --system (passwd poza apply)
+# unit: wykluczenia passwd + apply bez przenoszenia trybu ./ (0700 staging → root)
 stage="${TMP}/sysstage"
 mkdir -p "${stage}"
 tar -xzf "${REMOTE_FULL}/${STAMP}/system-configs.tar.gz" -C "${stage}"
 rm -f -- "${stage}/etc/passwd" "${stage}/etc/shadow" "${stage}/etc/group" "${stage}/etc/gshadow" 2>/dev/null || true
-tar -C "${stage}" -cf - . | tar -C "${FAKE_ROOT}" -xf -
+chmod 0755 "${FAKE_ROOT}"
+chmod 0700 "${stage}"
+export HM_BACKUP_PRE_SYSTEM_DIR="${TMP}/pre-system"
+if ! hm_backup_apply_system_stage "${stage}" "${FAKE_ROOT}"; then
+  fail "(d) hm_backup_apply_system_stage rc"
+fi
+root_mode="$(stat -c '%a' "${FAKE_ROOT}" 2>/dev/null || echo '?')"
 if grep -q 'liveuser' "${FAKE_ROOT}/etc/passwd" \
   && [[ -f "${FAKE_ROOT}/etc/ssh_config_hmtest" ]] \
-  && ! grep -q 'olduser' "${FAKE_ROOT}/etc/passwd"; then
-  pass "(d) --system pomija passwd, stosuje inne pliki"
+  && ! grep -q 'olduser' "${FAKE_ROOT}/etc/passwd" \
+  && [[ "${root_mode}" == "755" ]]; then
+  pass "(d) --system pomija passwd, stosuje inne pliki, / zostaje 755"
 else
-  fail "(d) passwd nadpisany lub brak ssh_config_hmtest"
+  fail "(d) passwd/ssh/mode root_mode=${root_mode}"
+fi
+if compgen -G "${HM_BACKUP_PRE_SYSTEM_DIR}/system-*.tar.gz" >/dev/null 2>&1; then
+  pass "(d) pre-restore system archive exists"
+else
+  fail "(d) brak pre-restore system-*.tar.gz"
 fi
 # uszkodzony tar system-configs ⇒ fail_n
 printf 'not-a-gzip' > "${REMOTE_FULL}/${STAMP}/system-configs.tar.gz"

@@ -56,10 +56,27 @@ else
   fail "(a) rc=${rc} before=${before} after=${after}"
 fi
 
-# --- (b) --overwrite-files usuwa obcy plik ---
+# --- (b) --overwrite-files usuwa obcy plik, ale chroni BACKUP_EXCLUDES ---
 cp "${REMOTE}/files.tar.gz.bak" "${REMOTE}/files.tar.gz"
+export BACKUP_EXCLUDES="./node_modules ./.git ./tmp ./logs *.log"
+protect_u=()
+hm_backup_rsync_protect_excludes protect_u backup
+prot_s="${protect_u[*]}"
+if [[ "${prot_s}" == *'P_node_modules'* && "${prot_s}" == *'P_.git'* && "${prot_s}" == *'P_*.log'* ]]; then
+  pass "(b) protect filters z BACKUP_EXCLUDES"
+else
+  fail "(b) protect filters: ${prot_s}"
+fi
+protect_a=()
+hm_backup_rsync_protect_excludes protect_a archive
+[[ "${#protect_a[@]}" -eq 0 ]] && pass "(b) archive bez protect" || fail "(b) archive protect niepuste"
 printf 'webshell\n' > "${TARGET}/public_html/shell-uploaded-after-backup.php"
 printf 'old\n' > "${TARGET}/public_html/index.html"
+mkdir -p "${TARGET}/.git" "${TARGET}/node_modules/pkg" "${TARGET}/tmp" "${TARGET}/logs"
+printf 'ref\n' > "${TARGET}/.git/HEAD"
+printf 'dep\n' > "${TARGET}/node_modules/pkg/index.js"
+printf 'sess\n' > "${TARGET}/tmp/sess_abc"
+printf 'logline\n' > "${TARGET}/logs/app.log"
 if hm_backup_restore_files "${REMOTE}" "${TARGET}" 1 >/dev/null 2>&1; then
   if [[ ! -f "${TARGET}/public_html/shell-uploaded-after-backup.php" ]]; then
     pass "(b) obce pliki usunięte przy --overwrite-files"
@@ -71,6 +88,16 @@ if hm_backup_restore_files "${REMOTE}" "${TARGET}" 1 >/dev/null 2>&1; then
     fi
   fi
   grep -q 'from-snap' "${TARGET}/public_html/index.html" && pass "(b) treść ze snapshota" || fail "(b) zła treść"
+  if hm_have_cmd rsync; then
+    if [[ -f "${TARGET}/.git/HEAD" && -f "${TARGET}/node_modules/pkg/index.js" \
+      && -f "${TARGET}/tmp/sess_abc" && -f "${TARGET}/logs/app.log" ]]; then
+      pass "(b) BACKUP_EXCLUDES chronione przed --delete"
+    else
+      fail "(b) wykluczenia skasowane przez --overwrite-files"
+    fi
+  else
+    pass "(b) brak rsync — skip protect (live)"
+  fi
 else
   fail "(b) restore plików nieudany"
 fi
@@ -109,6 +136,21 @@ if hm_backup_restore_files "${REMOTE}" "${TARGET2}" 1 >/dev/null 2>&1; then
   fi
 else
   fail "(d) restore nieudany"
+fi
+
+# --- (f) rotacja: zostaje 1 kopia pre-restore na slug ---
+export HM_BACKUP_PRE_RESTORE_KEEP=1
+TARGET3="${TMP}/site3"
+mkdir -p "${TARGET3}/public_html"
+printf 'a\n' > "${TARGET3}/public_html/index.html"
+hm_backup_restore_files "${REMOTE}" "${TARGET3}" 1 >/dev/null 2>&1 || true
+printf 'b\n' > "${TARGET3}/public_html/index.html"
+hm_backup_restore_files "${REMOTE}" "${TARGET3}" 1 >/dev/null 2>&1 || true
+n_pre="$(find "${TMP}" -maxdepth 1 -type d -name '.hm-pre-restore-site3-*' 2>/dev/null | wc -l | tr -d ' ')"
+if [[ "${n_pre}" -eq 1 ]]; then
+  pass "(f) rotacja pre-restore keep=1"
+else
+  fail "(f) oczekiwano 1 katalog pre-restore, jest ${n_pre}"
 fi
 
 # --- (e) recreate_db: DROP + CREATE (lustro snapshotu) ---

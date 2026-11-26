@@ -75,11 +75,73 @@ hm_backup_restore_fetch_files_archive() {
   return 0
 }
 
+# Snapshot type=archive → pełne lustro (bez protect BACKUP_EXCLUDES).
+hm_backup_restore_snap_is_archive() {
+  local remote_base="$1" t=""
+  if declare -F hm_backup_r_cat >/dev/null 2>&1; then
+    t="$(hm_backup_r_cat "${remote_base}/manifest.json" 2>/dev/null \
+      | sed -n 's/.*"type"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  elif [[ -f "${remote_base}/manifest.json" ]]; then
+    t="$(sed -n 's/.*"type"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${remote_base}/manifest.json" | head -1)"
+  fi
+  [[ "${t}" == "archive" ]]
+}
+
+# Filtry rsync P (protect) dla BACKUP_EXCLUDES — --delete nie kasuje .git/node_modules/tmp/…
+# $1=nameref tablicy argv; $2=mode (backup|archive)
+hm_backup_rsync_protect_excludes() {
+  local -n _prot_out="${1:?}"
+  local mode="${2:-backup}"
+  local list e pat
+  local -a parts=()
+  _prot_out=()
+  [[ "${mode}" == "archive" ]] && return 0
+  list="${BACKUP_EXCLUDES:-}"
+  [[ -n "${list}" ]] || return 0
+  local _save_ifs="${IFS}"
+  IFS=$' \t\n'
+  set -f
+  # shellcheck disable=SC2206
+  parts=( ${list} )
+  set +f
+  IFS="${_save_ifs}"
+  for e in "${parts[@]+"${parts[@]}"}"; do
+    [[ -n "${e}" ]] || continue
+    pat="${e#./}"
+    [[ -n "${pat}" ]] || continue
+    # P = protect from --delete (nie z --exclude transferu)
+    _prot_out+=("--filter=P_${pat}")
+    case "${pat}" in
+      *\**|*/) ;;
+      *) _prot_out+=("--filter=P_${pat}/***") ;;
+    esac
+  done
+}
+
+# Sprzątnij stare .hm-pre-restore-<slug>-* (zostaw keep najnowszych).
+hm_backup_prune_pre_restore_dirs() {
+  local parent="$1" slug="$2"
+  local keep="${HM_BACKUP_PRE_RESTORE_KEEP:-1}"
+  local -a dirs=()
+  local d i
+  [[ -n "${parent}" && -n "${slug}" && -d "${parent}" ]] || return 0
+  [[ "${keep}" =~ ^[0-9]+$ ]] || keep=1
+  shopt -s nullglob
+  # sortowanie leksykograficzne = chronologiczne przy stampie YYYYMMDD-HHMMSS
+  dirs=( "${parent}/.hm-pre-restore-${slug}-"* )
+  shopt -u nullglob
+  [[ "${#dirs[@]}" -gt "${keep}" ]] || return 0
+  for ((i = 0; i < ${#dirs[@]} - keep; i++)); do
+    rm -rf -- "${dirs[i]}" 2>/dev/null || true
+  done
+}
+
 hm_backup_restore_files() {
   local remote_base="$1" target_dir="$2"
   local overwrite_files="${3:-${HM_BACKUP_OVERWRITE_FILES:-0}}"
   local keep_extra="${HM_BACKUP_KEEP_EXTRA:-0}"
-  local staging pre_bak tarf parent stamp
+  local staging pre_bak tarf parent stamp slug need_kb avail_kb excl_mode="backup"
+  local -a protect_opts=()
   mkdir -p "${target_dir}"
 
   tarf="$(hm_mktemp .tar.gz)"
@@ -91,8 +153,10 @@ hm_backup_restore_files() {
   # Staging na tym samym FS (parent target) — błąd ⇒ żywy katalog nietknięty
   parent="$(dirname -- "${target_dir}")"
   stamp="$(date +%Y%m%d-%H%M%S)"
+  slug="${HM_SITE_DOMAIN:-$(basename -- "${target_dir}")}"
+  slug="${slug//\//_}"
   staging="${parent}/.hm-restore-${stamp}"
-  pre_bak="${parent}/.hm-pre-restore-${stamp}"
+  pre_bak="${parent}/.hm-pre-restore-${slug}-${stamp}"
   rm -rf -- "${staging}"
   mkdir -p "${staging}" || { rm -f "${tarf}"; return 1; }
 
@@ -112,6 +176,15 @@ hm_backup_restore_files() {
 
   # Kopia bezpieczeństwa bieżącego drzewa (przed rsync) — rollback ręczny
   if [[ -d "${target_dir}" ]] && find "${target_dir}" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
+    need_kb="$(du -sk "${target_dir}" 2>/dev/null | awk '{print $1}')"
+    avail_kb="$(df -Pk "${parent}" 2>/dev/null | awk 'NR==2 {print $4}')"
+    if [[ -n "${need_kb}" && -n "${avail_kb}" && "${need_kb}" =~ ^[0-9]+$ && "${avail_kb}" =~ ^[0-9]+$ ]]; then
+      if [[ "${avail_kb}" -le "${need_kb}" ]]; then
+        hm_err "Za mało miejsca na pre-restore (~${need_kb} KiB potrzeba, ${avail_kb} KiB wolne w ${parent}) — target nietknięty."
+        rm -rf -- "${staging}"
+        return 1
+      fi
+    fi
     hm_info "Kopia bezpieczeństwa plików → ${pre_bak}"
     rm -rf -- "${pre_bak}"
     mkdir -p "${pre_bak}" || {
@@ -133,15 +206,25 @@ hm_backup_restore_files() {
         return 1
       fi
     fi
+    hm_backup_prune_pre_restore_dirs "${parent}" "${slug}"
     hm_ok "Kopia przed restore: ${pre_bak} (cofnięcie: rsync -aHAXS --delete ${pre_bak}/ ${target_dir}/)."
+  fi
+
+  if hm_backup_restore_snap_is_archive "${remote_base}"; then
+    excl_mode="archive"
   fi
 
   if hm_have_cmd rsync; then
     # -A -X -S: ACL, xattr, sparse (tar odtwarza w stagingu — rsync bez tego je gubi)
     local -a rsync_opts=(-aHAXS --numeric-ids)
-    # --overwrite-files: usuń obce pliki nieobecne w snapshocie (anti-webshell)
+    # --overwrite-files: usuń obce pliki nieobecne w snapshocie (anti-webshell),
+    # ale chroń ścieżki z BACKUP_EXCLUDES (.git, node_modules, tmp, *.log, …)
     if [[ "${overwrite_files}" -eq 1 && "${keep_extra}" -ne 1 ]]; then
       rsync_opts+=(--delete)
+      if declare -F hm_backup_rsync_protect_excludes >/dev/null 2>&1; then
+        hm_backup_rsync_protect_excludes protect_opts "${excl_mode}"
+        rsync_opts+=("${protect_opts[@]+"${protect_opts[@]}"}")
+      fi
     fi
     if ! rsync "${rsync_opts[@]}" "${staging}/" "${target_dir}/"; then
       hm_err "rsync staging → target nieudany."
@@ -713,6 +796,7 @@ hm_backup_restore_webstack_from_archive() {
       return 1
     fi
     ver="${HM_SITE_PHP:-}"
+    [[ "${ver}" == "?" || "${ver}" == "*" ]] && ver=""
     if [[ -z "${ver}" ]]; then
       for pool in /etc/php/*/fpm/pool.d/"${domain}".conf; do
         [[ -f "${pool}" ]] || continue
@@ -720,7 +804,7 @@ hm_backup_restore_webstack_from_archive() {
         break
       done
     fi
-    # Ustaw PHP z puli / manif. — reload nie dostaje pustego "php-fpm ?"
+    # Ustaw PHP z puli / manif. — "?" z discovery nie może blokować skanu puli / reload
     if [[ -n "${ver}" ]]; then
       HM_SITE_PHP="${ver}"
       export HM_SITE_PHP
@@ -760,9 +844,23 @@ hm_backup_reload_webstack() {
         hm_warn "Brak hm_site_web_reload — przeładuj ${web} ręcznie."
       fi
       ver="${ver:-${HM_SITE_PHP:-}}"
+      [[ "${ver}" == "?" || "${ver}" == "*" ]] && ver=""
+      if [[ -z "${ver}" && -n "${HM_SITE_DOMAIN:-}" ]]; then
+        local _pool
+        for _pool in /etc/php/*/fpm/pool.d/"${HM_SITE_DOMAIN}".conf; do
+          [[ -f "${_pool}" ]] || continue
+          [[ "${_pool}" =~ /php/([0-9]+\.[0-9]+)/ ]] && ver="${BASH_REMATCH[1]}"
+          break
+        done
+      fi
       if [[ -n "${ver}" ]] && declare -F hm_site_php_fpm_reload >/dev/null 2>&1; then
-        hm_site_php_fpm_reload "${ver}" || true
-        hm_ok "php-fpm ${ver} reload OK."
+        if hm_site_php_fpm_reload "${ver}"; then
+          hm_ok "php-fpm ${ver} reload OK."
+        else
+          hm_err "php-fpm ${ver} reload nieudany (pula może nie być aktywna → 502)."
+        fi
+      elif [[ -z "${ver}" ]]; then
+        hm_warn "Brak wersji PHP do reload FPM (manifest php=? / brak puli)."
       fi
       ;;
     ols|openlitespeed|litespeed|"")
@@ -2122,7 +2220,10 @@ _hm_backup_restore_body() {
     [[ -z "${target_dir}" ]] && target_dir="$(hm_backup_json_str "${json}" "unix_home")"
     [[ -z "${target_dir}" ]] && target_dir="$(hm_backup_json_str "${json}" "docroot")"
     [[ -z "${HM_SITE_USER:-}" ]] && HM_SITE_USER="$(hm_backup_json_str "${json}" "site_user")"
-    [[ -z "${HM_SITE_PHP:-}" ]] && HM_SITE_PHP="$(hm_backup_json_str "${json}" "php")"
+    if [[ -z "${HM_SITE_PHP:-}" || "${HM_SITE_PHP}" == "?" ]]; then
+      HM_SITE_PHP="$(hm_backup_json_str "${json}" "php")"
+    fi
+    [[ "${HM_SITE_PHP}" == "?" || "${HM_SITE_PHP}" == "*" ]] && HM_SITE_PHP=""
     [[ -z "${HM_SITE_DOCROOT:-}" ]] && HM_SITE_DOCROOT="$(hm_backup_json_str "${json}" "docroot")"
     [[ -z "${HM_SITE_ROOT:-}" ]] && HM_SITE_ROOT="$(hm_backup_json_str "${json}" "site_root")"
     [[ -z "${HM_SITE_ROOT:-}" ]] && HM_SITE_ROOT="${target_dir}"
@@ -2449,6 +2550,50 @@ hm_backup_restore() {
   return "${rc}"
 }
 
+# Zastosuj rozpakowany system-configs ze stagingu do dest (/).
+# NIE pakuj "." — mktemp -d ma 0700 i tar przeniósłby ten tryb na / (awaria całego VPS).
+# $1=sys_stage $2=dest (domyślnie /)
+hm_backup_apply_system_stage() {
+  local sys_stage="$1" dest="${2:-/}"
+  local -a tops=() existing=()
+  local e base pre_dir pre_arc stamp
+  [[ -d "${sys_stage}" ]] || return 1
+  [[ -d "${dest}" ]] || return 1
+  shopt -s nullglob
+  for e in "${sys_stage}"/*; do
+    base="${e##*/}"
+    [[ -n "${base}" && "${base}" != "." && "${base}" != ".." ]] || continue
+    tops+=("${base}")
+  done
+  shopt -u nullglob
+  if [[ "${#tops[@]}" -eq 0 ]]; then
+    hm_warn "system-configs: brak wpisów do zastosowania po filtrach."
+    return 0
+  fi
+  # Kopia bieżących drzew przed nadpisaniem (best-effort)
+  pre_dir="${HM_BACKUP_PRE_SYSTEM_DIR:-/var/backups/hmtools/pre-restore}"
+  if mkdir -p -- "${pre_dir}" 2>/dev/null; then
+    for base in "${tops[@]}"; do
+      [[ -e "${dest}/${base}" ]] && existing+=("${base}")
+    done
+    if [[ "${#existing[@]}" -gt 0 ]]; then
+      stamp="$(date +%Y%m%d-%H%M%S)"
+      pre_arc="${pre_dir}/system-${stamp}.tar.gz"
+      if tar -C "${dest}" -czf "${pre_arc}" "${existing[@]}" 2>/dev/null; then
+        hm_info "Kopia pre-restore system → ${pre_arc}"
+      else
+        hm_warn "Nie udało się zapisać pre-restore system (${pre_arc})."
+        rm -f -- "${pre_arc}" 2>/dev/null || true
+      fi
+    fi
+  fi
+  # Tylko top-level (etc, var, …); --no-overwrite-dir nie zmienia trybu istniejących katalogów (/)
+  if ! tar -C "${sys_stage}" -cf - "${tops[@]}" | tar -C "${dest}" --no-overwrite-dir -xf -; then
+    return 1
+  fi
+  return 0
+}
+
 # Odtwórz snapshot full/<stamp>/ — system-configs + databases + sites/* + db-accounts.
 hm_backup_restore_full() {
   local stamp="" do_system=0 overwrite_db=0 a
@@ -2544,11 +2689,11 @@ EOF
           "${sys_stage}/etc/shadow" "${sys_stage}/etc/shadow-" \
           "${sys_stage}/etc/gshadow" "${sys_stage}/etc/gshadow-" 2>/dev/null || true
         hm_info "Pomijam etc/{passwd,group,shadow,gshadow} przy --system (brak spójnego shadow w snapshocie)."
-        if ! tar -C "${sys_stage}" -cf - . | tar -C / -xf -; then
+        if ! hm_backup_apply_system_stage "${sys_stage}" /; then
           hm_err "Zastosowanie system-configs do / nieudane."
           fail_n=$((fail_n + 1))
         else
-          hm_ok "system-configs zastosowane (bez baz kont Unix)."
+          hm_ok "system-configs zastosowane (bez baz kont Unix; bez metadanych /)."
         fi
       fi
     else

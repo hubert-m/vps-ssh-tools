@@ -141,6 +141,56 @@ else
   fail "(c3) brak part_0001 do flip"
 fi
 
+# --- (s1) ucięty webserver.tar.gz → rc≠0 ---
+cp -a "${SNAP}" "${TMP}/webcut"
+mkdir -p "${TMP}/websrc"
+echo "server { listen 80; }" > "${TMP}/websrc/vhost.conf"
+tar -C "${TMP}/websrc" -czf "${TMP}/webcut/webserver.tar.gz" .
+_wsum="$(sha256sum "${TMP}/webcut/webserver.tar.gz" | awk '{print $1}')"
+printf '%s  webserver.tar.gz\n' "${_wsum}" >> "${TMP}/webcut/SHA256SUMS"
+truncate -s 8 "${TMP}/webcut/webserver.tar.gz" 2>/dev/null \
+  || dd if=/dev/zero of="${TMP}/webcut/webserver.tar.gz" bs=1 count=8 status=none
+set +e
+hm_backup_verify_remote_archive "${TMP}/webcut" tar 0 shop_app >/dev/null 2>&1
+rc=$?
+set -e
+[[ "${rc}" -ne 0 ]] && pass "(s1) ucięty webserver.tar.gz → rc≠0" || fail "(s1) oczekiwano rc≠0"
+
+# --- (s2) dobry webserver + meta w SUMS → rc=0 ---
+cp -a "${SNAP}" "${TMP}/webside.ok"
+tar -C "${TMP}/websrc" -czf "${TMP}/webside.ok/webserver.tar.gz" .
+tar -C "${TMP}/websrc" -czf "${TMP}/webside.ok/meta.tar.gz" .
+_wsum="$(sha256sum "${TMP}/webside.ok/webserver.tar.gz" | awk '{print $1}')"
+_msum="$(sha256sum "${TMP}/webside.ok/meta.tar.gz" | awk '{print $1}')"
+printf '%s  webserver.tar.gz\n' "${_wsum}" >> "${TMP}/webside.ok/SHA256SUMS"
+printf '%s  meta.tar.gz\n' "${_msum}" >> "${TMP}/webside.ok/SHA256SUMS"
+set +e
+hm_backup_verify_remote_archive "${TMP}/webside.ok" tar 0 shop_app >/dev/null 2>&1
+rc=$?
+set -e
+[[ "${rc}" -eq 0 ]] && pass "(s2) webserver+meta OK → rc=0" || fail "(s2) oczekiwano rc=0, got=${rc}"
+
+# --- (s3) webserver bez wpisu w SHA256SUMS → rc≠0 ---
+cp -a "${SNAP}" "${TMP}/webnosum"
+tar -C "${TMP}/websrc" -czf "${TMP}/webnosum/webserver.tar.gz" .
+set +e
+hm_backup_verify_remote_archive "${TMP}/webnosum" tar 0 shop_app >/dev/null 2>&1
+rc=$?
+set -e
+[[ "${rc}" -ne 0 ]] && pass "(s3) webserver bez SHA256SUMS → rc≠0" || fail "(s3) oczekiwano rc≠0"
+
+# --- (s4) flip bajtu w db-accounts.sql (SUMS stary) → rc≠0 ---
+cp -a "${SNAP}" "${TMP}/dbacc"
+printf 'CREATE USER u@localhost;\n' > "${TMP}/dbacc/db-accounts.sql"
+_asum="$(sha256sum "${TMP}/dbacc/db-accounts.sql" | awk '{print $1}')"
+printf '%s  db-accounts.sql\n' "${_asum}" >> "${TMP}/dbacc/SHA256SUMS"
+printf 'X' | dd of="${TMP}/dbacc/db-accounts.sql" bs=1 seek=2 conv=notrunc status=none 2>/dev/null || true
+set +e
+hm_backup_verify_remote_archive "${TMP}/dbacc" tar 0 shop_app >/dev/null 2>&1
+rc=$?
+set -e
+[[ "${rc}" -ne 0 ]] && pass "(s4) uszkodzony db-accounts.sql → rc≠0" || fail "(s4) oczekiwano rc≠0"
+
 # --- (e) błąd copyto ssl → archive nie woła delete ---
 DELETE_CALLED=0
 hm_site_execute_delete() { DELETE_CALLED=1; return 0; }
