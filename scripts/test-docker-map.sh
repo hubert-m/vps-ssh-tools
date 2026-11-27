@@ -78,6 +78,52 @@ else
   echo "OK   prune-volumes-critical"
 fi
 
+# --all = system prune -a, dry-run nie woła confirm
+if cmd_docker_prune --all --dry-run >/dev/null 2>&1; then
+  echo "OK   prune-all-dry-run"
+else
+  echo "FAIL prune-all-dry-run"
+  fail=1
+fi
+if cmd_docker_prune --all --execute >/dev/null 2>&1; then
+  echo "FAIL prune-all-execute-should-cancel"
+  fail=1
+else
+  echo "OK   prune-all-execute-confirm-cancel"
+fi
+if cmd_docker_prune --bogus >/dev/null 2>&1; then
+  echo "FAIL prune-unknown-flag"
+  fail=1
+else
+  echo "OK   prune-unknown-flag"
+fi
+
+# docker df / docker system df — sam raport, bez prune
+if cmd_docker df >/dev/null 2>&1; then
+  echo "OK   df"
+else
+  echo "FAIL df"
+  fail=1
+fi
+if cmd_docker system df --verbose >/dev/null 2>&1; then
+  echo "OK   system-df-verbose"
+else
+  echo "FAIL system-df-verbose"
+  fail=1
+fi
+if cmd_docker df --nope >/dev/null 2>&1; then
+  echo "FAIL df-unknown-flag"
+  fail=1
+else
+  echo "OK   df-unknown-flag"
+fi
+if cmd_docker_df --help >/dev/null 2>&1 && cmd_docker_prune --help >/dev/null 2>&1; then
+  echo "OK   df-prune-help"
+else
+  echo "FAIL df-prune-help"
+  fail=1
+fi
+
 # filter for site
 line="n8n|img|running|5678|stack|/tmp|-|- "
 out="$(printf '%s\n' "${line}" | hm_docker_filter_for_site "n8n.example.pl")"

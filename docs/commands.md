@@ -212,7 +212,10 @@ OOM mapuje cgroup albo nazwę procesu na stronę. Swap i zram odmawiają na Open
 hmtools> docker                 # lista + OLS proxy domain
 hmtools> docker logs n8n 100
 hmtools> docker compose ls
-hmtools> docker prune --dry-run # nigdy volume bez --volumes + critical
+hmtools> docker df                 # docker system df (nic nie usuwa)
+hmtools> docker df --verbose
+hmtools> docker prune --dry-run   # podgląd system prune
+hmtools> docker prune --all --execute   # system prune -a; wolumeny tylko z --volumes
 hmtools> docker compose update n8n
 hmtools> docker scan nginx:1.25
 hmtools> docker audit

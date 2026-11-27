@@ -1016,14 +1016,24 @@ hm_tab_complete() {
           for m in ls list pull up; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
-        elif [[ "${prefix}" =~ docker[[:space:]]+prune[[:space:]] ]]; then
-          for m in --images --volumes --dry-run --execute; do
+        elif [[ "${prefix}" =~ docker[[:space:]]+(prune|clean)[[:space:]] ]] \
+          || [[ "${prefix}" =~ docker[[:space:]]+system[[:space:]]+prune[[:space:]] ]]; then
+          for m in --all -a --images --volumes --dry-run --execute --yes; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ docker[[:space:]]+(df|disk)[[:space:]] ]] \
+          || [[ "${prefix}" =~ docker[[:space:]]+system[[:space:]]+df[[:space:]] ]]; then
+          for m in --verbose -v; do
+            [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
+          done
+        elif [[ "${prefix}" =~ docker[[:space:]]+system[[:space:]] ]]; then
+          for m in df prune; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         elif [[ "${prefix}" =~ docker[[:space:]]+(logs|restart|stop|start)[[:space:]] ]]; then
           :
         else
-          for m in status all logs restart stop start compose prune help; do
+          for m in status all logs restart stop start compose df prune system help; do
             [[ "${m}" == "${partial}"* ]] && matches+=("${m}")
           done
         fi

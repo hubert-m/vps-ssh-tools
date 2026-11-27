@@ -81,6 +81,7 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: webs/discover — PHP z manifestu `runtime.version`, potem pula FPM (Debian + Remi); `hm_parse_vhost_php` bez śmieci z nginx; test-discover-php
 - Fix: backup restore — pre-restore plików w `/var/lib/hmtools/pre-restore/<domena>/<stamp>` (0700), `BACKUP_PRE_RESTORE_KEEP`, kasuje legacy `.hm-pre-restore-*` z `/home`; `backup list` pokazuje rozmiar; test-restore-atomic
 - Fix: docker compose update — `hm_docker_health_ok` czeka na `healthy` (`starting` OK); timeout/`unhealthy`/restart → rollback; stabilność bez healthchecka; test-docker-ops
+- Feat: docker df / docker system df (`--verbose`) oraz docker prune `--all` jako `system prune -a` (osobno od zwykłego prune); opisy parametrów; test-docker-map
 
 ## [v0.1.15]
 

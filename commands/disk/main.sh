@@ -182,7 +182,7 @@ hm_disk_section_heavy() {
     dsz="$(du -sb /var/lib/docker 2>/dev/null | awk '{print $1}')"
     if [[ "${dsz}" =~ ^[0-9]+$ && "${dsz}" -gt 0 ]]; then
       echo
-      hm_info "Docker data (/var/lib/docker): $(hm_human_size "${dsz}") — czyszczenie: docker prune [--images] [--dry-run]"
+      hm_info "Docker data (/var/lib/docker): $(hm_human_size "${dsz}") — raport: docker df; czyszczenie: docker prune [--all] [--dry-run]"
     fi
   fi
 }

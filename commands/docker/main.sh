@@ -13,8 +13,43 @@ Użycie:
   docker scan <obraz|--all>
   docker audit
   docker updates
-  docker prune [--images] [--volumes] [--dry-run]
-                               Domyślnie dry-run; --volumes wymaga critical confirm
+
+  docker df [--verbose]
+      Raport zajętości dysku przez Dockera. Odpowiednik: docker system df.
+      Nic nie usuwa: obrazy, kontenery, wolumeny lokalne i cache budowania
+      są tylko zliczane (kolumny SIZE, RECLAIMABLE).
+      --verbose, -v
+          Szczegółowy wykaz (docker system df -v): każdy obraz, kontener
+          i wolumen z rozmiarem, nie tylko sumy kategorii.
+
+  docker prune [--dry-run] [--execute] [--all] [--volumes]
+      Czyszczenie nieużywanych danych Dockera (cache budowania, wiszące
+      obrazy, zatrzymane kontenery, sieci bez kontenerów).
+      Domyślnie sam podgląd — usuwanie włącza --execute.
+      --dry-run
+          Tryb domyślny. Pokazuje docker system df i szacunek system prune.
+          Żaden obiekt nie jest kasowany.
+      --execute, --yes, -y
+          Odpowiednik: docker system prune -f.
+          Usuwa zatrzymane kontenery, sieci nieużywane przez żaden kontener,
+          obrazy wiszące (dangling: warstwy bez tagu) oraz cache budowania,
+          którego nie trzyma żaden obraz. Obrazy z tagiem zostają, także te,
+          których w tej chwili nie używa żaden kontener.
+      --all, -a, --images
+          Razem z --execute: docker system prune -a.
+          Rozszerza czyszczenie o każdy obraz, którego nie używa żaden
+          kontener — także obrazy z tagiem (stare :latest po pullu, osierocone
+          wersje). Działające kontenery zachowują swój obraz. Zatrzymane
+          kontenery są usuwane w tym samym przebiegu, więc obraz trzymany
+          wyłącznie przez nie również schodzi z dysku.
+      --volumes
+          Dodatkowo: docker volume prune -f.
+          Usuwa wolumeny niepodpięte do żadnego kontenera (anonimowe i nazwane).
+          Operacja jest nieodwracalna: bazy, uploady i stan aplikacji na takim
+          wolumenie giną. Wymaga osobnego potwierdzenia słowem „volumes”.
+
+  docker system df [--verbose]     alias docker df
+  docker system prune [flagi]      alias docker prune
 
 W kontekście use <domena>: tylko kontenery powiązane z portami proxy OLS tej strony.
 Wymaga CLI docker. Brak Dockera → czytelny komunikat (detect / FORCE_DOCKER).
@@ -353,22 +388,91 @@ cmd_docker_compose() {
   esac
 }
 
+hm_docker_df_help() {
+  cat <<'EOF'
+Użycie: docker df [--verbose]
+
+Raport zajętości dysku przez Dockera. Odpowiednik: docker system df.
+Nic nie usuwa — pokazuje rozmiar obrazów, kontenerów, wolumenów lokalnych
+i cache budowania oraz ile da się odzyskać (RECLAIMABLE).
+
+  --verbose, -v
+      Szczegółowy wykaz (docker system df -v): każdy obraz, kontener
+      i wolumen z rozmiarem, nie tylko sumy kategorii.
+EOF
+}
+
+hm_docker_prune_help() {
+  cat <<'EOF'
+Użycie: docker prune [--dry-run] [--execute] [--all] [--volumes]
+
+Czyszczenie nieużywanych danych Dockera: cache budowania, wiszące obrazy,
+zatrzymane kontenery i sieci bez kontenerów. Domyślnie sam podgląd.
+
+  --dry-run
+      Tryb domyślny. Pokazuje docker system df i szacunek system prune.
+      Żaden obiekt nie jest kasowany.
+  --execute, --yes, -y
+      Odpowiednik: docker system prune -f.
+      Usuwa zatrzymane kontenery, sieci nieużywane przez żaden kontener,
+      obrazy wiszące (dangling: warstwy bez tagu) oraz cache budowania,
+      którego nie trzyma żaden obraz. Obrazy z tagiem zostają, także te,
+      których w tej chwili nie używa żaden kontener.
+  --all, -a, --images
+      Razem z --execute: docker system prune -a.
+      Rozszerza czyszczenie o każdy obraz, którego nie używa żaden kontener
+      — także obrazy z tagiem (stare :latest po pullu, osierocone wersje).
+      Działające kontenery zachowują swój obraz. Zatrzymane kontenery są
+      usuwane w tym samym przebiegu, więc obraz trzymany wyłącznie przez nie
+      również schodzi z dysku.
+  --volumes
+      Dodatkowo: docker volume prune -f.
+      Usuwa wolumeny niepodpięte do żadnego kontenera (anonimowe i nazwane).
+      Operacja jest nieodwracalna: bazy, uploady i stan aplikacji na takim
+      wolumenie giną. Wymaga osobnego potwierdzenia słowem „volumes”.
+EOF
+}
+
+cmd_docker_df() {
+  hm_docker_require || return 1
+  local verbose=0 a
+  for a in "$@"; do
+    case "${a}" in
+      -v|--verbose) verbose=1 ;;
+      -h|--help)
+        hm_docker_df_help
+        return 0
+        ;;
+      *)
+        hm_err "Nieznana flaga: ${a}"
+        hm_docker_df_help >&2
+        return 1
+        ;;
+    esac
+  done
+  if [[ "${verbose}" -eq 1 ]]; then
+    hm_run "${DOCKER_BIN}" system df -v
+  else
+    hm_run "${DOCKER_BIN}" system df
+  fi
+}
+
 cmd_docker_prune() {
   hm_docker_require || return 1
   local images=0 volumes=0 dry=1 a
   for a in "$@"; do
     case "${a}" in
-      --images) images=1 ;;
+      --images|--all|-a) images=1 ;;
       --volumes) volumes=1 ;;
       --dry-run) dry=1 ;;
       --execute|--apply|-y|--yes) dry=0 ;;
       -h|--help)
-        hm_info "Użycie: docker prune [--images] [--volumes] [--dry-run|--execute]"
-        hm_info "Domyślnie dry-run. --volumes wymaga wpisania „volumes”."
+        hm_docker_prune_help
         return 0
         ;;
       *)
         hm_err "Nieznana flaga: ${a}"
+        hm_docker_prune_help >&2
         return 1
         ;;
     esac
@@ -378,41 +482,62 @@ cmd_docker_prune() {
   hm_run "${DOCKER_BIN}" system df || true
   echo
 
+  local -a prune_args=(-f)
+  [[ "${images}" -eq 1 ]] && prune_args+=(-a)
+  local mode_label="docker system prune -f"
+  [[ "${images}" -eq 1 ]] && mode_label="docker system prune -a -f"
+
   if [[ "${dry}" -eq 1 ]]; then
-    hm_info "Tryb dry-run — nic nie usuwam. Aby wykonać: docker prune [--images] [--execute]"
-    if [[ "${volumes}" -eq 1 ]]; then
-      hm_warn "--volumes w dry-run: pokażę tylko ostrzeżenie (volume prune jest destrukcyjne)."
+    hm_info "Tryb dry-run — nic nie usuwam. Aby wykonać: docker prune${images:+ --all} [--volumes] --execute"
+    if [[ "${images}" -eq 1 ]]; then
+      hm_info "Podgląd obejmuje tryb --all (odpowiednik docker system prune -a): także obrazy z tagiem bez kontenera."
+    else
+      hm_info "Podgląd to zwykły docker system prune: wiszące obrazy, zatrzymane kontenery, nieużywane sieci, cache budowania."
     fi
-    hm_run "${DOCKER_BIN}" system prune -f --filter "until=0s" --dry-run 2>/dev/null \
-      || hm_info "(docker nie wspiera --dry-run na system prune — df powyżej = szacunek)"
+    if [[ "${volumes}" -eq 1 ]]; then
+      hm_warn "--volumes w dry-run: wolumeny nie są ruszane. Wykonanie wymaga --execute i potwierdzenia „volumes”."
+    fi
+    hm_run "${DOCKER_BIN}" system prune "${prune_args[@]}" --filter "until=0s" --dry-run 2>/dev/null \
+      || hm_info "(ta wersja Dockera nie ma --dry-run na system prune — df powyżej to szacunek ${mode_label})"
     return 0
   fi
 
   local -a plan=(
-    "docker system prune -f (dangling containers/networks/images build cache)"
+    "${mode_label}"
   )
-  [[ "${images}" -eq 1 ]] && plan+=("Dodatkowo: nieużywane obrazy (-a)")
+  if [[ "${images}" -eq 1 ]]; then
+    plan+=(
+      "Wiszące obrazy i cache budowania"
+      "Obrazy z tagiem, których nie używa żaden kontener"
+      "Zatrzymane kontenery i sieci bez kontenerów"
+    )
+  else
+    plan+=(
+      "Zatrzymane kontenery"
+      "Sieci nieużywane przez żaden kontener"
+      "Obrazy wiszące (bez tagu) i cache budowania"
+      "Obrazy z tagiem zostają"
+    )
+  fi
   if [[ "${volumes}" -eq 1 ]]; then
     if ! hm_confirm_plan_critical "volumes" \
-      "docker prune --volumes — NIEODWRACALNE" \
-      "Usunięcie nieużywanych wolumenów Docker (UTRATY DANYCH DB!)." \
+      "docker prune --volumes — nieodwracalne" \
+      "Usunięcie wolumenów niepodpiętych do kontenera (dane baz i plików na wolumenie giną)." \
       "docker volume prune -f"; then
       return 1
     fi
   fi
   if ! hm_confirm_plan "docker prune" \
-    "Usunięcie nieużywanych obiektów Dockera." \
+    "Czyszczenie nieużywanych danych Dockera (${mode_label})." \
     "${plan[@]}"; then
     return 1
   fi
 
-  local -a args=(-f)
-  [[ "${images}" -eq 1 ]] && args+=(-a)
-  hm_run "${DOCKER_BIN}" system prune "${args[@]}" || return 1
+  hm_run "${DOCKER_BIN}" system prune "${prune_args[@]}" || return 1
   if [[ "${volumes}" -eq 1 ]]; then
     hm_run "${DOCKER_BIN}" volume prune -f || return 1
   fi
-  hm_ok "prune zakończone."
+  hm_ok "prune zakończone (${mode_label})."
   hm_run "${DOCKER_BIN}" system df || true
 }
 
@@ -439,6 +564,31 @@ cmd_docker() {
     compose|c)
       shift || true
       cmd_docker_compose "$@"
+      ;;
+    df|disk)
+      shift || true
+      cmd_docker_df "$@"
+      ;;
+    system)
+      shift || true
+      case "${1:-}" in
+        df|disk)
+          shift || true
+          cmd_docker_df "$@"
+          ;;
+        prune|clean)
+          shift || true
+          cmd_docker_prune "$@"
+          ;;
+        ""|-h|--help)
+          hm_info "Użycie: docker system df [--verbose] | docker system prune [--dry-run|--execute] [--all] [--volumes]"
+          ;;
+        *)
+          hm_err "Nieznana operacja system: ${1}"
+          hm_info "Użycie: docker system df [--verbose] | docker system prune [--execute] [--all] [--volumes]"
+          return 1
+          ;;
+      esac
       ;;
     prune|clean)
       shift || true
