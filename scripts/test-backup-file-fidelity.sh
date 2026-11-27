@@ -143,6 +143,44 @@ else
   bad "tar-pipe-copy"
 fi
 
+# Pre-restore bez rsync: właściciel żywego pliku (uid:gid) zostaje na kopii.
+hm_mktemp() { mktemp "${TMPDIR:-/tmp}/hm.XXXXXX${1:-}"; }
+hm_have_cmd() {
+  [[ "$1" == "rsync" ]] && return 1
+  command -v "$1" >/dev/null 2>&1
+}
+hm_ok() { printf 'OKMSG:%s\n' "$*"; }
+# shellcheck disable=SC1091
+source commands/backup/list.sh
+# shellcheck disable=SC1091
+source commands/backup/restore.sh
+export HM_BACKUP_PRE_RESTORE_FILES_DIR="${TMP}/pre-restore"
+export HM_BACKUP_PRE_RESTORE_KEEP=2
+export HM_SITE_DOMAIN="owner.fidelity.test"
+live="${TMP}/live"
+mkdir -p "${live}/public_html" "${snapdir:=${TMP}/snap-owner}"
+printf 'mine\n' > "${live}/public_html/private.txt"
+want_ug="$(stat -c '%u:%g' "${live}/public_html/private.txt" 2>/dev/null || true)"
+cp -f "${tarf}" "${snapdir}/files.tar.gz"
+pre_out="$(hm_backup_restore_files "${snapdir}" "${live}" 0 2>&1 || true)"
+pre_file="$(find "${HM_BACKUP_PRE_RESTORE_FILES_DIR}/owner.fidelity.test" -name private.txt 2>/dev/null | head -1 || true)"
+if [[ -n "${pre_file}" && -n "${want_ug}" ]]; then
+  got_ug="$(stat -c '%u:%g' "${pre_file}" 2>/dev/null || true)"
+  if [[ "${got_ug}" == "${want_ug}" ]]; then
+    ok "pre-restore-owner ${got_ug}"
+  else
+    bad "pre-restore-owner got=${got_ug} want=${want_ug}"
+  fi
+else
+  bad "pre-restore-owner missing copy (${pre_file:-none})"
+fi
+printf '%s\n' "${pre_out}" | grep -q -- '--same-owner --numeric-owner' \
+  && ok "pre-restore-undo-same-owner" || bad "pre-restore-undo-same-owner"
+printf '%s\n' "${pre_out}" | grep -q 'rsync -aHAXS' \
+  && bad "pre-restore-undo-mentions-rsync" || ok "pre-restore-undo-no-rsync"
+grep -q 'tar --same-owner --numeric-owner' commands/backup/restore.sh \
+  && ok "pre-restore-flag-same-owner" || bad "pre-restore-flag-same-owner"
+
 if [[ "${fail}" -ne 0 ]]; then
   echo FAILED
   exit 1

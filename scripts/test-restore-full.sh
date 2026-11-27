@@ -140,6 +140,9 @@ tar -xzf "${REMOTE_FULL}/${STAMP}/system-configs.tar.gz" -C "${stage}"
 rm -f -- "${stage}/etc/passwd" "${stage}/etc/shadow" "${stage}/etc/group" "${stage}/etc/gshadow" 2>/dev/null || true
 chmod 0755 "${FAKE_ROOT}"
 chmod 0700 "${stage}"
+printf 'OLDCONF\n' > "${FAKE_ROOT}/etc/ssh_config_hmtest"
+mkdir -p "${FAKE_ROOT}/var/lib/mysql"
+printf 'db\n' > "${FAKE_ROOT}/var/lib/mysql/ibdata"
 export HM_BACKUP_PRE_SYSTEM_DIR="${TMP}/pre-system"
 if ! hm_backup_apply_system_stage "${stage}" "${FAKE_ROOT}"; then
   fail "(d) hm_backup_apply_system_stage rc"
@@ -153,11 +156,36 @@ if grep -q 'liveuser' "${FAKE_ROOT}/etc/passwd" \
 else
   fail "(d) passwd/ssh/mode root_mode=${root_mode}"
 fi
-if compgen -G "${HM_BACKUP_PRE_SYSTEM_DIR}/system-*.tar.gz" >/dev/null 2>&1; then
-  pass "(d) pre-restore system archive exists"
+pre_arc="$(echo "${HM_BACKUP_PRE_SYSTEM_DIR}"/system-*.tar.gz)"
+if [[ -f "${pre_arc}" ]]; then
+  listing="$(tar -tzf "${pre_arc}" 2>/dev/null || true)"
+  if printf '%s\n' "${listing}" | grep -q 'etc/ssh_config_hmtest' \
+      && ! printf '%s\n' "${listing}" | grep -q 'ibdata'; then
+    pass "(d) pre-restore system tylko nadpisywane pliki"
+  else
+    fail "(d) pre-restore system ma zły zakres: ${listing}"
+  fi
 else
   fail "(d) brak pre-restore system-*.tar.gz"
 fi
+# nieudana kopia pre-restore ⇒ dest nietknięty
+FAKE2="${TMP}/sysroot2"
+mkdir -p "${FAKE2}/etc"
+printf 'KEEP\n' > "${FAKE2}/etc/keep.conf"
+mkdir -p "${TMP}/sysstage2/etc"
+printf 'NEW\n' > "${TMP}/sysstage2/etc/keep.conf"
+: > "${TMP}/pre-not-dir"
+export HM_BACKUP_PRE_SYSTEM_DIR="${TMP}/pre-not-dir"
+if hm_backup_apply_system_stage "${TMP}/sysstage2" "${FAKE2}"; then
+  fail "(d2) apply przy złym katalogu pre-restore powinien paść"
+else
+  if grep -q '^KEEP$' "${FAKE2}/etc/keep.conf"; then
+    pass "(d2) nieudany pre-restore system nie rusza dest"
+  else
+    fail "(d2) dest zmieniony mimo błędu kopii"
+  fi
+fi
+export HM_BACKUP_PRE_SYSTEM_DIR="${TMP}/pre-system"
 # uszkodzony tar system-configs ⇒ fail_n
 printf 'not-a-gzip' > "${REMOTE_FULL}/${STAMP}/system-configs.tar.gz"
 set +e

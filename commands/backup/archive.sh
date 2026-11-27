@@ -314,10 +314,42 @@ hm_backup_sums_lookup_in_blob() {
   return 1
 }
 
-# Weryfikuj webserver/php-fpm/meta/*.sql/meta kont — gzip+SHA gdy istnieją na remote.
+# Jeden artefakt poboczny. required=1: brak lub 0 B to błąd (manifest nginx/apache).
+# Wpis w SHA256SUMS też wymaga pliku niepustego — pusty/usunięty nie jest pomijany.
+hm_backup_verify_side_one() {
+  local remote_base="$1" f="$2" sums_blob="$3" required="${4:-0}"
+  local want got path="${remote_base}/${f}"
+  want="$(hm_backup_sums_lookup_in_blob "${sums_blob}" "${f}" || true)"
+  if ! hm_rclone_file_nonempty "${path}" 2>/dev/null; then
+    if [[ -n "${want}" || "${required}" -eq 1 ]]; then
+      hm_err "WERYFIKACJA NIEUDANA: ${f} brakuje albo ma 0 B (jest w SHA256SUMS albo wymaga go manifest)."
+      return 1
+    fi
+    return 0
+  fi
+  if [[ "${f}" == *.tar.gz ]]; then
+    if ! hm_backup_gzip_tar_ok "${path}" 1; then
+      hm_err "WERYFIKACJA NIEUDANA: ${f} uszkodzony (gzip/tar)!"
+      return 1
+    fi
+  fi
+  if [[ -z "${want}" ]]; then
+    hm_err "WERYFIKACJA NIEUDANA: brak SHA256 dla ${f} w SHA256SUMS!"
+    return 1
+  fi
+  got="$(hm_rclone_sha256_any "${path}" || true)"
+  if [[ -z "${got}" || "${got}" != "${want}" ]]; then
+    hm_err "WERYFIKACJA NIEUDANA: SHA256 ${f} niezgodny."
+    return 1
+  fi
+  return 0
+}
+
+# Weryfikuj webserver/php-fpm/meta/*.sql/meta kont — gzip+SHA.
+# Plik z linii SHA256SUMS musi istnieć i być niepusty (0 B / brak ≠ sukces).
 hm_backup_verify_side_artifacts() {
   local remote_base="$1"
-  local sums_blob="" want got f
+  local sums_blob="" f man="" web="" php="" req_web=0 req_fpm=0
   local -a side_tars=(webserver.tar.gz php-fpm.tar.gz meta.tar.gz ssl.tar.gz ols-vhost-dir.tar.gz)
   local -a side_plain=(
     db-accounts.sql db-accounts.sql.enc
@@ -331,36 +363,29 @@ hm_backup_verify_side_artifacts() {
     sums_blob="$(rclone cat "${remote_base}/SHA256SUMS" 2>/dev/null || true)"
   fi
 
-  for f in "${side_tars[@]}"; do
-    hm_rclone_file_nonempty "${remote_base}/${f}" 2>/dev/null || continue
-    if ! hm_backup_gzip_tar_ok "${remote_base}/${f}" 1; then
-      hm_err "WERYFIKACJA NIEUDANA: ${f} uszkodzony (gzip/tar)!"
-      return 1
-    fi
-    want="$(hm_backup_sums_lookup_in_blob "${sums_blob}" "${f}" || true)"
-    if [[ -z "${want}" ]]; then
-      hm_err "WERYFIKACJA NIEUDANA: brak SHA256 dla ${f} w SHA256SUMS!"
-      return 1
-    fi
-    got="$(hm_rclone_sha256_any "${remote_base}/${f}" || true)"
-    if [[ -z "${got}" || "${got}" != "${want}" ]]; then
-      hm_err "WERYFIKACJA NIEUDANA: SHA256 ${f} niezgodny."
-      return 1
-    fi
-  done
+  if [[ "${remote_base}" == /* && -f "${remote_base}/manifest.json" ]]; then
+    man="$(cat "${remote_base}/manifest.json" 2>/dev/null || true)"
+  elif [[ "${remote_base}" != /* ]]; then
+    man="$(rclone cat "${remote_base}/manifest.json" 2>/dev/null || true)"
+  fi
+  web="$(printf '%s' "${man}" | sed -n 's/.*"webserver"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  php="$(printf '%s' "${man}" | sed -n 's/.*"php"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  case "${web}" in
+    nginx|apache) req_web=1 ;;
+  esac
+  if [[ "${req_web}" -eq 1 && -n "${php}" && "${php}" != "?" && "${php}" != "null" ]]; then
+    req_fpm=1
+  fi
 
+  local req
+  for f in "${side_tars[@]}"; do
+    req=0
+    [[ "${f}" == "webserver.tar.gz" && "${req_web}" -eq 1 ]] && req=1
+    [[ "${f}" == "php-fpm.tar.gz" && "${req_fpm}" -eq 1 ]] && req=1
+    hm_backup_verify_side_one "${remote_base}" "${f}" "${sums_blob}" "${req}" || return 1
+  done
   for f in "${side_plain[@]}"; do
-    hm_rclone_file_nonempty "${remote_base}/${f}" 2>/dev/null || continue
-    want="$(hm_backup_sums_lookup_in_blob "${sums_blob}" "${f}" || true)"
-    if [[ -z "${want}" ]]; then
-      hm_err "WERYFIKACJA NIEUDANA: brak SHA256 dla ${f} w SHA256SUMS!"
-      return 1
-    fi
-    got="$(hm_rclone_sha256_any "${remote_base}/${f}" || true)"
-    if [[ -z "${got}" || "${got}" != "${want}" ]]; then
-      hm_err "WERYFIKACJA NIEUDANA: SHA256 ${f} niezgodny."
-      return 1
-    fi
+    hm_backup_verify_side_one "${remote_base}" "${f}" "${sums_blob}" 0 || return 1
   done
   return 0
 }

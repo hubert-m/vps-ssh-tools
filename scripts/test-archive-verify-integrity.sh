@@ -191,6 +191,36 @@ rc=$?
 set -e
 [[ "${rc}" -ne 0 ]] && pass "(s4) uszkodzony db-accounts.sql → rc≠0" || fail "(s4) oczekiwano rc≠0"
 
+# --- (s5) webserver.tar.gz 0 B, wpis w SHA256SUMS zostaje → rc≠0 ---
+cp -a "${SNAP}" "${TMP}/webempty"
+: > "${TMP}/webempty/webserver.tar.gz"
+printf '%s  webserver.tar.gz\n' "${HASH}" >> "${TMP}/webempty/SHA256SUMS"
+set +e
+hm_backup_verify_remote_archive "${TMP}/webempty" tar 0 shop_app >/dev/null 2>&1
+rc=$?
+set -e
+[[ "${rc}" -ne 0 ]] && pass "(s5) webserver.tar.gz 0 B → rc≠0" || fail "(s5) oczekiwano rc≠0"
+
+# --- (s6) wpis SHA bez pliku (usunięty) → rc≠0 ---
+cp -a "${SNAP}" "${TMP}/webgone"
+printf '%s  db-accounts.sql\n' "${HASH}" >> "${TMP}/webgone/SHA256SUMS"
+rm -f "${TMP}/webgone/db-accounts.sql"
+set +e
+hm_backup_verify_remote_archive "${TMP}/webgone" tar 0 shop_app >/dev/null 2>&1
+rc=$?
+set -e
+[[ "${rc}" -ne 0 ]] && pass "(s6) db-accounts.sql usunięty, SUMS zostaje → rc≠0" || fail "(s6) oczekiwano rc≠0"
+
+# --- (s7) manifest nginx+php bez webserver.tar.gz → rc≠0 ---
+cp -a "${SNAP}" "${TMP}/webneed"
+printf '%s\n' "{\"type\":\"archive\",\"sha256_files\":\"${HASH}\",\"files_mode\":\"tar\",\"status\":\"ok\",\"webserver\":\"nginx\",\"php\":\"8.3\"}" \
+  > "${TMP}/webneed/manifest.json"
+set +e
+hm_backup_verify_remote_archive "${TMP}/webneed" tar 0 shop_app >/dev/null 2>&1
+rc=$?
+set -e
+[[ "${rc}" -ne 0 ]] && pass "(s7) manifest nginx+php bez webserver.tar.gz → rc≠0" || fail "(s7) oczekiwano rc≠0"
+
 # --- (e) błąd copyto ssl → archive nie woła delete ---
 DELETE_CALLED=0
 hm_site_execute_delete() { DELETE_CALLED=1; return 0; }

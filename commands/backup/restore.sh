@@ -107,12 +107,19 @@ hm_backup_rsync_protect_excludes() {
   IFS="${_save_ifs}"
   for e in "${parts[@]+"${parts[@]}"}"; do
     [[ -n "${e}" ]] || continue
-    pat="${e#./}"
-    [[ -n "${pat}" ]] || continue
+    pat="${e}"
+    # ./tmp i /tmp = tylko korzeń transferu (jak tar --exclude=./tmp).
+    # *.log bez kotwicy — backup też wyklucza je na każdej głębokości.
+    if [[ "${pat}" == ./* ]]; then
+      pat="/${pat#./}"
+    elif [[ "${pat}" != /* && "${pat}" != *[\*\?\[]* ]]; then
+      pat="/${pat}"
+    fi
+    [[ -n "${pat}" && "${pat}" != "/" ]] || continue
     # P = protect from --delete (nie z --exclude transferu)
     _prot_out+=("--filter=P_${pat}")
     case "${pat}" in
-      *\**|*/) ;;
+      *[\*\?\[]*|*/) ;;
       *) _prot_out+=("--filter=P_${pat}/***") ;;
     esac
   done
@@ -226,23 +233,27 @@ hm_backup_restore_files() {
       return 1
     }
     chmod 0700 "${pre_bak}" 2>/dev/null || true
+    local undo
     if hm_have_cmd rsync; then
       if ! rsync -aHAXS --numeric-ids "${target_dir}/" "${pre_bak}/"; then
         hm_err "Kopia pre-restore plików nieudana — target nietknięty."
         rm -rf -- "${staging}" "${pre_bak}"
         return 1
       fi
+      undo="rsync -aHAXS --numeric-ids --delete ${pre_bak}/ ${target_dir}/"
     else
-      # create+extract meta — bez --acls/--sparse po stronie -cf ACL/xattr/sparse giną
+      # Kopia 1:1 żywego katalogu: jako root --same-owner --numeric-owner
+      # ( --no-same-owner zapisuje root:root i psuje cofnięcie ).
       # shellcheck disable=SC2086
-      if ! tar -C "${target_dir}" ${meta_c} -cf - . | tar --no-same-owner ${meta_x} -C "${pre_bak}" -xf -; then
+      if ! tar -C "${target_dir}" ${meta_c} -cf - . | tar --same-owner --numeric-owner ${meta_x} -C "${pre_bak}" -xf -; then
         hm_err "Kopia pre-restore plików nieudana — target nietknięty."
         rm -rf -- "${staging}" "${pre_bak}"
         return 1
       fi
+      undo="tar -C ${pre_bak} ${meta_c} -cf - . | tar --same-owner --numeric-owner ${meta_x} -C ${target_dir} -xf -"
     fi
     hm_backup_prune_pre_restore_dirs "${slug}" "${parent}"
-    hm_ok "Kopia przed restore: ${pre_bak} (keep=${keep_n}; cofnięcie: rsync -aHAXS --delete ${pre_bak}/ ${target_dir}/; sprzątanie: rm -rf ${pre_bak})."
+    hm_ok "Kopia przed restore: ${pre_bak} (keep=${keep_n}; cofnięcie: ${undo}; sprzątanie: rm -rf ${pre_bak})."
   fi
 
   if hm_backup_restore_snap_is_archive "${remote_base}"; then
@@ -267,7 +278,9 @@ hm_backup_restore_files() {
       return 1
     fi
   else
-    # Fallback bez rsync: potok tar z meta po obu stronach (ACL/xattr/sparse)
+    # Fallback bez rsync: potok tar z meta po obu stronach (ACL/xattr/sparse).
+    # --no-same-owner zostaje: staging pochodzi ze snapshota (też --no-same-owner),
+    # właściciela serwisu ustawia później hm_backup_restore_fix_ownership.
     if [[ "${overwrite_files}" -eq 1 && "${keep_extra}" -ne 1 ]]; then
       hm_warn "Brak rsync — nie usuwam obcych plików (--overwrite-files wymaga rsync)."
     fi
@@ -2606,8 +2619,8 @@ hm_backup_restore() {
 # $1=sys_stage $2=dest (domyślnie /)
 hm_backup_apply_system_stage() {
   local sys_stage="$1" dest="${2:-/}"
-  local -a tops=() existing=()
-  local e base pre_dir pre_arc stamp
+  local -a tops=()
+  local e base pre_dir pre_arc stamp listf rel abs dest_slash
   [[ -d "${sys_stage}" ]] || return 1
   [[ -d "${dest}" ]] || return 1
   shopt -s nullglob
@@ -2621,23 +2634,44 @@ hm_backup_apply_system_stage() {
     hm_warn "system-configs: brak wpisów do zastosowania po filtrach."
     return 0
   fi
-  # Kopia bieżących drzew przed nadpisaniem (best-effort)
+  # Kopia tylko plików, które restore nadpisze (nie całe /etc ani /var).
+  # Niepowodzenie kopii przerywa apply — dest zostaje nietknięty.
   pre_dir="${HM_BACKUP_PRE_SYSTEM_DIR:-/var/backups/hmtools/pre-restore}"
-  if mkdir -p -- "${pre_dir}" 2>/dev/null; then
-    for base in "${tops[@]}"; do
-      [[ -e "${dest}/${base}" ]] && existing+=("${base}")
-    done
-    if [[ "${#existing[@]}" -gt 0 ]]; then
-      stamp="$(date +%Y%m%d-%H%M%S)"
-      pre_arc="${pre_dir}/system-${stamp}.tar.gz"
-      if tar -C "${dest}" -czf "${pre_arc}" "${existing[@]}" 2>/dev/null; then
-        hm_info "Kopia pre-restore system → ${pre_arc}"
-      else
-        hm_warn "Nie udało się zapisać pre-restore system (${pre_arc})."
-        rm -f -- "${pre_arc}" 2>/dev/null || true
-      fi
+  pre_dir="${pre_dir%/}"
+  dest_slash="${dest%/}"
+  [[ -n "${dest_slash}" ]] || dest_slash="/"
+  listf="$(mktemp "${TMP_DIR:-/tmp}/hmtools-syslist.XXXXXX")" || return 1
+  while IFS= read -r -d '' rel; do
+    rel="${rel#./}"
+    [[ -n "${rel}" ]] || continue
+    if [[ "${dest_slash}" == "/" ]]; then
+      abs="/${rel}"
+    else
+      abs="${dest_slash}/${rel}"
     fi
+    case "${abs}" in
+      "${pre_dir}"|"${pre_dir}"/*) continue ;;
+    esac
+    if [[ -e "${abs}" || -L "${abs}" ]]; then
+      printf '%s\n' "${rel}" >> "${listf}"
+    fi
+  done < <(cd "${sys_stage}" && find . -mindepth 1 \( -type f -o -type l \) -print0)
+  if [[ -s "${listf}" ]]; then
+    if ! mkdir -p -- "${pre_dir}" 2>/dev/null; then
+      hm_err "Nie można utworzyć ${pre_dir} — ${dest} nietknięty."
+      rm -f -- "${listf}"
+      return 1
+    fi
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    pre_arc="${pre_dir}/system-${stamp}.tar.gz"
+    if ! tar --no-recursion -C "${dest}" -czf "${pre_arc}" --files-from="${listf}"; then
+      hm_err "Nie udało się zapisać pre-restore system (${pre_arc}) — ${dest} nietknięty."
+      rm -f -- "${pre_arc}" "${listf}"
+      return 1
+    fi
+    hm_info "Kopia pre-restore system → ${pre_arc}"
   fi
+  rm -f -- "${listf}"
   # Tylko top-level (etc, var, …); --no-overwrite-dir nie zmienia trybu istniejących katalogów (/)
   if ! tar -C "${sys_stage}" -cf - "${tops[@]}" | tar -C "${dest}" --no-overwrite-dir -xf -; then
     return 1

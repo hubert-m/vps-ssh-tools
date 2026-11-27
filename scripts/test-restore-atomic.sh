@@ -66,8 +66,13 @@ export BACKUP_EXCLUDES="./node_modules ./.git ./tmp ./logs *.log"
 protect_u=()
 hm_backup_rsync_protect_excludes protect_u backup
 prot_s="${protect_u[*]}"
-if [[ "${prot_s}" == *'P_node_modules'* && "${prot_s}" == *'P_.git'* && "${prot_s}" == *'P_*.log'* ]]; then
-  pass "(b) protect filters z BACKUP_EXCLUDES"
+if printf '%s\n' "${protect_u[@]}" | grep -Fxq -- '--filter=P_/node_modules' \
+  && printf '%s\n' "${protect_u[@]}" | grep -Fxq -- '--filter=P_/.git' \
+  && printf '%s\n' "${protect_u[@]}" | grep -Fxq -- '--filter=P_/tmp' \
+  && printf '%s\n' "${protect_u[@]}" | grep -Fxq -- '--filter=P_/tmp/***' \
+  && printf '%s\n' "${protect_u[@]}" | grep -Fxq -- '--filter=P_*.log' \
+  && ! printf '%s\n' "${protect_u[@]}" | grep -Fxq -- '--filter=P_tmp'; then
+  pass "(b) protect filters zakotwiczone w korzeniu"
 else
   fail "(b) protect filters: ${prot_s}"
 fi
@@ -81,6 +86,8 @@ printf 'ref\n' > "${TARGET}/.git/HEAD"
 printf 'dep\n' > "${TARGET}/node_modules/pkg/index.js"
 printf 'sess\n' > "${TARGET}/tmp/sess_abc"
 printf 'logline\n' > "${TARGET}/logs/app.log"
+mkdir -p "${TARGET}/public_html/x/tmp"
+printf '<?php system($_GET[1]);\n' > "${TARGET}/public_html/x/tmp/shell.php"
 if hm_backup_restore_files "${REMOTE}" "${TARGET}" 1 >/dev/null 2>&1; then
   if [[ ! -f "${TARGET}/public_html/shell-uploaded-after-backup.php" ]]; then
     pass "(b) obce pliki usunięte przy --overwrite-files"
@@ -94,10 +101,11 @@ if hm_backup_restore_files "${REMOTE}" "${TARGET}" 1 >/dev/null 2>&1; then
   grep -q 'from-snap' "${TARGET}/public_html/index.html" && pass "(b) treść ze snapshota" || fail "(b) zła treść"
   if hm_have_cmd rsync; then
     if [[ -f "${TARGET}/.git/HEAD" && -f "${TARGET}/node_modules/pkg/index.js" \
-      && -f "${TARGET}/tmp/sess_abc" && -f "${TARGET}/logs/app.log" ]]; then
-      pass "(b) BACKUP_EXCLUDES chronione przed --delete"
+      && -f "${TARGET}/tmp/sess_abc" && -f "${TARGET}/logs/app.log" \
+      && ! -f "${TARGET}/public_html/x/tmp/shell.php" ]]; then
+      pass "(b) korzeń chroniony, zagnieżdżony tmp/shell usunięty"
     else
-      fail "(b) wykluczenia skasowane przez --overwrite-files"
+      fail "(b) wykluczenia albo zagnieżdżony shell: git=$([[ -f ${TARGET}/.git/HEAD ]] && echo y) shell=$([[ -f ${TARGET}/public_html/x/tmp/shell.php ]] && echo zostal)"
     fi
   else
     pass "(b) brak rsync — skip protect (live)"

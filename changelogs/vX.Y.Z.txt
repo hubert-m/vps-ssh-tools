@@ -66,3 +66,7 @@
 - Fix: backup restore — pre-restore plików w `/var/lib/hmtools/pre-restore/<domena>/<stamp>` (0700), `BACKUP_PRE_RESTORE_KEEP`, kasuje legacy `.hm-pre-restore-*` z `/home`; `backup list` pokazuje rozmiar; test-restore-atomic
 - Fix: docker compose update — `hm_docker_health_ok` czeka na `healthy` (`starting` OK); timeout/`unhealthy`/restart → rollback; stabilność bez healthchecka; test-docker-ops
 - Feat: docker df / docker system df (`--verbose`) oraz docker prune `--all` jako `system prune -a` (osobno od zwykłego prune); opisy parametrów; test-docker-map
+- Fix: backup restore bez rsync — kopia pre-restore `--same-owner --numeric-owner` (nie root:root); podpowiedź cofnięcia bez rsync; test-backup-file-fidelity
+- Fix: archive verify — plik z `SHA256SUMS` pusty lub usunięty ⇒ rc≠0; manifest nginx/apache + PHP wymaga `webserver.tar.gz` / `php-fpm.tar.gz`; test-archive-verify-integrity
+- Fix: restore-full `--system` — pre-restore tylko nadpisywanych plików (`--files-from`, bez całego `/var`); błąd kopii ⇒ dest nietknięty; test-restore-full
+- Fix: restore `--overwrite-files` — `BACKUP_EXCLUDES` z `./` chronione tylko w korzeniu (`P_/tmp`), `*.log` bez kotwicy; test-restore-atomic
