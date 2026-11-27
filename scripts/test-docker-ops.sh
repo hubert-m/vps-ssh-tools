@@ -74,7 +74,11 @@ if [[ "${cmd}" == "inspect" ]]; then
   elif [[ "${fmt}" == *'.Image'* ]]; then
     echo 'sha256:aaa'
   elif [[ "${fmt}" == *State.Status* ]]; then
-    echo 'running'
+    _v="$(printf '%s' "${HM_DOCKER_INSPECT_STATUS:-}" | tr ';' '\n' | sed -n "s/^${target}=//p" | head -1)"
+    echo "${_v:-running}"
+  elif [[ "${fmt}" == *State.ExitCode* ]]; then
+    _v="$(printf '%s' "${HM_DOCKER_INSPECT_EXIT:-}" | tr ';' '\n' | sed -n "s/^${target}=//p" | head -1)"
+    echo "${_v:-0}"
   elif [[ "${fmt}" == *State.Restarting* ]]; then
     echo 'false'
   elif [[ "${fmt}" == *RestartCount* ]]; then
@@ -90,11 +94,17 @@ if [[ "${cmd}" == "inspect" ]]; then
       _line="$(printf '%s' "${HM_DOCKER_HEALTH_SEQ}" | cut -d, -f"${_n}")"
       [[ -n "${_line}" ]] || _line="$(printf '%s' "${HM_DOCKER_HEALTH_SEQ}" | awk -F, '{print $NF}')"
       echo "${_line}"
+    elif [[ -n "${HM_DOCKER_INSPECT_HEALTH:-}" ]]; then
+      _v="$(printf '%s' "${HM_DOCKER_INSPECT_HEALTH}" | tr ';' '\n' | sed -n "s/^${target}=//p" | head -1)"
+      echo "${_v}"
     else
       echo 'healthy'
     fi
   elif [[ "${fmt}" == *RestartPolicy* ]]; then
-    if [[ "${target}" == "cid1" ]]; then echo 'no'; else echo 'unless-stopped'; fi
+    if [[ -n "${HM_DOCKER_INSPECT_RESTART:-}" ]]; then
+      _v="$(printf '%s' "${HM_DOCKER_INSPECT_RESTART}" | tr ';' '\n' | sed -n "s/^${target}=//p" | head -1)"
+      echo "${_v:-no}"
+    elif [[ "${target}" == "cid1" ]]; then echo 'no'; else echo 'unless-stopped'; fi
   elif [[ "${fmt}" == *Healthcheck* ]]; then
     if [[ "${target}" == "cid1" ]]; then echo 'no'; else echo 'yes'; fi
   elif [[ "${fmt}" == *Privileged* ]]; then
@@ -278,6 +288,51 @@ else
 fi
 grep -E 'force-recreate' "${HM_DOCKER_LOG}" >/dev/null && ok health-wait-timeout-rollback || bad health-wait-timeout-rollback
 unset HM_DOCKER_HEALTH_SEQ HM_DOCKER_HEALTH_SEQ_FILE
+
+# oneshot migrate (exited 0, restart no) + healthy app → OK
+unset HM_DOCKER_HEALTH
+export HM_DOCKER_HEALTH_TIMEOUT=5
+export HM_DOCKER_HEALTH_INTERVAL=1
+export HM_DOCKER_NOHEALTH_STABLE=0
+export HM_DOCKER_INSPECT_STATUS='cid1=exited;cid2=running'
+export HM_DOCKER_INSPECT_EXIT='cid1=0;cid2=0'
+export HM_DOCKER_INSPECT_RESTART='cid1=no;cid2=unless-stopped'
+export HM_DOCKER_INSPECT_HEALTH='cid1=;cid2=healthy'
+# ps -aq dla projektu zwraca tylko cid1 w mocku — nadpisz na dwa
+docker() {
+  if [[ "${1:-}" == "ps" ]]; then
+    printf '%s\n' 'cid1' 'cid2'
+    return 0
+  fi
+  "${DOCKER_BIN}" "$@"
+}
+export -f docker 2>/dev/null || true
+DOCKER_BIN_SAVE="${DOCKER_BIN}"
+# wołaj przez wrapper: zastąp DOCKER_BIN skryptem z dwoma cid
+cat > "${root}/bin/docker-ps2" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == "ps" ]]; then
+  printf '%s\\n' 'cid1' 'cid2'
+  exit 0
+fi
+exec "${DOCKER_BIN_SAVE}" "\$@"
+EOF
+chmod +x "${root}/bin/docker-ps2"
+export DOCKER_BIN="${root}/bin/docker-ps2"
+if hm_docker_health_ok app_staging; then
+  ok health-oneshot-ok
+else
+  bad health-oneshot-ok
+fi
+# exited 1 → fail
+export HM_DOCKER_INSPECT_EXIT='cid1=1;cid2=0'
+if hm_docker_health_ok app_staging; then
+  bad health-oneshot-fail-exit
+else
+  ok health-oneshot-fail-exit
+fi
+unset HM_DOCKER_INSPECT_STATUS HM_DOCKER_INSPECT_EXIT HM_DOCKER_INSPECT_RESTART HM_DOCKER_INSPECT_HEALTH
+export DOCKER_BIN="${DOCKER_BIN_SAVE}"
 export HM_DOCKER_HEALTH=ok
 
 [[ "${fail}" -eq 0 ]] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

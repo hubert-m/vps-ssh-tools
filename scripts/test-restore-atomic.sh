@@ -177,6 +177,42 @@ else
   fail "(f) oczekiwano 1 katalog pre-restore i 0 legacy, jest n_pre=${n_pre} n_home=${n_home}"
 fi
 
+# --- (g) legacy .hm-pre-restore-<stamp> (bez domeny) usuwane ---
+mkdir -p "${TMP}/.hm-pre-restore-20261125-101010/public_html"
+printf 'old\n' > "${TMP}/.hm-pre-restore-20261125-101010/public_html/x"
+export HM_SITE_DOMAIN="site4.example.test"
+TARGET4="${TMP}/site4"
+mkdir -p "${TARGET4}/public_html"
+printf 'z\n' > "${TARGET4}/public_html/index.html"
+hm_backup_restore_files "${REMOTE}" "${TARGET4}" 1 >/dev/null 2>&1 || true
+if [[ ! -d "${TMP}/.hm-pre-restore-20261125-101010" ]]; then
+  pass "(g) legacy .hm-pre-restore-<stamp> usunięty"
+else
+  fail "(g) legacy stamp-only nadal istnieje"
+fi
+
+# --- (h) KEEP=0: bez kopii, ostrzeżenie, brak ścieżki do nieistniejącego bak ---
+export HM_BACKUP_PRE_RESTORE_KEEP=0
+export BACKUP_PRE_RESTORE_KEEP=0
+export HM_SITE_DOMAIN="site5.example.test"
+TARGET5="${TMP}/site5"
+mkdir -p "${TARGET5}/public_html"
+printf 'k0\n' > "${TARGET5}/public_html/index.html"
+out_k0="$(hm_backup_restore_files "${REMOTE}" "${TARGET5}" 1 2>&1 || true)"
+n_k0=0
+if [[ -d "${HM_BACKUP_PRE_RESTORE_FILES_DIR}/site5.example.test" ]]; then
+  n_k0="$(find "${HM_BACKUP_PRE_RESTORE_FILES_DIR}/site5.example.test" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+  n_k0="${n_k0:-0}"
+fi
+if [[ "${n_k0}" -eq 0 ]] && printf '%s' "${out_k0}" | grep -qi 'KEEP=0' \
+  && ! printf '%s' "${out_k0}" | grep -qE 'Kopia przed restore: .+/site5\.example\.test/'; then
+  pass "(h) KEEP=0 bez kopii + ostrzeżenie"
+else
+  fail "(h) KEEP=0: n=${n_k0} out=$(printf '%s' "${out_k0}" | tr '\n' '|')"
+fi
+export HM_BACKUP_PRE_RESTORE_KEEP=1
+export BACKUP_PRE_RESTORE_KEEP=1
+
 # --- (e) recreate_db: DROP + CREATE (lustro snapshotu) ---
 printf 'CREATE DATABASE IF NOT EXISTS `app` CHARACTER SET utf8mb4;\n' > "${REMOTE}/db/app.create.sql"
 FAKE_MYSQL="${TMP}/fake-mysql"

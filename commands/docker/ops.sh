@@ -115,10 +115,11 @@ hm_docker_save_digests() {
 }
 
 # Czeka aż kontenery projektu będą healthy (albo stabilne running bez healthchecka).
-# starting ≠ fail; unhealthy / exited / restarting / timeout → błąd.
+# starting ≠ fail; unhealthy / restarting / timeout → błąd.
+# Oneshot (exited 0 + restart no|on-failure) — OK (migrate/init).
 hm_docker_health_ok() {
   local project="$1"
-  local id st health rest rstcnt url code
+  local id st health rest rstcnt url code exitc pol
   local timeout interval stable_need end all_ok
   local -A nohc_since=() nohc_restarts=()
 
@@ -152,6 +153,20 @@ hm_docker_health_ok() {
       fi
       case "${st}" in
         running) ;;
+        exited|dead)
+          # Jednorazowy serwis (migrate/init): ExitCode=0 + restart no|on-failure → pomiń
+          exitc="$("${DOCKER_BIN}" inspect -f '{{.State.ExitCode}}' "${id}" 2>/dev/null || true)"
+          pol="$("${DOCKER_BIN}" inspect -f '{{.HostConfig.RestartPolicy.Name}}' "${id}" 2>/dev/null || true)"
+          [[ "${exitc}" =~ ^[0-9]+$ ]] || exitc=1
+          if [[ "${exitc}" -eq 0 && ( "${pol}" == "no" || "${pol}" == "" || "${pol}" == "on-failure" ) ]]; then
+            continue
+          fi
+          return 1
+          ;;
+        created|removing)
+          all_ok=0
+          continue
+          ;;
         *) return 1 ;;
       esac
 

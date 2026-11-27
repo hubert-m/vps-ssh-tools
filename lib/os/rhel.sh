@@ -36,6 +36,10 @@ _hm_os_do_apache_unit() {
   printf 'httpd'
 }
 
+_hm_os_do_apache_pkg() {
+  printf 'httpd'
+}
+
 _hm_os_do_apache_error_log() {
   if [[ -f /var/log/httpd/error_log ]]; then
     printf '%s' /var/log/httpd/error_log

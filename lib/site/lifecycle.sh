@@ -74,9 +74,24 @@ hm_site_resource_read() {
   [[ -n "${HM_SITE_RES_KIND}" && -n "${HM_SITE_RES_PATH}" ]]
 }
 
+hm_site_runtime_type() {
+  local path="$1"
+  sed -n 's/.*"runtime":{"type":"\([^"]*\)".*/\1/p' "${path}" | head -1
+}
+
 hm_site_runtime_version() {
   local path="$1"
   sed -n 's/.*"runtime":{"type":"[^"]*","version":"\([^"]*\)".*/\1/p' "${path}" | head -1
+}
+
+# Wersja tylko dla runtime.type=php (nie python/dotnet/node).
+hm_site_php_runtime_version() {
+  local path="$1" typ ver
+  typ="$(hm_site_runtime_type "${path}" 2>/dev/null || true)"
+  [[ "${typ}" == "php" ]] || return 1
+  ver="$(hm_site_runtime_version "${path}" 2>/dev/null || true)"
+  [[ -n "${ver}" && "${ver}" != "?" && "${ver}" != "*" ]] || return 1
+  printf '%s' "${ver}"
 }
 
 hm_site_manifest_set_version() {

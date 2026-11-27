@@ -358,18 +358,48 @@ hm_site_base_resolve_user() {
   printf '%s' "${user}"
 }
 
+# Top-level `.user` z manifestu (nie `databases[].user` — unikaj zachłannego sed).
+hm_site_manifest_user() {
+  local man="${1:-}" u=""
+  [[ -n "${man}" && -f "${man}" && ! -L "${man}" ]] || return 1
+  if hm_have_cmd jq; then
+    u="$(jq -r '.user // empty' "${man}" 2>/dev/null || true)"
+  fi
+  if [[ -z "${u}" || "${u}" == "null" ]]; then
+    # Pierwsze "user" w pliku = pole najwyższego poziomu (przed databases).
+    u="$(grep -oE '"user"[[:space:]]*:[[:space:]]*"[^"]+"' "${man}" 2>/dev/null \
+      | head -1 | sed -n 's/.*"\([^"]*\)"$/\1/p' || true)"
+  fi
+  [[ -n "${u}" && "${u}" != "null" ]] || return 1
+  printf '%s' "${u}"
+}
+
 # User rodzica (manifest / site.env) dla --child-of.
 hm_site_base_parent_user() {
   local parent="$1" man envf u
   man="$(hm_site_manifest_path "${parent}" 2>/dev/null || true)"
   if [[ -n "${man}" && -f "${man}" ]]; then
-    u="$(sed -n 's/.*"user":"\([^"]*\)".*/\1/p' "${man}" | head -1)"
-    [[ -n "${u}" ]] && { printf '%s' "${u}"; return 0; }
+    u="$(hm_site_manifest_user "${man}" 2>/dev/null || true)"
+    if [[ -n "${u}" ]]; then
+      if ! hm_site_base_user_exists "${u}"; then
+        hm_err "User rodzica z manifestu (${u}) nie istnieje w systemie."
+        return 1
+      fi
+      printf '%s' "${u}"
+      return 0
+    fi
   fi
   envf="$(hm_site_home "${parent}")/.config/hmtools/site.env"
   if [[ -f "${envf}" ]]; then
     u="$(sed -n 's/^user=//p' "${envf}" | head -1)"
-    [[ -n "${u}" ]] && { printf '%s' "${u}"; return 0; }
+    if [[ -n "${u}" ]]; then
+      if ! hm_site_base_user_exists "${u}"; then
+        hm_err "User rodzica z site.env (${u}) nie istnieje w systemie."
+        return 1
+      fi
+      printf '%s' "${u}"
+      return 0
+    fi
   fi
   hm_site_base_resolve_user "${parent}" ""
 }
@@ -403,11 +433,7 @@ hm_site_base_user_owner_domain() {
     [[ -f "${f}" && ! -L "${f}" ]] || continue
     domain="$(basename "${f}" .json)"
     [[ -n "${skip}" && "${domain}" == "${skip}" ]] && continue
-    if hm_have_cmd jq; then
-      u="$(jq -r '.user // empty' "${f}" 2>/dev/null || true)"
-    else
-      u="$(sed -n 's/.*"user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${f}" | head -1)"
-    fi
+    u="$(hm_site_manifest_user "${f}" 2>/dev/null || true)"
     if [[ "${u}" == "${login}" ]]; then
       printf '%s' "${domain}"
       return 0
@@ -431,7 +457,7 @@ hm_site_base_check() {
   fi
   [[ -n "${user_arg}" ]] && user_explicit=1
   if [[ -n "${child}" && -z "${user_arg}" ]]; then
-    user="$(hm_site_base_parent_user "${child}")"
+    user="$(hm_site_base_parent_user "${child}")" || return 1
     user_explicit=0
   else
     user="$(hm_site_base_resolve_user "${domain}" "${user_arg}")"

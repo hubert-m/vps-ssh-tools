@@ -124,8 +124,9 @@ echo "${ch_line}" | grep -qE "VALUES \('[^']+',[0-9]+\), \('[^']+',[0-9]+\)" \
 [[ "$(declare -f hm_backup_restore_ssl | grep -c 'skip_live.*-eq 1')" -ge 1 ]] \
   && ok "ssl-skip-live-eq1" || bad "ssl-skip-live-eq1"
 
-# Dump/import bez LOCK TABLES; re-link po placeholderze, nie po src_id
+# Dump/import bez LOCK / ALTER KEYS; re-link po placeholderze, nie po src_id
 grep -q 'skip-add-locks' commands/backup/archive.sh && ok "cp-dump-skip-locks" || bad "cp-dump-skip-locks"
+grep -q 'skip-disable-keys' commands/backup/archive.sh && ok "cp-dump-skip-disable-keys" || bad "cp-dump-skip-disable-keys"
 if declare -f hm_backup_restore_cyberpanel_site | grep -q 'fk_ph=2147483000' \
   && declare -f hm_backup_restore_cyberpanel_site | grep -q 'hm_backup_cp_sql_remap_fk_ids' \
   && ! declare -f hm_backup_restore_cyberpanel_site | grep -qE 'WHERE master_id=\$\{src_id\}'; then
@@ -133,17 +134,40 @@ if declare -f hm_backup_restore_cyberpanel_site | grep -q 'fk_ph=2147483000' \
 else
   bad "cp-relink-placeholder"
 fi
+declare -f hm_backup_restore_cyberpanel_site | grep -q "master_id=\${fk_ph}" \
+  && ok "cp-orphan-cleanup" || bad "cp-orphan-cleanup"
 LOCKSQL="${TMP}/cp-lock.sql"
 cat > "${LOCKSQL}" <<'EOF'
 -- source id=5
 LOCK TABLES `websiteFunctions_websites` WRITE;
+/*!40000 ALTER TABLE `websiteFunctions_websites` DISABLE KEYS */;
 INSERT INTO `websiteFunctions_websites` (`domain`) VALUES ('ex.test');
+/*!40000 ALTER TABLE `websiteFunctions_websites` ENABLE KEYS */;
 UNLOCK TABLES;
 INSERT INTO `databases_databases` (`dbName`,`website_id`) VALUES ('ex_old',5);
 EOF
-grep -Ev '^(LOCK TABLES|UNLOCK TABLES)' "${LOCKSQL}" > "${LOCKSQL}.out"
-! grep -qE '^(LOCK TABLES|UNLOCK TABLES)' "${LOCKSQL}.out" \
-  && grep -q 'ex_old' "${LOCKSQL}.out" && ok "cp-filter-locks" || bad "cp-filter-locks"
+hm_backup_cp_sql_filter_autocommit "${LOCKSQL}"
+! grep -qE '^(LOCK TABLES|UNLOCK TABLES)|ALTER TABLE .+ (DISABLE|ENABLE) KEYS' "${LOCKSQL}" \
+  && grep -q 'ex_old' "${LOCKSQL}" && ok "cp-filter-autocommit" || bad "cp-filter-autocommit"
+
+# Apostrof w path (mysqldump \') — strip id nie gubi VALUES
+APOS="${TMP}/cp-apos.sql"
+cat > "${APOS}" <<'EOF'
+INSERT INTO `websiteFunctions_childdomains` (`id`, `domain`, `path`, `master_id`) VALUES (10,'old.ex.test','/home/ex.test/o\'brien',5);
+EOF
+hm_archive_cp_sql_strip_explicit_ids "${APOS}" || bad "cp-strip-apos-run"
+if grep -q "o\\\\'brien" "${APOS}" && grep -qE "VALUES \('old\.ex\.test'" "${APOS}" \
+  && ! grep -qE "VALUES \(10," "${APOS}"; then
+  ok "cp-strip-apos"
+else
+  bad "cp-strip-apos $(cat "${APOS}")"
+fi
+if hm_backup_cp_sql_remap_fk_ids "${APOS}" "${APOS}.out" 5 2147483000 \
+  && grep -q '2147483000' "${APOS}.out" && grep -q "o\\\\'brien" "${APOS}.out"; then
+  ok "cp-remap-apos"
+else
+  bad "cp-remap-apos $(cat "${APOS}.out" 2>/dev/null || true)"
+fi
 
 # Remap FK src→placeholder
 REMAP_IN="${TMP}/remap-in.sql"

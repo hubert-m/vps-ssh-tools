@@ -35,6 +35,10 @@ _hm_os_do_apache_unit() {
   printf 'apache2'
 }
 
+_hm_os_do_apache_pkg() {
+  printf 'apache2'
+}
+
 _hm_os_do_apache_error_log() {
   if [[ -f /var/log/apache2/error.log ]]; then
     printf '%s' /var/log/apache2/error.log

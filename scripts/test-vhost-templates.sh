@@ -280,6 +280,59 @@ else
   ok "python-snippet-skip"
 fi
 
+# apache: sites-enabled + pakiet apache2 (nie „apache”)
+ap_avail="${root}/apache2/sites-available"
+ap_en="${root}/apache2/sites-enabled"
+mkdir -p "${ap_avail}" "${ap_en}"
+ap_dest="${ap_avail}/ap.example.pl.conf"
+export HM_SITE_WEB_VALIDATE=ok
+body="$(hm_site_web_render apache static)"
+if hm_site_web_apply_file apache static "${ap_dest}" "${body}" >/dev/null 2>&1 \
+  && [[ -f "${ap_dest}" ]] \
+  && [[ -e "${ap_en}/ap.example.pl.conf" ]]; then
+  ok "apache-enabled"
+else
+  bad "apache-enabled"
+  ls -la "${ap_en}" >&2 || true
+fi
+# offer_install: apache2 w PATH ⇒ bez hm_pkg_install
+: > "${HM_SITE_WEB_LOG}"
+hm_os_apache_pkg() { printf 'apache2'; }
+hm_pkg_install() { echo "PKG:$*" >> "${HM_SITE_WEB_LOG}"; return 0; }
+if hm_site_web_offer_install apache 1 >/dev/null 2>&1 \
+  && ! grep -q 'PKG:' "${HM_SITE_WEB_LOG}"; then
+  ok "apache-detect-installed"
+else
+  bad "apache-detect-installed"
+  cat "${HM_SITE_WEB_LOG}" >&2 || true
+fi
+# bez apache* w PATH ⇒ instalacja pakietu z hm_os_apache_pkg (apache2)
+hm_have_cmd() {
+  case "$1" in
+    nginx) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+: > "${HM_SITE_WEB_LOG}"
+hm_os_apache_pkg() { printf 'apache2'; }
+if hm_site_web_offer_install apache 1 >/dev/null 2>&1 \
+  && grep -qx 'PKG:apache2' "${HM_SITE_WEB_LOG}"; then
+  ok "apache-pkg-apache2"
+else
+  bad "apache-pkg-apache2"
+  cat "${HM_SITE_WEB_LOG}" >&2 || true
+fi
+# RHEL: httpd
+: > "${HM_SITE_WEB_LOG}"
+hm_os_apache_pkg() { printf 'httpd'; }
+if hm_site_web_offer_install apache 1 >/dev/null 2>&1 \
+  && grep -qx 'PKG:httpd' "${HM_SITE_WEB_LOG}"; then
+  ok "apache-pkg-httpd"
+else
+  bad "apache-pkg-httpd"
+  cat "${HM_SITE_WEB_LOG}" >&2 || true
+fi
+
 if [[ "${fail}" -eq 0 ]]; then
   echo "ALL PASSED"
 else

@@ -26,9 +26,8 @@ OLS_ROOT=""
 
 # stub manifestu
 hm_site_manifest_path() { printf '%s/sites/%s.json' "${tmpdir}" "$1"; }
-hm_site_runtime_version() {
-  sed -n 's/.*"runtime":{"type":"[^"]*","version":"\([^"]*\)".*/\1/p' "$1" | head -1
-}
+# shellcheck disable=SC1091
+source lib/site/lifecycle.sh
 
 mkdir -p "${tmpdir}/sites" "${tmpdir}/etc/php/8.3/fpm/pool.d" "${tmpdir}/etc/opt/remi/php82/php-fpm.d"
 
@@ -50,7 +49,7 @@ hm_discover_site_php_version() {
   local domain="$1" man ver="" pool
   man="$(hm_site_manifest_path "${domain}")"
   if [[ -f "${man}" ]]; then
-    ver="$(hm_site_runtime_version "${man}" 2>/dev/null || true)"
+    ver="$(hm_site_php_runtime_version "${man}" 2>/dev/null || true)"
     [[ "${ver}" =~ ^[0-9]+\.[0-9]+$ ]] && { printf '%s' "${ver}"; return 0; }
   fi
   for pool in \
@@ -89,6 +88,30 @@ IFS=$'\t' read -r _d _r _doc _l _v php rest <<<"${row}"
 source commands/_shared/sites/vhost.sh
 got="$(hm_parse_vhost_php scripts/fixtures/vhost/nginx-php-fpm.conf)"
 [[ "${got}" == "?" ]] && ok "parse-nginx-no-version" || bad "parse-nginx-no-version got=${got}"
+
+# 6) runtime.type ≠ php → kolumna PHP = ?
+# przywróć prawdziwy discover (bez override puli lokalnej)
+# shellcheck disable=SC1091
+source commands/_shared/sites/discover.sh
+printf '{"webserver":"nginx","runtime":{"type":"python","version":"3.12","manager":"venv"}}' \
+  > "${tmpdir}/sites/rt-py.test.json"
+row="$(hm_resolve_site_paths "rt-py.test")"
+IFS=$'\t' read -r _d _r _doc _l _v php rest <<<"${row}"
+[[ "${php}" == "?" ]] && ok "python-not-php" || bad "python-not-php got=${php}"
+printf '{"webserver":"nginx","runtime":{"type":"dotnet","version":"8.0","manager":"systemd"}}' \
+  > "${tmpdir}/sites/rt-net.test.json"
+row="$(hm_resolve_site_paths "rt-net.test")"
+IFS=$'\t' read -r _d _r _doc _l _v php rest <<<"${row}"
+[[ "${php}" == "?" ]] && ok "dotnet-not-php" || bad "dotnet-not-php got=${php}"
+# clone helper: brak --php dla non-php
+# shellcheck disable=SC1091
+source commands/clone/main.sh 2>/dev/null || true
+if declare -F hm_clone_src_php_version >/dev/null 2>&1; then
+  got="$(hm_clone_src_php_version "rt-net.test" "")"
+  [[ -z "${got}" ]] && ok "clone-no-php-dotnet" || bad "clone-no-php-dotnet got=${got}"
+else
+  ok "clone-no-php-dotnet-skip"
+fi
 
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"

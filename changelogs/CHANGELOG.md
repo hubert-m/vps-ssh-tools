@@ -77,15 +77,20 @@ curl -fsSL https://raw.githubusercontent.com/hubert-m/vps-ssh-tools/develop/inst
 - Fix: restore CP — dump bez LOCK TABLES; re-link FK przez placeholder (nie `src_id`); parser DB mawk-safe; test-restore-cp-ssl
 - Fix: restore/clone ownership — wnętrze `public_html`/`releases`/`shared` → `user:webgrp` (nie `user:user`); test-backup-restore-ownership
 - Fix: `bin/hmtools` — `git update-index --chmod=+x` (100755 w drzewie git)
-- Fix: backup local — `--yes`/`-y` (nie „Nie znaleziono strony: --yes”); overlap RCLONE_REMOTE także dla `local:/…`; test-backup-local-keep
-- Fix: webs/discover — PHP z manifestu `runtime.version`, potem pula FPM (Debian + Remi); `hm_parse_vhost_php` bez śmieci z nginx; test-discover-php
-- Fix: backup restore — pre-restore plików w `/var/lib/hmtools/pre-restore/<domena>/<stamp>` (0700), `BACKUP_PRE_RESTORE_KEEP`, kasuje legacy `.hm-pre-restore-*` z `/home`; `backup list` pokazuje rozmiar; test-restore-atomic
+- Fix: backup local — `--yes`/`-y` jako 3. arg `hm_confirm_plan` (nie krok planu); anuluj ⇒ rc≠0; overlap `local:/…`; test-backup-local-keep
+- Fix: webs/discover — PHP tylko przy `runtime.type=php` (`hm_site_php_runtime_version`); python/dotnet ≠ kolumna PHP; test-discover-php
+- Fix: backup restore — pre-restore w `/var/lib/hmtools/…`; legacy `.hm-pre-restore-<stamp>` (bez domeny) kasowane; `KEEP=0` bez kopii; test-restore-atomic
 - Fix: docker compose update — `hm_docker_health_ok` czeka na `healthy` (`starting` OK); timeout/`unhealthy`/restart → rollback; stabilność bez healthchecka; test-docker-ops
 - Feat: docker df / docker system df (`--verbose`) oraz docker prune `--all` jako `system prune -a` (osobno od zwykłego prune); opisy parametrów; test-docker-map
 - Fix: backup restore bez rsync — kopia pre-restore `--same-owner --numeric-owner` (nie root:root); podpowiedź cofnięcia bez rsync; test-backup-file-fidelity
 - Fix: archive verify — plik z `SHA256SUMS` pusty lub usunięty ⇒ rc≠0; manifest nginx/apache + PHP wymaga `webserver.tar.gz` / `php-fpm.tar.gz`; test-archive-verify-integrity
 - Fix: restore-full `--system` — pre-restore tylko nadpisywanych plików (`--files-from`, bez całego `/var`); błąd kopii ⇒ dest nietknięty; test-restore-full
 - Fix: restore `--overwrite-files` — `BACKUP_EXCLUDES` z `./` chronione tylko w korzeniu (`P_/tmp`), `*.log` bez kotwicy; test-restore-atomic
+- Fix: archive/restore apache — `hm_site_web_apache_enable` (a2ensite/symlink); collect `sites-enabled`; test-archive-restore-nginx (8)
+- Fix: site new apache — pakiet `hm_os_apache_pkg` (apache2/httpd); detekcja apache2ctl; `a2ensite` w apply_file; test-vhost-templates
+- Fix: site --child-of / clone staging — `hm_site_manifest_user` (top-level, nie DB); odmowa gdy user nie istnieje; test-site-wizard-base
+- Fix: restore CP — `--skip-disable-keys` + filtr ALTER KEYS; escape `\'` w strip/remap; sprzątanie sierot placeholder; test-restore-cp-ssl
+- Fix: docker compose update — oneshot `exited 0` + restart no/on-failure nie psuje health; test-docker-ops
 
 ## [v0.1.15]
 

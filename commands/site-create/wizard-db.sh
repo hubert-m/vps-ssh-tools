@@ -442,7 +442,14 @@ cmd_site_new() {
         if declare -F hm_site_unix_user >/dev/null 2>&1; then
           _user_chk="$(hm_site_unix_user "${domain}" 2>/dev/null || true)"
         fi
-        [[ -z "${_user_chk}" ]] && _user_chk="$(sed -n 's/.*"user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$(hm_site_manifest_path "${domain}")" | head -1)"
+        if [[ -z "${_user_chk}" ]]; then
+          if declare -F hm_site_manifest_user >/dev/null 2>&1; then
+            _user_chk="$(hm_site_manifest_user "$(hm_site_manifest_path "${domain}")" 2>/dev/null || true)"
+          else
+            _user_chk="$(grep -oE '"user"[[:space:]]*:[[:space:]]*"[^"]+"' "$(hm_site_manifest_path "${domain}")" 2>/dev/null \
+              | head -1 | sed -n 's/.*"\([^"]*\)"$/\1/p' || true)"
+          fi
+        fi
         if [[ -n "${_user_chk}" ]] && ! id "${_user_chk}" >/dev/null 2>&1; then
           _stale=1
         fi

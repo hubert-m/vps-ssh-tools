@@ -65,6 +65,14 @@ hm_site_web_nginx_enable() {
   ln -sfn "../sites-available/${base}" "${en}"
   printf '%s\n' "${en}"
 }
+hm_site_web_apache_enable() {
+  local dest="$2" base en
+  base="$(basename "${dest}")"
+  en="${TMP}/apache2/sites-enabled/${base}"
+  mkdir -p "${TMP}/apache2/sites-enabled"
+  ln -sfn "../sites-available/${base}" "${en}"
+  printf '%s\n' "${en}"
+}
 hm_site_web_validate() { [[ "${HM_SITE_WEB_VALIDATE}" == "ok" ]]; }
 
 # shellcheck disable=SC1091
@@ -181,6 +189,63 @@ if grep -q 'fpm 8.3' "${RELOAD_LOG}"; then
   pass "(7) reload 8.3 OK"
 else
   fail "(7) brak fpm 8.3: $(cat "${RELOAD_LOG}")"
+fi
+
+# --- (8) apache: restore włącza sites-enabled (jak a2ensite) ---
+AP_DOMAIN="ap2.example.test"
+mkdir -p "${TMP}/apache2/sites-available" "${TMP}/apache2/sites-enabled" "${TMP}/snap-ap"
+printf 'ServerName %s\n' "${AP_DOMAIN}" > "${TMP}/apache2/sites-available/${AP_DOMAIN}.conf"
+# brak sites-enabled — stan po samym tarze bez symlinka
+rm -f "${TMP}/apache2/sites-enabled/${AP_DOMAIN}.conf"
+printf '{"type":"archive","webserver":"apache","php":"8.3","status":"ok"}\n' \
+  > "${TMP}/snap-ap/manifest.json"
+tar -C "${TMP}" -czf "${TMP}/snap-ap/webserver.tar.gz" \
+  "apache2/sites-available/${AP_DOMAIN}.conf"
+# hm_backup_restore_tar_to_root rozpakowuje do / — w teście mockujemy lokalnie
+hm_backup_restore_tar_to_root() {
+  local remote_file="$1"
+  if [[ -f "${remote_file}" ]]; then
+    tar -C "${TMP}" -xzf "${remote_file}" 2>/dev/null || return 1
+    return 0
+  fi
+  return 1
+}
+hm_site_web_conf_path() {
+  local server="$1" domain="$2"
+  if [[ "${server}" == "apache" ]]; then
+    printf '%s/apache2/sites-available/%s.conf' "${TMP}" "${domain}"
+  else
+    printf '%s/%s.conf' "${HM_SITE_WEB_CONF_DIR}" "${domain}"
+  fi
+}
+hm_site_web_validate() { return 0; }
+# Nadpisz enable po source, żeby używał TMP (nie /etc)
+hm_site_web_apache_enable() {
+  local dest="$2" base en
+  base="$(basename "${dest}")"
+  en="${TMP}/apache2/sites-enabled/${base}"
+  mkdir -p "${TMP}/apache2/sites-enabled"
+  ln -sfn "../sites-available/${base}" "${en}"
+  printf '%s\n' "${en}"
+}
+set +e
+hm_backup_restore_webstack_from_archive "${AP_DOMAIN}" "${TMP}/snap-ap" apache >/dev/null 2>&1
+rc=$?
+set -e
+# Na Windows/MSYS ln -s bywa kopiowaniem pliku — sprawdzamy -e, nie tylko -L
+if [[ "${rc}" -eq 0 && -e "${TMP}/apache2/sites-enabled/${AP_DOMAIN}.conf" ]]; then
+  pass "(8) apache restore → sites-enabled"
+else
+  fail "(8) apache sites-enabled po restore (rc=${rc})"
+fi
+# collect apache: sites-enabled gdy istnieje
+ln -sfn "../sites-available/${AP_DOMAIN}.conf" "${TMP}/apache2/sites-enabled/${AP_DOMAIN}.conf"
+webs_ap="$(hm_archive_collect_web_paths "${AP_DOMAIN}" apache | sort -u || true)"
+if printf '%s\n' "${webs_ap}" | grep -q 'sites-available' \
+  && printf '%s\n' "${webs_ap}" | grep -q 'sites-enabled'; then
+  pass "(8) collect apache: available+enabled"
+else
+  fail "(8) collect apache: ${webs_ap}"
 fi
 
 if [[ "${FAIL}" -eq 0 ]]; then

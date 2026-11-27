@@ -374,9 +374,14 @@ hm_site_web_validate() {
       hm_have_cmd nginx || return 0
       nginx -t
       ;;
-    apache)
-      hm_have_cmd apachectl || return 0
-      apachectl configtest
+    apache|apache2)
+      if hm_have_cmd apache2ctl; then
+        apache2ctl configtest
+      elif hm_have_cmd apachectl; then
+        apachectl configtest
+      else
+        return 0
+      fi
       ;;
     ols)
       if declare -F hm_ols_reload_soft >/dev/null 2>&1; then
@@ -396,7 +401,13 @@ hm_site_web_reload() {
   [[ "${HM_SITE_WEB_VALIDATE:-}" == "ok" || "${HM_SITE_WEB_VALIDATE:-}" == "fail" ]] && return 0
   case "${server}" in
     nginx) hm_have_cmd nginx && nginx -s reload || true ;;
-    apache) hm_have_cmd apachectl && apachectl graceful || true ;;
+    apache|apache2)
+      if hm_have_cmd apache2ctl; then
+        apache2ctl graceful || true
+      elif hm_have_cmd apachectl; then
+        apachectl graceful || true
+      fi
+      ;;
     ols) declare -F hm_ols_reload_soft >/dev/null 2>&1 && hm_ols_reload_soft || true ;;
   esac
 }
@@ -426,6 +437,32 @@ hm_site_web_nginx_enable() {
     hm_os_nginx_sites_enabled || return 0
   fi
   base="$(basename "${dest}")"
+  en="$(dirname "${dest}")"
+  en="${en%/sites-available}/sites-enabled"
+  mkdir -p "${en}"
+  link="${en}/${base}"
+  ln -sfn "../sites-available/${base}" "${link}" || return 1
+  printf '%s\n' "${link}"
+}
+
+# Debian/Ubuntu apache2: a2ensite albo symlink sites-enabled (jak nginx).
+# RHEL httpd (conf.d) — nic; dest nie jest w sites-available.
+hm_site_web_apache_enable() {
+  local domain="$1" dest="$2" base en link site
+  [[ "${dest}" == */sites-available/* ]] || return 0
+  base="$(basename "${dest}")"
+  site="${base%.conf}"
+  [[ -n "${site}" ]] || site="${domain}"
+  if hm_have_cmd a2ensite; then
+    if a2ensite "${site}" >/dev/null 2>&1 || a2ensite "${base}" >/dev/null 2>&1; then
+      en="$(dirname "${dest}")"
+      en="${en%/sites-available}/sites-enabled"
+      if [[ -e "${en}/${base}" || -e "${en}/${site}.conf" || -e "${en}/${site}" ]]; then
+        printf '%s\n' "${en}/${base}"
+        return 0
+      fi
+    fi
+  fi
   en="$(dirname "${dest}")"
   en="${en%/sites-available}/sites-enabled"
   mkdir -p "${en}"
@@ -467,6 +504,8 @@ hm_site_web_apply_file() {
   domain="${domain%.conf}"
   if [[ "${server}" == "nginx" ]]; then
     link="$(hm_site_web_nginx_enable "${domain}" "${dest}")" || return 1
+  elif [[ "${server}" == "apache" || "${server}" == "apache2" ]]; then
+    link="$(hm_site_web_apache_enable "${domain}" "${dest}")" || return 1
   fi
   if ! hm_site_web_validate "${server}"; then
     if [[ -f "${bak}" ]]; then
@@ -535,16 +574,40 @@ hm_site_web_apply_proxy() {
   fi
 }
 
+# Czy serwer www jest dostępny w PATH (apache → apache2/apachectl/httpd).
+hm_site_web_have_server() {
+  local server="${1:-}"
+  case "${server}" in
+    apache|apache2)
+      hm_have_cmd apache2 || hm_have_cmd apache2ctl || hm_have_cmd apachectl || hm_have_cmd httpd
+      ;;
+    *)
+      hm_have_cmd "${server}"
+      ;;
+  esac
+}
+
 hm_site_web_offer_install() {
-  local server="$1" yes="${2:-0}"
-  hm_have_cmd "${server}" && return 0
-  local -a steps=("Instalacja pakietu ${server}" "Bazowa konfiguracja: server_tokens off, default_server 444")
+  local server="$1" yes="${2:-0}" pkg=""
+  hm_site_web_have_server "${server}" && return 0
+  pkg="${server}"
+  case "${server}" in
+    apache|apache2)
+      if declare -F hm_os_apache_pkg >/dev/null 2>&1; then
+        pkg="$(hm_os_apache_pkg)"
+      else
+        pkg="apache2"
+      fi
+      [[ -n "${pkg}" ]] || pkg="apache2"
+      ;;
+  esac
+  local -a steps=("Instalacja pakietu ${pkg}" "Bazowa konfiguracja: server_tokens off, default_server 444")
   if [[ "${yes}" -eq 1 ]]; then
     hm_confirm_plan "Serwer www — ${server}" "" --yes "${steps[@]}" || return 1
   else
     hm_confirm_plan "Serwer www — ${server}" "" "${steps[@]}" || return 1
   fi
-  hm_pkg_install "${server}" || return 1
+  hm_pkg_install "${pkg}" || return 1
   if [[ "${server}" == "nginx" ]]; then
     local drop="${HM_SITE_WEB_CONF_DIR:-/etc/nginx/conf.d}"
     mkdir -p "${drop}"

@@ -70,6 +70,7 @@ _hm_os_do_web_group_for() {
 _hm_os_do_nginx_conf_dir() { printf '/etc/nginx/sites-available'; }
 _hm_os_do_nginx_sites_enabled() { return 0; }
 _hm_os_do_apache_unit() { printf 'apache2'; }
+_hm_os_do_apache_pkg() { printf 'apache2'; }
 _hm_os_do_apache_error_log() { return 1; }
 _hm_os_do_firewall_status() { hm_warn "Firewall: brak adaptera OS."; return 1; }
 _hm_os_do_firewall_ban() { return 1; }
@@ -309,6 +310,12 @@ hm_os_nginx_sites_enabled() {
 hm_os_apache_unit() {
   hm_os_bind || return 1
   _hm_os_do_apache_unit
+}
+
+# Pakiet do hm_pkg_install: debian → apache2, rhel → httpd.
+hm_os_apache_pkg() {
+  hm_os_bind || true
+  _hm_os_do_apache_pkg
 }
 
 hm_os_apache_error_log() {

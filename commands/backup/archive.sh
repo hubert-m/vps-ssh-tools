@@ -499,7 +499,7 @@ hm_archive_write_ols_snippet() {
 
 # Ścieżki vhost (nginx/apache) z resources.ndjson + fallback hm_site_web_conf_path.
 hm_archive_collect_web_paths() {
-  local domain="$1" web="${2:-}" res line path
+  local domain="$1" web="${2:-}" res line path en_dir en_link
   [[ -n "${domain}" ]] || return 0
   if declare -F hm_site_resources_path >/dev/null 2>&1; then
     res="$(hm_site_resources_path "${domain}" 2>/dev/null || true)"
@@ -526,6 +526,15 @@ hm_archive_collect_web_paths() {
         path="$(hm_site_web_conf_path "${web}" "${domain}" 2>/dev/null || true)"
         if [[ -n "${path}" && -e "${path}" ]]; then
           printf '%s\n' "${path}"
+          # Włączony vhost (sites-enabled) — osobny wpis, gdy to nie ten sam plik
+          if [[ "${path}" == */sites-available/* ]]; then
+            en_dir="$(dirname "${path}")"
+            en_dir="${en_dir%/sites-available}/sites-enabled"
+            en_link="${en_dir}/$(basename "${path}")"
+            if [[ -e "${en_link}" || -L "${en_link}" ]]; then
+              printf '%s\n' "${en_link}"
+            fi
+          fi
         fi
       fi
       ;;
@@ -724,6 +733,12 @@ hm_archive_cp_sql_strip_explicit_ids() {
       n = 0; cur = ""; q = 0
       for (i = 1; i <= length(s); i++) {
         ch = substr(s, i, 1)
+        # mysqldump: \\ i \'\'' wewnątrz stringów
+        if (ch == "\\") {
+          cur = cur ch
+          if (i < length(s)) { i++; cur = cur substr(s, i, 1) }
+          continue
+        }
         if (ch == "'\''") { q = 1 - q; cur = cur ch; continue }
         if (ch == "," && q == 0) { a[++n] = trim(cur); cur = ""; continue }
         cur = cur ch
@@ -772,6 +787,11 @@ hm_archive_cp_sql_strip_explicit_ids() {
       depth = 0; q = 0; cur = ""; ntu = 0
       for (i = 1; i <= length(rest); i++) {
         ch = substr(rest, i, 1)
+        if (ch == "\\") {
+          cur = cur ch
+          if (i < length(rest)) { i++; cur = cur substr(rest, i, 1) }
+          continue
+        }
         if (ch == "'\''") { q = 1 - q; cur = cur ch; continue }
         if (q) { cur = cur ch; continue }
         if (ch == "(") {
@@ -798,6 +818,18 @@ hm_archive_cp_sql_strip_explicit_ids() {
   mv -f "${tmp}" "${f}"
 }
 
+# Usuń z dumpa CP linie psujące transakcję (LOCK / ALTER … KEYS).
+hm_backup_cp_sql_filter_autocommit() {
+  local f="$1" tmp
+  [[ -f "${f}" ]] || return 1
+  if ! grep -qE '^(LOCK TABLES|UNLOCK TABLES)|ALTER TABLE .+ (DISABLE|ENABLE) KEYS' "${f}" 2>/dev/null; then
+    return 0
+  fi
+  tmp="$(mktemp "${TMP_DIR:-/tmp}/hmtools-cp-filt.XXXXXX.sql")"
+  grep -Ev '^(LOCK TABLES|UNLOCK TABLES)|ALTER TABLE .+ (DISABLE|ENABLE) KEYS' "${f}" > "${tmp}" \
+    && mv -f "${tmp}" "${f}" || { rm -f "${tmp}"; return 1; }
+}
+
 # Eksport wierszy CyberPanel (website + childdomains + databases) do SQL INSERT.
 # Bez jawnego id (strip po dumpie) — restore nie koliduje z istniejącymi PK.
 hm_archive_export_cyberpanel_sql() {
@@ -815,24 +847,23 @@ hm_archive_export_cyberpanel_sql() {
   {
     echo "-- hmtools archive: CyberPanel rows for ${domain} (source id=${id}; id stripped for restore)"
     echo "USE \`cyberpanel\`;"
-    # --skip-extended-insert / --skip-add-locks: jedna krotka / INSERT; bez LOCK TABLES
-    # (LOCK zatwierdzałby transakcję restore → sieroty przy błędzie importu).
+    # --skip-extended-insert / --skip-add-locks / --skip-disable-keys:
+    # jedna krotka / INSERT; bez LOCK/ALTER KEYS (niejawny COMMIT → sieroty przy błędzie).
     "${dumpcli}" "${sock[@]}" cyberpanel websiteFunctions_websites \
       --where="id=${id}" --no-create-info --complete-insert --skip-extended-insert \
-      --skip-lock-tables --skip-add-locks --skip-comments 2>/dev/null || true
+      --skip-lock-tables --skip-add-locks --skip-disable-keys --skip-comments 2>/dev/null || true
     "${dumpcli}" "${sock[@]}" cyberpanel websiteFunctions_childdomains \
       --where="master_id=${id}" --no-create-info --complete-insert --skip-extended-insert \
-      --skip-lock-tables --skip-add-locks --skip-comments 2>/dev/null || true
+      --skip-lock-tables --skip-add-locks --skip-disable-keys --skip-comments 2>/dev/null || true
     "${dumpcli}" "${sock[@]}" cyberpanel databases_databases \
       --where="website_id=${id}" --no-create-info --complete-insert --skip-extended-insert \
-      --skip-lock-tables --skip-add-locks --skip-comments 2>/dev/null || true
+      --skip-lock-tables --skip-add-locks --skip-disable-keys --skip-comments 2>/dev/null || true
   } > "${out_sql}"
   [[ -s "${out_sql}" ]] || return 1
   hm_archive_cp_sql_strip_explicit_ids "${out_sql}" || true
-  # Stare snapshoty / mysqldump bez skip-add-locks
-  if grep -qE '^(LOCK TABLES|UNLOCK TABLES)' "${out_sql}" 2>/dev/null; then
-    grep -Ev '^(LOCK TABLES|UNLOCK TABLES)' "${out_sql}" > "${out_sql}.nolock" \
-      && mv -f "${out_sql}.nolock" "${out_sql}"
+  # Stare snapshoty / mysqldump bez skip-add-locks / skip-disable-keys
+  if declare -F hm_backup_cp_sql_filter_autocommit >/dev/null 2>&1; then
+    hm_backup_cp_sql_filter_autocommit "${out_sql}" || true
   fi
   [[ -s "${out_sql}" ]]
 }

@@ -86,19 +86,21 @@ hm_find_site_by_arg() { printf '%s' "$1"; }
 hm_is_valid_domain() { [[ "$1" == *.* ]]; }
 hm_load_config() { :; }
 hm_confirm_plan() {
-  local a
-  for a in "$@"; do [[ "$a" == "--yes" ]] && return 0; done
-  echo "confirm-missing-yes" >&2
+  # 1=title 2=warning 3=--yes (wymagane przy auto-yes)
+  if [[ "${3:-}" == "--yes" ]]; then
+    return 0
+  fi
+  echo "confirm-yes-not-3rd:${3:-}" >&2
   return 1
 }
 hm_backup_acquire_lock() { return 0; }
 hm_backup_release_lock() { :; }
 hm_backup_site() { return 0; }
 yes_err="$(hm_backup_local_site shop.example.test --keep 2 --yes 2>&1 || true)"
-if printf '%s' "${yes_err}" | grep -qiE 'Nie znaleziono strony: --yes|Nieznany argument: --yes|confirm-missing-yes'; then
-  fail "(0c) --yes źle sparsowane: ${yes_err}"
+if printf '%s' "${yes_err}" | grep -qiE 'Nie znaleziono strony: --yes|Nieznany argument: --yes|confirm-yes-not-3rd'; then
+  fail "(0c) --yes źle do confirm_plan: ${yes_err}"
 else
-  pass "(0c) --yes rozpoznane w parserze"
+  pass "(0c) --yes jako 3. arg confirm_plan"
 fi
 grep -qE '\-\-yes\|-y' commands/backup/local.sh && pass "(0d) --yes w local.sh" || fail "(0d) brak --yes"
 

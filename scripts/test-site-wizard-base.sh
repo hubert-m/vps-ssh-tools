@@ -294,6 +294,36 @@ else
 fi
 grep -qi 'Stale manifest' "${root}/stale.out" && ok "stale-manifest-msg" || { bad "stale-manifest-msg"; cat "${root}/stale.out" >&2; }
 
+# --child-of: user top-level, nie databases[].user (zachłanny sed)
+parent_dom="blog.other.test"
+child_dom="dev.blog.other.test"
+printf 'blogothe:x:1101:1101::/home/%s:/usr/sbin/nologin\n' "${parent_dom}" >> "${HM_SITE_PASSWD_FILE}"
+mkdir -p "${HM_SITE_HOME_BASE}/${parent_dom}/public_html"
+printf '%s\n' "{\"schema\":1,\"domain\":\"${parent_dom}\",\"webserver\":\"nginx\",\"user\":\"blogothe\",\"runtime\":{\"type\":\"php\",\"version\":\"8.3\"},\"databases\":[{\"type\":\"mysql\",\"name\":\"blogothe_app\",\"user\":\"blogothe_app\",\"host\":\"127.0.0.1\",\"port\":\"3306\"}]}" \
+  > "$(hm_site_manifest_path "${parent_dom}")"
+got_pu="$(hm_site_manifest_user "$(hm_site_manifest_path "${parent_dom}")")"
+[[ "${got_pu}" == "blogothe" ]] && ok "manifest-user-top" || bad "manifest-user-top (${got_pu})"
+# bez jq — ten sam wynik (pierwsze \"user\")
+hm_have_cmd() { return 1; }
+got_pu2="$(hm_site_manifest_user "$(hm_site_manifest_path "${parent_dom}")")"
+[[ "${got_pu2}" == "blogothe" ]] && ok "manifest-user-no-jq" || bad "manifest-user-no-jq (${got_pu2})"
+unset -f hm_have_cmd
+hm_have_cmd() { return 1; }
+got_parent="$(hm_site_base_parent_user "${parent_dom}")"
+[[ "${got_parent}" == "blogothe" ]] && ok "parent-user-unix" || bad "parent-user-unix (${got_parent})"
+unset HM_SITE_BASE_USER HM_SITE_BASE_DOMAIN HM_SITE_USER_CREATED HM_SITE_USER_SHARED
+hm_site_base_check "${child_dom}" "" nologin static "${parent_dom}" >/dev/null 2>"${root}/childof.err" \
+  && [[ "${HM_SITE_BASE_USER}" == "blogothe" ]] && ok "child-of-user" \
+  || { bad "child-of-user (${HM_SITE_BASE_USER:-})"; cat "${root}/childof.err" >&2; }
+# databases[].user w manifeście bez konta Unix → odmowa
+printf '%s\n' "{\"schema\":1,\"domain\":\"badparent.test\",\"user\":\"nouserxx\",\"databases\":[{\"user\":\"dbonly\"}]}" \
+  > "$(hm_site_manifest_path badparent.test)"
+if hm_site_base_parent_user badparent.test >/dev/null 2>"${root}/badparent.err"; then
+  bad "parent-user-missing"
+else
+  grep -qi 'nie istnieje' "${root}/badparent.err" && ok "parent-user-missing" || bad "parent-user-missing-msg"
+fi
+
 if [[ "${fail}" -eq 0 ]]; then
   echo "ALL PASSED"
 else

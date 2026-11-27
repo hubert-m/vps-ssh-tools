@@ -414,11 +414,14 @@ hm_clone_src_php_version() {
     fi
     [[ -z "${path}" ]] && path="/etc/hmtools/sites/${src}.json"
     if [[ -f "${path}" ]]; then
-      if declare -F hm_site_runtime_version >/dev/null 2>&1; then
+      if declare -F hm_site_php_runtime_version >/dev/null 2>&1; then
+        ver="$(hm_site_php_runtime_version "${path}" 2>/dev/null || true)"
+      elif declare -F hm_site_runtime_type >/dev/null 2>&1 \
+          && [[ "$(hm_site_runtime_type "${path}" 2>/dev/null || true)" == "php" ]] \
+          && declare -F hm_site_runtime_version >/dev/null 2>&1; then
         ver="$(hm_site_runtime_version "${path}" 2>/dev/null || true)"
       fi
       [[ -n "${ver}" ]] || ver="$(sed -n 's/.*"type":"php","version":"\([^"]*\)".*/\1/p' "${path}" | head -1)"
-      [[ -n "${ver}" ]] || ver="$(sed -n 's/.*"runtime":{"type":"[^"]*","version":"\([^"]*\)".*/\1/p' "${path}" | head -1)"
     fi
   fi
   [[ "${ver}" == "?" || "${ver}" == "*" ]] && ver=""

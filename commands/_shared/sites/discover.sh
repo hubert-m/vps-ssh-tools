@@ -130,11 +130,15 @@ hm_discover_site_php_version() {
   fi
   [[ -z "${man}" ]] && man="/etc/hmtools/sites/${domain}.json"
   if [[ -f "${man}" ]]; then
-    if declare -F hm_site_runtime_version >/dev/null 2>&1; then
-      ver="$(hm_site_runtime_version "${man}" 2>/dev/null || true)"
+    if declare -F hm_site_php_runtime_version >/dev/null 2>&1; then
+      ver="$(hm_site_php_runtime_version "${man}" 2>/dev/null || true)"
+    elif declare -F hm_site_runtime_type >/dev/null 2>&1; then
+      if [[ "$(hm_site_runtime_type "${man}" 2>/dev/null || true)" == "php" ]] \
+          && declare -F hm_site_runtime_version >/dev/null 2>&1; then
+        ver="$(hm_site_runtime_version "${man}" 2>/dev/null || true)"
+      fi
     fi
     [[ -n "${ver}" ]] || ver="$(sed -n 's/.*"type":"php","version":"\([^"]*\)".*/\1/p' "${man}" | head -1)"
-    [[ -n "${ver}" ]] || ver="$(sed -n 's/.*"runtime":{"type":"[^"]*","version":"\([^"]*\)".*/\1/p' "${man}" | head -1)"
     [[ "${ver}" == "?" || "${ver}" == "*" ]] && ver=""
     if [[ "${ver}" =~ ^[0-9]+\.[0-9]+$ ]]; then
       printf '%s' "${ver}"

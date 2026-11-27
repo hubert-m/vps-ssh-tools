@@ -230,15 +230,24 @@ hm_backup_local_site() {
   local root saved
   root="$(hm_backup_local_root)"
   hm_backup_local_warn_remote_overlap
-  local -a conf_args=()
-  [[ "${yes}" -eq 1 ]] && conf_args+=(--yes)
-  if ! hm_confirm_plan "backup local — ${domain}" \
-    "Szybka kopia lokalna (format jak Drive → backup restore)." \
-    "Root: ${root}/${domain}/<stamp>/" \
-    "Kontrola wolnego miejsca (MIN_FREE_PERCENT)" \
-    "Retencja: ${keep} najnowszych kompletnych (type=archive chronione; uszkodzone poza limitem)" \
-    "${conf_args[@]+"${conf_args[@]}"}"; then
-    return 0
+  # --yes musi być 3. argumentem hm_confirm_plan (po title + warning), nie krokiem planu
+  if [[ "${yes}" -eq 1 ]]; then
+    if ! hm_confirm_plan "backup local — ${domain}" \
+      "Szybka kopia lokalna (format jak Drive → backup restore)." \
+      --yes \
+      "Root: ${root}/${domain}/<stamp>/" \
+      "Kontrola wolnego miejsca (MIN_FREE_PERCENT)" \
+      "Retencja: ${keep} najnowszych kompletnych (type=archive chronione; uszkodzone poza limitem)"; then
+      return 1
+    fi
+  else
+    if ! hm_confirm_plan "backup local — ${domain}" \
+      "Szybka kopia lokalna (format jak Drive → backup restore)." \
+      "Root: ${root}/${domain}/<stamp>/" \
+      "Kontrola wolnego miejsca (MIN_FREE_PERCENT)" \
+      "Retencja: ${keep} najnowszych kompletnych (type=archive chronione; uszkodzone poza limitem)"; then
+      return 1
+    fi
   fi
 
   saved="${RCLONE_REMOTE}"

@@ -131,7 +131,7 @@ hm_backup_pre_restore_files_root() {
   printf '%s' "${root}"
 }
 
-# Sprzątnij stare stampy w root/<slug>/* oraz legacy .hm-pre-restore-<slug>-* obok targetu.
+# Sprzątnij stare stampy w root/<slug>/* oraz legacy .hm-pre-restore-* obok targetu.
 hm_backup_prune_pre_restore_dirs() {
   local slug="$1"
   local legacy_parent="${2:-}"
@@ -145,20 +145,32 @@ hm_backup_prune_pre_restore_dirs() {
     shopt -s nullglob
     dirs=( "${root}/${slug}/"* )
     shopt -u nullglob
-    if [[ "${#dirs[@]}" -gt "${keep}" ]]; then
+    if [[ "${keep}" -eq 0 ]]; then
+      for d in "${dirs[@]+"${dirs[@]}"}"; do
+        rm -rf -- "${d}" 2>/dev/null || true
+      done
+    elif [[ "${#dirs[@]}" -gt "${keep}" ]]; then
       for ((i = 0; i < ${#dirs[@]} - keep; i++)); do
         rm -rf -- "${dirs[i]}" 2>/dev/null || true
       done
     fi
   fi
-  # legacy: /home/.hm-pre-restore-<slug>-<stamp>
+  # legacy: /home/.hm-pre-restore-<slug>-<stamp> oraz /home/.hm-pre-restore-<stamp> (bez domeny)
   if [[ -n "${legacy_parent}" && -d "${legacy_parent}" ]]; then
     shopt -s nullglob
     dirs=( "${legacy_parent}/.hm-pre-restore-${slug}-"* )
     shopt -u nullglob
     for d in "${dirs[@]+"${dirs[@]}"}"; do
+      hm_warn "Usuwam legacy pre-restore: ${d}"
       rm -rf -- "${d}" 2>/dev/null || true
     done
+    # Format z taska (przed slugiem): .hm-pre-restore-YYYYMMDD-HHMMSS
+    while IFS= read -r d; do
+      [[ -n "${d}" && -d "${d}" ]] || continue
+      hm_warn "Usuwam legacy pre-restore (stamp): ${d}"
+      rm -rf -- "${d}" 2>/dev/null || true
+    done < <(find "${legacy_parent}" -maxdepth 1 -type d \
+      -name '.hm-pre-restore-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]' 2>/dev/null)
   fi
 }
 
@@ -207,53 +219,59 @@ hm_backup_restore_files() {
 
   # Kopia bezpieczeństwa bieżącego drzewa (przed rsync) — poza /home, retencja KEEP
   if [[ -d "${target_dir}" ]] && find "${target_dir}" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
-    need_kb="$(du -sk "${target_dir}" 2>/dev/null | awk '{print $1}')"
-    mkdir -p "${pre_root}" 2>/dev/null || true
-    chmod 0700 "${pre_root}" 2>/dev/null || true
-    avail_kb="$(df -Pk "${pre_root}" 2>/dev/null | awk 'NR==2 {print $4}')"
-    [[ -n "${avail_kb}" ]] || avail_kb="$(df -Pk "${parent}" 2>/dev/null | awk 'NR==2 {print $4}')"
-    if [[ -n "${need_kb}" && -n "${avail_kb}" && "${need_kb}" =~ ^[0-9]+$ && "${avail_kb}" =~ ^[0-9]+$ ]]; then
-      if [[ "${avail_kb}" -le "${need_kb}" ]]; then
-        hm_err "Za mało miejsca na pre-restore (~${need_kb} KiB potrzeba, ${avail_kb} KiB wolne) — target nietknięty."
+    # KEEP=0: bez kopii (tylko sprzątanie legacy) — unikaj komunikatu o nieistniejącej ścieżce
+    if [[ "${keep_n}" =~ ^[0-9]+$ && "${keep_n}" -eq 0 ]]; then
+      hm_warn "BACKUP_PRE_RESTORE_KEEP=0 — bez kopii bezpieczeństwa przed restore."
+      hm_backup_prune_pre_restore_dirs "${slug}" "${parent}"
+    else
+      need_kb="$(du -sk "${target_dir}" 2>/dev/null | awk '{print $1}')"
+      mkdir -p "${pre_root}" 2>/dev/null || true
+      chmod 0700 "${pre_root}" 2>/dev/null || true
+      avail_kb="$(df -Pk "${pre_root}" 2>/dev/null | awk 'NR==2 {print $4}')"
+      [[ -n "${avail_kb}" ]] || avail_kb="$(df -Pk "${parent}" 2>/dev/null | awk 'NR==2 {print $4}')"
+      if [[ -n "${need_kb}" && -n "${avail_kb}" && "${need_kb}" =~ ^[0-9]+$ && "${avail_kb}" =~ ^[0-9]+$ ]]; then
+        if [[ "${avail_kb}" -le "${need_kb}" ]]; then
+          hm_err "Za mało miejsca na pre-restore (~${need_kb} KiB potrzeba, ${avail_kb} KiB wolne) — target nietknięty."
+          rm -rf -- "${staging}"
+          return 1
+        fi
+      fi
+      hm_info "Kopia bezpieczeństwa plików → ${pre_bak}"
+      rm -rf -- "${pre_bak}"
+      mkdir -p "${pre_slug_dir}" || {
+        hm_err "Nie można utworzyć ${pre_slug_dir} — target nietknięty."
         rm -rf -- "${staging}"
         return 1
-      fi
-    fi
-    hm_info "Kopia bezpieczeństwa plików → ${pre_bak}"
-    rm -rf -- "${pre_bak}"
-    mkdir -p "${pre_slug_dir}" || {
-      hm_err "Nie można utworzyć ${pre_slug_dir} — target nietknięty."
-      rm -rf -- "${staging}"
-      return 1
-    }
-    chmod 0700 "${pre_slug_dir}" 2>/dev/null || true
-    mkdir -p "${pre_bak}" || {
-      hm_err "Nie można utworzyć ${pre_bak} — target nietknięty."
-      rm -rf -- "${staging}"
-      return 1
-    }
-    chmod 0700 "${pre_bak}" 2>/dev/null || true
-    local undo
-    if hm_have_cmd rsync; then
-      if ! rsync -aHAXS --numeric-ids "${target_dir}/" "${pre_bak}/"; then
-        hm_err "Kopia pre-restore plików nieudana — target nietknięty."
-        rm -rf -- "${staging}" "${pre_bak}"
+      }
+      chmod 0700 "${pre_slug_dir}" 2>/dev/null || true
+      mkdir -p "${pre_bak}" || {
+        hm_err "Nie można utworzyć ${pre_bak} — target nietknięty."
+        rm -rf -- "${staging}"
         return 1
+      }
+      chmod 0700 "${pre_bak}" 2>/dev/null || true
+      local undo
+      if hm_have_cmd rsync; then
+        if ! rsync -aHAXS --numeric-ids "${target_dir}/" "${pre_bak}/"; then
+          hm_err "Kopia pre-restore plików nieudana — target nietknięty."
+          rm -rf -- "${staging}" "${pre_bak}"
+          return 1
+        fi
+        undo="rsync -aHAXS --numeric-ids --delete ${pre_bak}/ ${target_dir}/"
+      else
+        # Kopia 1:1 żywego katalogu: jako root --same-owner --numeric-owner
+        # ( --no-same-owner zapisuje root:root i psuje cofnięcie ).
+        # shellcheck disable=SC2086
+        if ! tar -C "${target_dir}" ${meta_c} -cf - . | tar --same-owner --numeric-owner ${meta_x} -C "${pre_bak}" -xf -; then
+          hm_err "Kopia pre-restore plików nieudana — target nietknięty."
+          rm -rf -- "${staging}" "${pre_bak}"
+          return 1
+        fi
+        undo="tar -C ${pre_bak} ${meta_c} -cf - . | tar --same-owner --numeric-owner ${meta_x} -C ${target_dir} -xf -"
       fi
-      undo="rsync -aHAXS --numeric-ids --delete ${pre_bak}/ ${target_dir}/"
-    else
-      # Kopia 1:1 żywego katalogu: jako root --same-owner --numeric-owner
-      # ( --no-same-owner zapisuje root:root i psuje cofnięcie ).
-      # shellcheck disable=SC2086
-      if ! tar -C "${target_dir}" ${meta_c} -cf - . | tar --same-owner --numeric-owner ${meta_x} -C "${pre_bak}" -xf -; then
-        hm_err "Kopia pre-restore plików nieudana — target nietknięty."
-        rm -rf -- "${staging}" "${pre_bak}"
-        return 1
-      fi
-      undo="tar -C ${pre_bak} ${meta_c} -cf - . | tar --same-owner --numeric-owner ${meta_x} -C ${target_dir} -xf -"
+      hm_backup_prune_pre_restore_dirs "${slug}" "${parent}"
+      hm_ok "Kopia przed restore: ${pre_bak} (keep=${keep_n}; cofnięcie: ${undo}; sprzątanie: rm -rf ${pre_bak})."
     fi
-    hm_backup_prune_pre_restore_dirs "${slug}" "${parent}"
-    hm_ok "Kopia przed restore: ${pre_bak} (keep=${keep_n}; cofnięcie: ${undo}; sprzątanie: rm -rf ${pre_bak})."
   fi
 
   if hm_backup_restore_snap_is_archive "${remote_base}"; then
@@ -814,10 +832,15 @@ hm_backup_restore_webstack_from_archive() {
       return 1
     fi
     # Odtwórz symlink sites-enabled gdy brak (tar mógł nie zachować linku)
-    if [[ "${web}" == "nginx" ]] && declare -F hm_site_web_conf_path >/dev/null 2>&1; then
-      path="$(hm_site_web_conf_path nginx "${domain}" 2>/dev/null || true)"
-      if [[ -n "${path}" && -f "${path}" ]] && declare -F hm_site_web_nginx_enable >/dev/null 2>&1; then
-        link="$(hm_site_web_nginx_enable "${domain}" "${path}" 2>/dev/null || true)"
+    if declare -F hm_site_web_conf_path >/dev/null 2>&1; then
+      path="$(hm_site_web_conf_path "${web}" "${domain}" 2>/dev/null || true)"
+      if [[ -n "${path}" && -f "${path}" ]]; then
+        link=""
+        if [[ "${web}" == "nginx" ]] && declare -F hm_site_web_nginx_enable >/dev/null 2>&1; then
+          link="$(hm_site_web_nginx_enable "${domain}" "${path}" 2>/dev/null || true)"
+        elif [[ "${web}" == "apache" ]] && declare -F hm_site_web_apache_enable >/dev/null 2>&1; then
+          link="$(hm_site_web_apache_enable "${domain}" "${path}" 2>/dev/null || true)"
+        fi
         [[ -n "${link}" ]] && hm_info "sites-enabled: ${link}"
       fi
     fi
@@ -1775,12 +1798,15 @@ DELETE FROM websiteFunctions_websites WHERE domain = ${dq};"
 
   grep -E '^INSERT INTO `websiteFunctions_websites`' "${sqlf}" > "${web_sql}" || true
   grep -Ev '^INSERT INTO `websiteFunctions_websites`' "${sqlf}" > "${rest_sql}" || true
-  # Stare dumpy: LOCK TABLES zatwierdza transakcję — wyfiltruj
-  if grep -qE '^(LOCK TABLES|UNLOCK TABLES)' "${rest_sql}" 2>/dev/null \
-      || grep -qE '^(LOCK TABLES|UNLOCK TABLES)' "${web_sql}" 2>/dev/null; then
-    grep -Ev '^(LOCK TABLES|UNLOCK TABLES)' "${web_sql}" > "${web_sql}.x" 2>/dev/null || true
+  # Stare dumpy: LOCK / ALTER … KEYS niejawnie COMMIT — wyfiltruj
+  if declare -F hm_backup_cp_sql_filter_autocommit >/dev/null 2>&1; then
+    hm_backup_cp_sql_filter_autocommit "${web_sql}" || true
+    hm_backup_cp_sql_filter_autocommit "${rest_sql}" || true
+  elif grep -qE '^(LOCK TABLES|UNLOCK TABLES)|ALTER TABLE .+ (DISABLE|ENABLE) KEYS' "${rest_sql}" 2>/dev/null \
+      || grep -qE '^(LOCK TABLES|UNLOCK TABLES)|ALTER TABLE .+ (DISABLE|ENABLE) KEYS' "${web_sql}" 2>/dev/null; then
+    grep -Ev '^(LOCK TABLES|UNLOCK TABLES)|ALTER TABLE .+ (DISABLE|ENABLE) KEYS' "${web_sql}" > "${web_sql}.x" 2>/dev/null || true
     mv -f "${web_sql}.x" "${web_sql}" 2>/dev/null || true
-    grep -Ev '^(LOCK TABLES|UNLOCK TABLES)' "${rest_sql}" > "${rest_sql}.x" 2>/dev/null || true
+    grep -Ev '^(LOCK TABLES|UNLOCK TABLES)|ALTER TABLE .+ (DISABLE|ENABLE) KEYS' "${rest_sql}" > "${rest_sql}.x" 2>/dev/null || true
     mv -f "${rest_sql}.x" "${rest_sql}" 2>/dev/null || true
   fi
 
@@ -1797,6 +1823,14 @@ DELETE FROM websiteFunctions_websites WHERE domain = ${dq};"
       fi
     fi
   fi
+
+  # Sieroty po wcześniejszym nieudanym restore (placeholder) — poza transakcją, żeby nie blokować INSERT
+  hm_info "Czyszczenie sierot CP (master_id/website_id=${fk_ph})…"
+  "${cli}" "${sock_args[@]}" cyberpanel -e "
+SET FOREIGN_KEY_CHECKS=0;
+DELETE FROM websiteFunctions_childdomains WHERE master_id=${fk_ph};
+DELETE FROM databases_databases WHERE website_id=${fk_ph};
+SET FOREIGN_KEY_CHECKS=1;" 2>/dev/null || true
 
   # Jedna sesja + transakcja: DELETE + website + rest + re-link; błąd → ROLLBACK (bez sierot FK)
   local txf
@@ -1832,6 +1866,12 @@ DELETE FROM websiteFunctions_websites WHERE domain = ${dq};"
   hm_info "Import cyberpanel-site.sql (DELETE+INSERT+re-link w transakcji)…"
   if ! "${cli}" "${sock_args[@]}" cyberpanel < "${txf}"; then
     "${cli}" "${sock_args[@]}" cyberpanel -e "ROLLBACK; SET FOREIGN_KEY_CHECKS=1;" 2>/dev/null || true
+    # Po ROLLBACK sprzątaj też nasze placeholdery z tej nieudanej próby
+    "${cli}" "${sock_args[@]}" cyberpanel -e "
+SET FOREIGN_KEY_CHECKS=0;
+DELETE FROM websiteFunctions_childdomains WHERE master_id=${fk_ph};
+DELETE FROM databases_databases WHERE website_id=${fk_ph};
+SET FOREIGN_KEY_CHECKS=1;" 2>/dev/null || true
     rm -f "${sqlf}" "${web_sql}" "${rest_sql}" "${txf}"
     hm_err "Import CyberPanel nieudany — ROLLBACK (stan CP bez zmian z tej transakcji)."
     return 1
@@ -1856,6 +1896,11 @@ hm_backup_cp_sql_remap_fk_ids() {
       n = 0; cur = ""; q = 0
       for (i = 1; i <= length(s); i++) {
         ch = substr(s, i, 1)
+        if (ch == "\\") {
+          cur = cur ch
+          if (i < length(s)) { i++; cur = cur substr(s, i, 1) }
+          continue
+        }
         if (ch == "'\''") { q = 1 - q; cur = cur ch; continue }
         if (ch == "," && q == 0) { a[++n] = trim(cur); cur = ""; continue }
         cur = cur ch
